@@ -5,8 +5,13 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.main import app
 
@@ -86,4 +91,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
