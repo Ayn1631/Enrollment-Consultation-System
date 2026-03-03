@@ -27,7 +27,9 @@ class GatewayOrchestrator:
         self.deps = deps
 
     def create_chat(self, request: ChatRequest, fail_features: set[str] | None = None) -> ChatCreateResponse:
+        """网关主流程：按 Agent 规划顺序执行功能并统一处理降级。"""
         fail_features = fail_features or set()
+        # 关键变量：trace_id 用于串联网关日志、SSE 和前端故障排查。
         trace_id = uuid.uuid4().hex
         degraded: list[FeatureFlag] = []
         feature_notes: list[str] = []
@@ -38,6 +40,7 @@ class GatewayOrchestrator:
         last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
         if not last_user:
             last_user = "请介绍中原工学院招生政策要点。"
+        ordered_features = self.deps.services.plan_features(request.features)
 
         # Short-term memory read (degradable)
         memory_result = self.deps.container.isolation.execute(
@@ -51,72 +54,77 @@ class GatewayOrchestrator:
             degraded.append("skill_exec") if False else None
             feature_notes.append("短期记忆不可用，已忽略。")
 
-        if "rag" in request.features:
-            rag_result = self.deps.container.isolation.execute(
-                "retrieval-service",
-                lambda: self._invoke_retrieval(last_user, fail_features),
-            )
-            if rag_result.ok and rag_result.value is not None:
-                retrieval = rag_result.value
-                rerank_result = self.deps.container.isolation.execute(
-                    "rerank-service",
-                    lambda: self._invoke_rerank(last_user, retrieval, fail_features),
+        for feature in ordered_features:
+            if feature == "rag":
+                rag_result = self.deps.container.isolation.execute(
+                    "retrieval-service",
+                    lambda: self._invoke_retrieval(last_user, fail_features),
                 )
-                ranked = rerank_result.value if rerank_result.ok and rerank_result.value else retrieval
-                if not rerank_result.ok:
-                    feature_notes.append("重排服务降级，使用原始召回结果。")
-                for item in ranked.chunks[:6]:
-                    context_blocks.append(item.text)
-                sources = [ChatSource(title=item.title, url=item.url) for item in ranked.chunks if item.url][:5]
-                feature_notes.append("RAG 混合检索+重排已执行。")
-            else:
-                degraded.append("rag")
-                feature_notes.append("RAG 检索失败，降级为无检索回答。")
+                if rag_result.ok and rag_result.value is not None:
+                    retrieval = rag_result.value
+                    rerank_result = self.deps.container.isolation.execute(
+                        "rerank-service",
+                        lambda: self._invoke_rerank(last_user, retrieval, fail_features),
+                    )
+                    ranked = rerank_result.value if rerank_result.ok and rerank_result.value else retrieval
+                    if not rerank_result.ok:
+                        feature_notes.append("重排服务降级，使用原始召回结果。")
+                    for item in ranked.chunks[:6]:
+                        context_blocks.append(item.text)
+                    sources = [ChatSource(title=item.title, url=item.url) for item in ranked.chunks if item.url][:5]
+                    feature_notes.append("RAG 混合检索+重排已执行。")
+                else:
+                    degraded.append("rag")
+                    feature_notes.append("RAG 检索失败，降级为无检索回答。")
+                continue
 
-        if "web_search" in request.features:
-            web_result = self.deps.container.isolation.execute(
-                "web-search-service",
-                lambda: self._invoke_web_search(last_user, fail_features),
-            )
-            if web_result.ok and web_result.value:
-                context_blocks.extend(web_result.value)
-                feature_notes.append("联网搜索补充成功。")
-            else:
-                degraded.append("web_search")
-                feature_notes.append("联网搜索失败，已降级。")
+            if feature == "web_search":
+                web_result = self.deps.container.isolation.execute(
+                    "web-search-service",
+                    lambda: self._invoke_web_search(last_user, fail_features),
+                )
+                if web_result.ok and web_result.value:
+                    context_blocks.extend(web_result.value)
+                    feature_notes.append("联网搜索补充成功。")
+                else:
+                    degraded.append("web_search")
+                    feature_notes.append("联网搜索失败，已降级。")
+                continue
 
-        if "skill_exec" in request.features:
-            skill_result = self.deps.container.isolation.execute(
-                "skill-service",
-                lambda: self._invoke_skill(last_user, request.session_id, None, fail_features),
-            )
-            if skill_result.ok and skill_result.value:
-                feature_notes.append(skill_result.value)
-            else:
-                degraded.append("skill_exec")
-                feature_notes.append("技能执行失败，已跳过。")
+            if feature == "skill_exec":
+                skill_result = self.deps.container.isolation.execute(
+                    "skill-service",
+                    lambda: self._invoke_skill(last_user, request.session_id, None, fail_features),
+                )
+                if skill_result.ok and skill_result.value:
+                    feature_notes.append(skill_result.value)
+                else:
+                    degraded.append("skill_exec")
+                    feature_notes.append("技能执行失败，已跳过。")
+                continue
 
-        if "use_saved_skill" in request.features:
-            saved_skill_result = self.deps.container.isolation.execute(
-                "saved-skill-service",
-                lambda: self._invoke_skill(last_user, request.session_id, request.saved_skill_id, fail_features),
-            )
-            if saved_skill_result.ok and saved_skill_result.value:
-                feature_notes.append(saved_skill_result.value)
-            else:
-                degraded.append("use_saved_skill")
-                feature_notes.append("历史技能不可用，已回退通用流程。")
+            if feature == "use_saved_skill":
+                saved_skill_result = self.deps.container.isolation.execute(
+                    "saved-skill-service",
+                    lambda: self._invoke_skill(last_user, request.session_id, request.saved_skill_id, fail_features),
+                )
+                if saved_skill_result.ok and saved_skill_result.value:
+                    feature_notes.append(saved_skill_result.value)
+                else:
+                    degraded.append("use_saved_skill")
+                    feature_notes.append("历史技能不可用，已回退通用流程。")
+                continue
 
-        if "citation_guard" in request.features:
-            guard_result = self.deps.container.isolation.execute(
-                "citation-guard",
-                lambda: self._invoke_citation_guard(sources=sources, fail_features=fail_features),
-            )
-            if guard_result.ok and guard_result.value:
-                feature_notes.append("引用校验通过。")
-            else:
-                degraded.append("citation_guard")
-                feature_notes.append("引用校验失败，已启用保守模板。")
+            if feature == "citation_guard":
+                guard_result = self.deps.container.isolation.execute(
+                    "citation-guard",
+                    lambda: self._invoke_citation_guard(sources=sources, fail_features=fail_features),
+                )
+                if guard_result.ok and guard_result.value:
+                    feature_notes.append("引用校验通过。")
+                else:
+                    degraded.append("citation_guard")
+                    feature_notes.append("引用校验失败，已启用保守模板。")
 
         generation_result = self.deps.container.isolation.execute(
             "generation-service",
@@ -241,4 +249,3 @@ class GatewayOrchestrator:
             )
         )
         return result.text
-

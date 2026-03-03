@@ -23,9 +23,19 @@ class Settings(BaseSettings):
     )
     api_key: str = Field(default="", alias="API_KEY")
     admin_api_token: str = Field(default="", alias="ADMIN_API_TOKEN")
+    rag_stack: str = Field(default="langchain", alias="RAG_STACK")
+    agent_stack: str = Field(default="langgraph", alias="AGENT_STACK")
     request_timeout_seconds: float = Field(default=6.0, alias="REQUEST_TIMEOUT_SECONDS")
     stream_chunk_size: int = Field(default=24, alias="STREAM_CHUNK_SIZE")
     docs_dir: Path = DOCS_DIR
+
+    neo4j_uri: str = Field(default="", alias="NEO4J_URI")
+    neo4j_user: str = Field(default="", alias="NEO4J_USER")
+    neo4j_password: str = Field(default="", alias="NEO4J_PASSWORD")
+    neo4j_database: str = Field(default="neo4j", alias="NEO4J_DATABASE")
+
+    langchain4j_service_url: str = Field(default="", alias="LANGCHAIN4J_SERVICE_URL")
+    langchain4j_timeout_seconds: float = Field(default=1.5, alias="LANGCHAIN4J_TIMEOUT_SECONDS")
 
     retrieval_service_url: str = Field(default="http://retrieval-service:8001", alias="RETRIEVAL_SERVICE_URL")
     rerank_service_url: str = Field(default="http://rerank-service:8002", alias="RERANK_SERVICE_URL")

@@ -4,7 +4,7 @@ import httpx
 
 from app.config import DOCS_DIR, Settings
 from app.services.service_client import ServiceClient
-from app.services.store import DocumentStore
+from app.services.store import ChunkRecord, DocumentStore
 
 
 def _local_settings() -> Settings:
@@ -103,3 +103,67 @@ def test_reindex_http_mode(monkeypatch):
     client = ServiceClient(settings=settings, store=store)
     payload = client.reindex()
     assert payload["chunks"] == 88
+
+
+def test_plan_features_orders_citation_guard_last():
+    settings = _local_settings()
+    store = DocumentStore(settings.docs_dir)
+    store.load()
+    client = ServiceClient(settings=settings, store=store)
+    ordered = client.plan_features(["citation_guard", "rag", "web_search"])
+    assert ordered[0] == "rag"
+    assert ordered[-1] == "citation_guard"
+
+
+def test_execute_skill_prefers_langchain4j_bridge(monkeypatch):
+    settings = _local_settings()
+    settings.langchain4j_service_url = "http://langchain4j-service:8080"
+    store = DocumentStore(settings.docs_dir)
+    store.load()
+    client = ServiceClient(settings=settings, store=store)
+
+    class _FakeBridge:
+        def execute(self, query, session_id, saved_skill_id):
+            return "来自LangChain4j的技能结果"
+
+    monkeypatch.setattr(client, "_langchain4j_bridge", _FakeBridge())
+    result = client.execute_skill(query="招生政策", session_id="s1", saved_skill_id="skill-v1")
+    assert result.note == "来自LangChain4j的技能结果"
+
+
+def test_retrieve_augments_with_neo4j_facts(monkeypatch):
+    settings = _local_settings()
+    settings.rag_stack = "langchain"
+    settings.neo4j_uri = "bolt://localhost:7687"
+    settings.neo4j_user = "neo4j"
+    settings.neo4j_password = "password"
+    store = DocumentStore(settings.docs_dir)
+    store.load()
+    client = ServiceClient(settings=settings, store=store)
+
+    sample_chunk = ChunkRecord(
+        chunk_id="sample-1",
+        title="样例",
+        url="https://example.com",
+        text="样例文本",
+        tokens=["样", "例"],
+        term_freq={"样": 1, "例": 1},
+        score=1.0,
+        bm25_score=1.0,
+        vector_score=1.0,
+        keyword_score=1.0,
+    )
+    monkeypatch.setattr(client._rag_adapter, "retrieve", lambda query, top_k: [sample_chunk])
+
+    class _FakeNeo4j:
+        def enabled(self):
+            return True
+
+        def fetch_facts(self, query, limit=2):
+            return ["专业A关联学院B"]
+
+    monkeypatch.setattr(client, "_neo4j_adapter", _FakeNeo4j())
+
+    response = client.retrieve("招生专业", top_k=3)
+    titles = [item.title for item in response.chunks]
+    assert "Neo4j知识图谱" in titles

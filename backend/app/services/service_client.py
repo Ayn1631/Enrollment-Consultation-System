@@ -21,22 +21,41 @@ from app.contracts import (
     SkillListResponse,
     SkillSaveRequest,
 )
-from app.models import ChatSource
+from app.models import ChatSource, FeatureFlag
+from app.services.ai_stack import (
+    LangChain4jSkillBridge,
+    LangChainRAGAdapter,
+    LangGraphFeaturePlanner,
+    Neo4jKnowledgeAdapter,
+)
 from app.services.llm import GenerationService
 from app.services.memory import MemoryManager
 from app.services.reranker import SimpleReranker
 from app.services.skill_manager import SkillManager
-from app.services.store import DocumentStore
+from app.services.store import ChunkRecord, DocumentStore
 
 
 class ServiceClient:
     def __init__(self, settings: Settings, store: DocumentStore):
+        # 关键变量：settings 控制 local/http 调用模式和 advanced stack 开关。
         self.settings = settings
         self._store = store
         self._reranker = SimpleReranker()
         self._memory = MemoryManager()
         self._skills = SkillManager()
         self._generator = GenerationService(settings)
+        self._feature_planner = LangGraphFeaturePlanner()
+        self._rag_adapter = LangChainRAGAdapter(store)
+        self._neo4j_adapter = Neo4jKnowledgeAdapter(
+            uri=settings.neo4j_uri,
+            user=settings.neo4j_user,
+            password=settings.neo4j_password,
+            database=settings.neo4j_database,
+        )
+        self._langchain4j_bridge = LangChain4jSkillBridge(
+            base_url=settings.langchain4j_service_url,
+            timeout_seconds=settings.langchain4j_timeout_seconds,
+        )
 
     def _post(self, url: str, payload: dict, timeout: float) -> dict:
         last_error: Exception | None = None
@@ -55,6 +74,7 @@ class ServiceClient:
         raise RuntimeError("post request failed with unknown reason")
 
     def retrieve(self, query: str, top_k: int = 8) -> RetrievalResponse:
+        """检索入口：http 模式走远程服务，local 模式优先 LangChain 并融合 Neo4j 事实。"""
         if self.settings.service_call_mode == "http":
             body = self._post(
                 f"{self.settings.retrieval_service_url}/retrieve",
@@ -62,7 +82,13 @@ class ServiceClient:
                 self.settings.retrieval_service_timeout_seconds,
             )
             return RetrievalResponse.model_validate(body)
-        chunks = self._store.search(query, top_k=top_k)
+
+        if self.settings.rag_stack.lower() == "langchain":
+            chunks = self._rag_adapter.retrieve(query=query, top_k=top_k)
+        else:
+            chunks = self._store.search(query, top_k=top_k)
+
+        chunks = self._augment_chunks_with_neo4j(query=query, chunks=chunks, top_k=top_k)
         return RetrievalResponse(
             chunks=[
                 {
@@ -78,6 +104,32 @@ class ServiceClient:
                 for item in chunks
             ]
         )
+
+    def _augment_chunks_with_neo4j(self, query: str, chunks: list[ChunkRecord], top_k: int) -> list[ChunkRecord]:
+        """把 Neo4j 图谱事实注入检索结果，作为 RAG 额外证据块。"""
+        if not self._neo4j_adapter.enabled():
+            return chunks[:top_k]
+        facts = self._neo4j_adapter.fetch_facts(query=query, limit=2)
+        if not facts:
+            return chunks[:top_k]
+
+        augmented = list(chunks)
+        for idx, fact in enumerate(facts, start=1):
+            augmented.append(
+                ChunkRecord(
+                    chunk_id=f"neo4j-fact-{idx}",
+                    title="Neo4j知识图谱",
+                    url=self.settings.neo4j_uri or "",
+                    text=fact,
+                    tokens=[],
+                    term_freq={},
+                    score=0.4 / idx,
+                    bm25_score=0.0,
+                    vector_score=0.0,
+                    keyword_score=0.0,
+                )
+            )
+        return augmented[:top_k]
 
     def rerank(self, query: str, response: RetrievalResponse, top_k: int = 6) -> RerankResponse:
         request = RerankRequest(query=query, chunks=response.chunks, top_k=top_k)
@@ -118,6 +170,7 @@ class ServiceClient:
         return MemoryReadResponse(entries=entries)
 
     def execute_skill(self, query: str, session_id: str, saved_skill_id: str | None = None) -> SkillExecuteResponse:
+        """技能执行入口：保存技能优先走 LangChain4j 桥接，失败后回退本地策略。"""
         request = SkillExecuteRequest(query=query, session_id=session_id, saved_skill_id=saved_skill_id)
         if self.settings.service_call_mode == "http":
             body = self._post(
@@ -127,10 +180,23 @@ class ServiceClient:
             )
             return SkillExecuteResponse.model_validate(body)
         if saved_skill_id:
+            bridge_note = self._langchain4j_bridge.execute(
+                query=query,
+                session_id=session_id,
+                saved_skill_id=saved_skill_id,
+            )
+            if bridge_note:
+                return SkillExecuteResponse(note=bridge_note)
             note = self._skills.execute_saved(saved_skill_id, query)
             return SkillExecuteResponse(note=note)
         note = self._skills.execute_general(query)
         return SkillExecuteResponse(note=note)
+
+    def plan_features(self, features: list[FeatureFlag]) -> list[FeatureFlag]:
+        """Agent 功能规划入口：agent_stack=langgraph 时启用图规划。"""
+        if self.settings.agent_stack.lower() == "langgraph":
+            return self._feature_planner.plan(features=features)
+        return self._feature_planner.fallback_plan(features=features)
 
     def list_saved_skills(self) -> SkillListResponse:
         if self.settings.service_call_mode == "http":
