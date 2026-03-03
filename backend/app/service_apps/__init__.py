@@ -1,0 +1,2 @@
+"""Standalone microservice apps."""
+

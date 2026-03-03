@@ -9,13 +9,82 @@ services:
       - ./backend/.env
     environment:
       - USE_MOCK_GENERATION=false
+      - SERVICE_CALL_MODE=http
+      - RETRIEVAL_SERVICE_URL=http://retrieval-service:8001
+      - RERANK_SERVICE_URL=http://rerank-service:8002
+      - MEMORY_SERVICE_URL=http://memory-service:8003
+      - SKILL_SERVICE_URL=http://skill-service:8004
+      - GENERATION_SERVICE_URL=http://generation-service:8005
     ports:
       - "8000:8000"
     volumes:
       - ./docs:/app/docs:ro
     depends_on:
+      - retrieval-service
+      - rerank-service
+      - memory-service
+      - skill-service
+      - generation-service
       - postgres
       - redis
+
+  retrieval-service:
+    build:
+      context: ./backend
+    container_name: admissions-retrieval-service
+    command: ["uvicorn", "app.service_apps.retrieval_api:app", "--host", "0.0.0.0", "--port", "8001"]
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./docs:/app/docs:ro
+
+  rerank-service:
+    build:
+      context: ./backend
+    container_name: admissions-rerank-service
+    command: ["uvicorn", "app.service_apps.rerank_api:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+
+  memory-service:
+    build:
+      context: ./backend
+    container_name: admissions-memory-service
+    command: ["uvicorn", "app.service_apps.memory_api:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    depends_on:
+      - redis
+
+  skill-service:
+    build:
+      context: ./backend
+    container_name: admissions-skill-service
+    command: ["uvicorn", "app.service_apps.skill_api:app", "--host", "0.0.0.0", "--port", "8004"]
+    ports:
+      - "8004:8004"
+
+  generation-service:
+    build:
+      context: ./backend
+    container_name: admissions-generation-service
+    command: ["uvicorn", "app.service_apps.generation_api:app", "--host", "0.0.0.0", "--port", "8005"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - USE_MOCK_GENERATION=false
+    ports:
+      - "8005:8005"
+
+  observability-service:
+    build:
+      context: ./backend
+    container_name: admissions-observability-service
+    command: ["uvicorn", "app.service_apps.observability_api:app", "--host", "0.0.0.0", "--port", "8006"]
+    ports:
+      - "8006:8006"
 
   frontend:
     build:
@@ -46,4 +115,3 @@ services:
 
 volumes:
   pgdata:
-

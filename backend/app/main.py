@@ -18,9 +18,9 @@ from app.models import (
     HealthResponse,
     SavedSkill,
 )
-from app.services.feature_registry import feature_catalog, saved_skills
+from app.services.feature_registry import feature_catalog
 from app.services.gateway import GatewayDependencies, GatewayOrchestrator
-from app.services.llm import GenerationService
+from app.services.service_client import ServiceClient
 from app.services.store import DocumentStore
 from app.state import ServiceContainer
 
@@ -29,12 +29,11 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name)
 container = ServiceContainer()
 store = DocumentStore(settings.docs_dir)
-generation_service = GenerationService(settings)
+service_client = ServiceClient(settings, store=store)
 gateway = GatewayOrchestrator(
     GatewayDependencies(
         container=container,
-        store=store,
-        generation=generation_service,
+        services=service_client,
     )
 )
 
@@ -73,13 +72,26 @@ def get_features() -> list[FeatureMeta]:
 
 @app.get("/api/skills/saved", response_model=list[SavedSkill])
 def get_saved_skills() -> list[SavedSkill]:
-    return saved_skills()
+    rows = service_client.list_saved_skills().skills
+    return [
+        SavedSkill(
+            id=item.id,
+            label=f"{item.name} v{item.version}",
+            description=item.description,
+        )
+        for item in rows
+    ]
 
 
 @app.get("/api/tools")
 def get_tools_compat() -> list[dict[str, str]]:
     # Compatibility endpoint kept for previous frontend version.
     return [{"id": item.id, "label": item.label} for item in feature_catalog()]
+
+
+@app.post("/api/skills/save")
+def save_skill(name: str, workflow: str):
+    return service_client.save_skill(name=name, workflow=workflow)
 
 
 @app.post("/api/chat", response_model=ChatCreateResponse)
@@ -132,4 +144,3 @@ def metrics() -> dict[str, object]:
             for name, state in snapshots.items()
         },
     }
-
