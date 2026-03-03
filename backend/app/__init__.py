@@ -1,0 +1,2 @@
+"""Admissions consultation backend package."""
+
