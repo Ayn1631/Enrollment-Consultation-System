@@ -46,6 +46,7 @@ class RagGraphOrchestrator:
         self._graph = self._compile_graph()
 
     def run(self, session_id: str, query: str, top_k: int) -> RagGraphResult:
+        """执行图工作流并把状态投影为对外响应结构。"""
         initial_state: RagGraphState = {
             "trace_id": uuid.uuid4().hex,
             "session_id": session_id,
@@ -68,6 +69,7 @@ class RagGraphOrchestrator:
         )
 
     def _compile_graph(self):
+        """构建固定节点顺序的 LangGraph。"""
         from langgraph.graph import END, StateGraph
 
         graph = StateGraph(RagGraphState)
@@ -91,6 +93,7 @@ class RagGraphOrchestrator:
         return graph.compile()
 
     def _normalize_query(self, state: RagGraphState) -> RagGraphState:
+        """节点：清洗原始问题，产出 normalized_query。"""
         return self._timed(
             state,
             "normalize_query",
@@ -98,6 +101,7 @@ class RagGraphOrchestrator:
         )
 
     def _rewrite_query(self, state: RagGraphState) -> RagGraphState:
+        """节点：生成 2-3 条检索改写。"""
         def _run() -> RagGraphState:
             normalized = str(state.get("normalized_query", ""))
             rewritten = self.rewriter.rewrite(normalized)
@@ -108,6 +112,7 @@ class RagGraphOrchestrator:
         return self._timed(state, "rewrite_query", _run)
 
     def _hybrid_retrieve(self, state: RagGraphState) -> RagGraphState:
+        """节点：执行混合召回，并把结果转为 Document 列表。"""
         def _run() -> RagGraphState:
             queries = list(state.get("rewritten_queries", []))
             if not queries:
@@ -126,6 +131,7 @@ class RagGraphOrchestrator:
             return self._merge_state(state, {"retrieved_docs": [], "degrade_reason": "retrieval_error"})
 
     def _dedupe_and_merge(self, state: RagGraphState) -> RagGraphState:
+        """节点：按 chunk_id 去重，避免重复证据污染重排。"""
         def _run() -> RagGraphState:
             docs = list(state.get("retrieved_docs", []))
             deduped: list[Document] = []
@@ -141,6 +147,7 @@ class RagGraphOrchestrator:
         return self._timed(state, "dedupe_and_merge", _run)
 
     def _rerank_docs(self, state: RagGraphState) -> RagGraphState:
+        """节点：对候选文档重排，失败时沿用召回顺序并标记降级。"""
         def _run() -> RagGraphState:
             docs = list(state.get("retrieved_docs", []))
             query = str(state.get("normalized_query", ""))
@@ -153,6 +160,7 @@ class RagGraphOrchestrator:
         return self._timed(state, "rerank_docs", _run)
 
     def _citation_guard(self, state: RagGraphState) -> RagGraphState:
+        """节点：验证来源充分性，失败时触发保守回答路径。"""
         def _run() -> RagGraphState:
             docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
             passed, reason = self.citation_guard.validate(docs)
@@ -164,6 +172,7 @@ class RagGraphOrchestrator:
         return self._timed(state, "citation_guard", _run)
 
     def _build_context(self, state: RagGraphState) -> RagGraphState:
+        """节点：拼装最终给生成模型使用的上下文块。"""
         def _run() -> RagGraphState:
             docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
             top_docs = docs[: self.final_top_k]
@@ -173,9 +182,11 @@ class RagGraphOrchestrator:
         return self._timed(state, "build_context", _run)
 
     def _finalize(self, state: RagGraphState) -> RagGraphState:
+        """节点：预留收尾节点，保持图结构稳定。"""
         return self._timed(state, "finalize", lambda: {})
 
     def _timed(self, state: RagGraphState, node: str, fn):
+        """包装节点执行，统一采集耗时并处理超时降级。"""
         start = time.perf_counter()
         patch = fn()
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -189,11 +200,13 @@ class RagGraphOrchestrator:
         return merged
 
     def _merge_state(self, state: RagGraphState, patch: RagGraphState) -> RagGraphState:
+        """合并节点 patch，保持状态字典不可变式更新。"""
         merged: RagGraphState = dict(state)
         merged.update(patch)
         return merged
 
     def _to_source(self, doc: Document) -> dict[str, object]:
+        """把文档元数据映射为前端可展示的来源结构。"""
         return {
             "title": str(doc.metadata.get("source_title", "")),
             "url": str(doc.metadata.get("source_url", "")),

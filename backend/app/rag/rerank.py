@@ -16,6 +16,7 @@ class ListwiseReranker:
         self._compressor = self._build_compressor()
 
     def rerank(self, query: str, docs: list[Document], top_k: int) -> tuple[list[Document], bool]:
+        """重排候选文档，返回结果及是否发生降级。"""
         if not docs:
             return [], False
         if self._compressor is None:
@@ -27,6 +28,7 @@ class ListwiseReranker:
             return self._fallback_rerank(query=query, docs=docs, top_k=top_k), True
 
     def _build_compressor(self):
+        """构建 LangChain listwise rerank 组件。"""
         if self.settings.use_mock_generation or not self.settings.api_key:
             return None
         try:

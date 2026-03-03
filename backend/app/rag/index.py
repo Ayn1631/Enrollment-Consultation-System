@@ -24,9 +24,11 @@ class OpenAICompatibleEmbeddings(Embeddings):
         self.force_local = force_local
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """批量文本向量化。"""
         return self._embed(texts)
 
     def embed_query(self, text: str) -> list[float]:
+        """单条查询向量化。"""
         rows = self._embed([text])
         return rows[0] if rows else []
 
@@ -118,12 +120,14 @@ class RagIndexManager:
         }
 
     def get_bm25_retriever(self, top_k: int):
+        """返回稀疏检索器，并按请求设置 top_k。"""
         if self._bm25 is None:
             raise RuntimeError("bm25 retriever is not initialized")
         self._bm25.k = top_k
         return self._bm25
 
     def get_dense_retriever(self, top_k: int):
+        """返回稠密检索器；无 FAISS 时自动降级本地检索。"""
         if self._vectorstore is not None:
             return self._vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": top_k})
 
@@ -137,6 +141,7 @@ class RagIndexManager:
         return _LocalDenseRetriever()
 
     def dense_similarity_scores(self, query: str, top_k: int) -> list[tuple[Document, float]]:
+        """输出稠密检索文档与标准化分数。"""
         if self._vectorstore is not None:
             rows = self._vectorstore.similarity_search_with_score(query, k=top_k)
             normalized: list[tuple[Document, float]] = []
@@ -147,9 +152,11 @@ class RagIndexManager:
         return self._local_similarity_search_with_scores(query=query, top_k=top_k)
 
     def _can_load_vectorstore(self) -> bool:
+        """判断本地是否存在可加载的 FAISS 文件。"""
         return (self.faiss_dir / "index.faiss").exists() and (self.faiss_dir / "index.pkl").exists()
 
     def _try_load_vectorstore(self) -> bool:
+        """尝试加载本地 FAISS 索引，成功则同步文档缓存。"""
         try:
             from langchain_community.vectorstores import FAISS
         except Exception:
@@ -170,6 +177,7 @@ class RagIndexManager:
             return False
 
     def _build_vectorstore(self) -> None:
+        """构建 FAISS；若失败则构建本地降级向量缓存。"""
         try:
             from langchain_community.vectorstores import FAISS
             self._vectorstore = FAISS.from_documents(self._documents, self._embeddings)
@@ -183,6 +191,7 @@ class RagIndexManager:
             self._local_dense_vectors = self._embeddings.embed_documents([doc.page_content for doc in self._documents])
 
     def _build_bm25(self) -> None:
+        """构建 BM25；依赖缺失时降级为轻量词重叠检索。"""
         try:
             from langchain_community.retrievers import BM25Retriever
 
@@ -206,6 +215,7 @@ class RagIndexManager:
             self._bm25 = _LocalBM25Retriever()
 
     def _extract_documents_from_vectorstore(self) -> list[Document]:
+        """从向量库反解文档对象，恢复冷启动缓存。"""
         if self._vectorstore is None:
             return []
         docs: list[Document] = []
@@ -216,6 +226,7 @@ class RagIndexManager:
         return docs
 
     def _local_similarity_search_with_scores(self, query: str, top_k: int) -> list[tuple[Document, float]]:
+        """本地稠密降级检索：使用余弦相似度排序。"""
         if not self._documents or not self._local_dense_vectors:
             return []
         query_vec = self._embeddings.embed_query(query)
@@ -227,6 +238,7 @@ class RagIndexManager:
         return scored[:top_k]
 
     def _cosine(self, a: list[float], b: list[float]) -> float:
+        """计算两个向量的余弦相似度。"""
         if not a or not b or len(a) != len(b):
             return 0.0
         dot = sum(x * y for x, y in zip(a, b))
@@ -237,6 +249,7 @@ class RagIndexManager:
         return dot / (norm_a * norm_b)
 
     def _local_bm25_search(self, query: str, top_k: int) -> list[Document]:
+        """本地稀疏降级检索：以词覆盖率近似 BM25。"""
         query_tokens = self._tokenize(query)
         scored: list[tuple[Document, float]] = []
         for doc in self._documents:
@@ -252,4 +265,5 @@ class RagIndexManager:
         return [item[0] for item in scored[:top_k]]
 
     def _tokenize(self, text: str) -> list[str]:
+        """中英混合分词，供本地降级检索复用。"""
         return [tok for tok in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z]+|\d+", text.lower()) if tok]

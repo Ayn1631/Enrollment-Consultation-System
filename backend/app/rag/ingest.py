@@ -49,6 +49,7 @@ class RagIngestor:
         return rows
 
     def _extract_source_url(self, content: str) -> str:
+        """从文档首行解析来源 URL。"""
         lines = content.splitlines()
         first_line = lines[0].strip() if lines else ""
         matched = SOURCE_PATTERN.match(first_line)
@@ -71,6 +72,7 @@ class RagIngestor:
             return self._manual_split_text(text)
 
     def _manual_split_text(self, text: str) -> list[str]:
+        """切分器不可用时的兜底切块策略。"""
         chunks: list[str] = []
         start = 0
         while start < len(text):

@@ -24,6 +24,7 @@ class QueryRewriter:
         )
 
     def rewrite(self, query: str) -> list[str]:
+        """改写用户问题，保证至少返回可检索语句。"""
         normalized = query.strip()
         if not normalized:
             return []
@@ -42,6 +43,7 @@ class QueryRewriter:
         return self._fallback_rewrite(normalized)
 
     def _build_llm(self):
+        """初始化改写模型，缺少依赖或密钥时返回 None。"""
         if self.settings.use_mock_generation or not self.settings.api_key:
             return None
         try:
@@ -60,6 +62,7 @@ class QueryRewriter:
         )
 
     def _parse_lines(self, text: str) -> list[str]:
+        """解析模型输出行为去重查询列表。"""
         rows: list[str] = []
         seen: set[str] = set()
         for raw in text.splitlines():

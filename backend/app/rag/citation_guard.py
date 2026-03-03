@@ -11,6 +11,7 @@ class CitationGuard:
         self.min_top1_score = min_top1_score
 
     def validate(self, docs: list[Document]) -> tuple[bool, str | None]:
+        """按来源数量与 top1 分数阈值判断是否通过引用校验。"""
         if not docs:
             return False, "no_source"
         top_score = float(docs[0].metadata.get("score", 0.0))

@@ -24,6 +24,7 @@ class HybridRetriever:
         self.dense_weight = dense_weight
 
     def retrieve(self, queries: list[str], top_n: int) -> list[RetrievedItem]:
+        """执行多查询召回并融合分数后返回 top_n。"""
         # 关键变量：merged_scores 保存跨查询融合后的最终分数。
         merged_scores: dict[str, float] = {}
         merged_docs: dict[str, Document] = {}
@@ -47,6 +48,7 @@ class HybridRetriever:
         return ranked[:top_n]
 
     def _retrieve_single_query(self, query: str, top_n: int) -> list[RetrievedItem]:
+        """执行单查询召回，优先 Ensemble，失败时回退手工融合。"""
         bm25 = self.index.get_bm25_retriever(top_k=top_n)
         dense = self.index.get_dense_retriever(top_k=top_n)
         sparse_docs = bm25.invoke(query)
@@ -84,6 +86,7 @@ class HybridRetriever:
         dense_docs: list[Document],
         ensemble_docs: list[Document],
     ) -> dict[str, float]:
+        """把三路排序名次映射为可比较分值。"""
         sparse_rank = self._rank_map(sparse_docs)
         dense_rank = self._rank_map(dense_docs)
         ensemble_rank = self._rank_map(ensemble_docs)
@@ -96,6 +99,7 @@ class HybridRetriever:
         return scores
 
     def _rank_map(self, docs: list[Document]) -> dict[str, int]:
+        """生成 chunk_id 到排名位置的映射。"""
         mapping: dict[str, int] = {}
         for idx, doc in enumerate(docs):
             chunk_id = str(doc.metadata.get("chunk_id", ""))
@@ -104,6 +108,7 @@ class HybridRetriever:
         return mapping
 
     def _fallback_merge_order(self, sparse_docs: list[Document], dense_docs: list[Document], top_n: int) -> list[Document]:
+        """Ensemble 不可用时按 dense 优先顺序去重合并。"""
         merged: list[Document] = []
         seen: set[str] = set()
         for row in [*dense_docs, *sparse_docs]:
