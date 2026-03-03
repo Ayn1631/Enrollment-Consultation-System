@@ -190,16 +190,19 @@ class GatewayOrchestrator:
         )
 
     def _invoke_retrieval(self, query: str, fail_features: set[str]):
+        """执行检索调用，支持测试注入 rag 故障。"""
         if "rag" in fail_features:
             raise RuntimeError("rag failure injected")
         return self.deps.services.retrieve(query=query, top_k=10)
 
     def _invoke_rerank(self, query: str, retrieval, fail_features: set[str]):
+        """执行重排调用，支持测试注入 rerank 故障。"""
         if "rerank" in fail_features:
             raise RuntimeError("rerank failure injected")
         return self.deps.services.rerank(query=query, response=retrieval, top_k=6)
 
     def _invoke_web_search(self, query: str, fail_features: set[str]) -> list[str]:
+        """执行联网搜索补充，当前为轻量占位实现。"""
         if "web_search" in fail_features:
             raise RuntimeError("web search failure injected")
         return [f"联网补充：关于“{query}”请以招生官网最新通知为准。"]
@@ -211,6 +214,7 @@ class GatewayOrchestrator:
         saved_skill_id: str | None,
         fail_features: set[str],
     ) -> str:
+        """执行技能调用，按是否指定 saved_skill_id 选择执行路径。"""
         if saved_skill_id and "use_saved_skill" in fail_features:
             raise RuntimeError("saved skill failure injected")
         if not saved_skill_id and "skill_exec" in fail_features:
@@ -223,6 +227,7 @@ class GatewayOrchestrator:
         return result.note
 
     def _invoke_citation_guard(self, sources: list[ChatSource], fail_features: set[str]) -> bool:
+        """执行引用校验，失败时由外层降级并切换保守模板。"""
         if "citation_guard" in fail_features:
             raise RuntimeError("citation guard failure injected")
         result = self.deps.services.citation_guard(sources)
@@ -236,6 +241,7 @@ class GatewayOrchestrator:
         request: ChatRequest,
         fail_features: set[str],
     ) -> str:
+        """执行最终生成，generation 失败属于硬失败。"""
         if "generation" in fail_features:
             raise RuntimeError("generation failure injected")
         result = self.deps.services.generate(
