@@ -55,6 +55,10 @@ npm run test
 npm run build
 ```
 
+CI 会自动执行：
+- 后端：`pytest` + `evaluate_gateway.py` + `gate_release.py`
+- 前端：`vitest` + `vite build`
+
 ## Docker Compose
 
 ```bash
