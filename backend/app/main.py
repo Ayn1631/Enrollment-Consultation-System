@@ -71,7 +71,7 @@ def healthz() -> HealthResponse:
                     last_error=None if item.get("healthy") else str(item.get("detail", "unhealthy")),
                 )
             )
-    overall = all(not dep.circuit_open for dep in deps) if deps else True
+    overall = all(dep.healthy and not dep.circuit_open for dep in deps) if deps else True
     return HealthResponse(app=settings.app_name, healthy=overall, dependencies=deps)
 
 

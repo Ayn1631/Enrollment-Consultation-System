@@ -107,6 +107,28 @@ def test_health_dependencies_endpoint():
     assert "dependencies" in data
 
 
+def test_health_overall_false_when_dependency_unhealthy(monkeypatch):
+    from app import main as main_module
+
+    client = TestClient(app)
+    monkeypatch.setattr(
+        main_module.service_client,
+        "dependency_health",
+        lambda: {
+            "retrieval-service": {"healthy": False, "detail": "down"},
+            "rerank-service": {"healthy": True, "detail": "ok"},
+            "memory-service": {"healthy": True, "detail": "ok"},
+            "skill-service": {"healthy": True, "detail": "ok"},
+            "generation-service": {"healthy": True, "detail": "ok"},
+        },
+    )
+
+    res = client.get("/healthz")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["healthy"] is False
+
+
 def test_admin_reindex_endpoint():
     client = TestClient(app)
     res = client.post("/api/admin/reindex")
