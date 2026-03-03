@@ -7,6 +7,7 @@
 - 前端功能可选开关：`rag`、`web_search`、`skill_exec`、`use_saved_skill`、`citation_guard`
 - 历史技能下拉单选（启用 `use_saved_skill` 时生效）
 - 后端网关编排 + 功能降级（除生成服务外，其他功能故障自动降级）
+- 后端特性依赖自动补全：`use_saved_skill -> skill_exec`，`citation_guard -> rag`
 - 服务级拆分：`retrieval`、`rerank`、`memory`、`skill`、`generation`、`observability`
 - RAG/Agent 技术栈：`LangChain` + `LangGraph` + `Neo4j` + `LangChain4j Bridge`
 - SSE 流式返回，`done` 事件携带 `status/degraded_features/sources/trace_id`
