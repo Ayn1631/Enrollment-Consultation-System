@@ -136,3 +136,26 @@ def test_admin_reindex_endpoint():
     body = res.json()
     assert body["status"] == "ok"
     assert "result" in body
+
+
+def test_saved_skill_dependency_auto_enables_skill_exec():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["use_saved_skill"]
+    payload["saved_skill_id"] = "admission_faq_v1"
+    res = client.post("/api/chat", json=payload, headers={"x-fail-features": "skill_exec"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "degraded"
+    assert "skill_exec" in data["degraded_features"]
+
+
+def test_citation_guard_dependency_auto_enables_rag():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["citation_guard"]
+    res = client.post("/api/chat", json=payload, headers={"x-fail-features": "rag"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "degraded"
+    assert "rag" in data["degraded_features"]
