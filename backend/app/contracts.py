@@ -2,40 +2,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.models import ChatSource
 
 
-class RetrievalRequest(BaseModel):
-    query: str
-    top_k: int = 8
-
-
-class RetrievalChunk(BaseModel):
+class RagEvidence(BaseModel):
     chunk_id: str
     title: str
     url: str
     text: str
     score: float
-    bm25_score: float
-    vector_score: float
-    keyword_score: float
 
 
-class RetrievalResponse(BaseModel):
-    chunks: list[RetrievalChunk] = Field(default_factory=list)
-
-
-class RerankRequest(BaseModel):
+class RagQueryRequest(BaseModel):
+    session_id: str
     query: str
-    chunks: list[RetrievalChunk] = Field(default_factory=list)
-    top_k: int = 6
+    top_k: int = 8
+    debug: bool = False
 
 
-class RerankResponse(BaseModel):
-    chunks: list[RetrievalChunk] = Field(default_factory=list)
+class RagQueryResponse(BaseModel):
+    trace_id: str
+    status: Literal["ok", "degraded"] = "ok"
+    context_blocks: list[str] = Field(default_factory=list)
+    sources: list[RagEvidence] = Field(default_factory=list)
+    degrade_reason: str | None = None
+    latency_ms: dict[str, float] = Field(default_factory=dict)
 
 
 class GenerationRequest(BaseModel):
@@ -118,4 +113,3 @@ class GatewayFeatureContext:
     context_blocks: list[str]
     sources: list[ChatSource]
     notes: list[str]
-

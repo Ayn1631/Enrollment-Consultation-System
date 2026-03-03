@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import httpx
 import time
+
+import httpx
 
 from app.config import Settings
 from app.contracts import (
@@ -12,50 +13,41 @@ from app.contracts import (
     MemoryQuery,
     MemoryReadResponse,
     MemoryWriteRequest,
-    RerankRequest,
-    RerankResponse,
-    RetrievalRequest,
-    RetrievalResponse,
+    RagQueryRequest,
+    RagQueryResponse,
     SkillExecuteRequest,
     SkillExecuteResponse,
     SkillListResponse,
     SkillSaveRequest,
 )
 from app.models import ChatSource, FeatureFlag
-from app.services.ai_stack import (
-    LangChain4jSkillBridge,
-    LangChainRAGAdapter,
-    LangGraphFeaturePlanner,
-    Neo4jKnowledgeAdapter,
-)
+from app.rag.service import RagGraphService
+from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanner
 from app.services.llm import GenerationService
 from app.services.memory import MemoryManager
-from app.services.reranker import SimpleReranker
 from app.services.skill_manager import SkillManager
-from app.services.store import ChunkRecord, DocumentStore
 
 
 class ServiceClient:
-    def __init__(self, settings: Settings, store: DocumentStore):
-        # 关键变量：settings 控制 local/http 调用模式和 advanced stack 开关。
+    """统一封装本地/远程服务调用，供网关与管理接口复用。"""
+
+    def __init__(self, settings: Settings):
+        # 关键变量：service_call_mode 决定是否走 HTTP 微服务调用。
         self.settings = settings
-        self._store = store
-        self._reranker = SimpleReranker()
         self._memory = MemoryManager()
         self._skills = SkillManager()
         self._generator = GenerationService(settings)
         self._feature_planner = LangGraphFeaturePlanner()
-        self._rag_adapter = LangChainRAGAdapter(store)
-        self._neo4j_adapter = Neo4jKnowledgeAdapter(
-            uri=settings.neo4j_uri,
-            user=settings.neo4j_user,
-            password=settings.neo4j_password,
-            database=settings.neo4j_database,
-        )
         self._langchain4j_bridge = LangChain4jSkillBridge(
             base_url=settings.langchain4j_service_url,
             timeout_seconds=settings.langchain4j_timeout_seconds,
         )
+        self._rag_service = RagGraphService(settings)
+
+    def startup(self) -> None:
+        """启动本地依赖；HTTP 模式由独立服务负责初始化。"""
+        if self.settings.service_call_mode != "http":
+            self._rag_service.startup()
 
     def _post(self, url: str, payload: dict, timeout: float) -> dict:
         last_error: Exception | None = None
@@ -73,75 +65,17 @@ class ServiceClient:
             raise last_error
         raise RuntimeError("post request failed with unknown reason")
 
-    def retrieve(self, query: str, top_k: int = 8) -> RetrievalResponse:
-        """检索入口：http 模式走远程服务，local 模式优先 LangChain 并融合 Neo4j 事实。"""
+    def run_rag_graph(self, session_id: str, query: str, top_k: int = 8, debug: bool = False) -> RagQueryResponse:
+        """执行 LangGraph RAG 工作流。"""
+        request = RagQueryRequest(session_id=session_id, query=query, top_k=top_k, debug=debug)
         if self.settings.service_call_mode == "http":
             body = self._post(
-                f"{self.settings.retrieval_service_url}/retrieve",
-                RetrievalRequest(query=query, top_k=top_k).model_dump(),
-                self.settings.retrieval_service_timeout_seconds,
-            )
-            return RetrievalResponse.model_validate(body)
-
-        if self.settings.rag_stack.lower() == "langchain":
-            chunks = self._rag_adapter.retrieve(query=query, top_k=top_k)
-        else:
-            chunks = self._store.search(query, top_k=top_k)
-
-        chunks = self._augment_chunks_with_neo4j(query=query, chunks=chunks, top_k=top_k)
-        return RetrievalResponse(
-            chunks=[
-                {
-                    "chunk_id": item.chunk_id,
-                    "title": item.title,
-                    "url": item.url,
-                    "text": item.text,
-                    "score": item.score,
-                    "bm25_score": item.bm25_score,
-                    "vector_score": item.vector_score,
-                    "keyword_score": item.keyword_score,
-                }
-                for item in chunks
-            ]
-        )
-
-    def _augment_chunks_with_neo4j(self, query: str, chunks: list[ChunkRecord], top_k: int) -> list[ChunkRecord]:
-        """把 Neo4j 图谱事实注入检索结果，作为 RAG 额外证据块。"""
-        if not self._neo4j_adapter.enabled():
-            return chunks[:top_k]
-        facts = self._neo4j_adapter.fetch_facts(query=query, limit=2)
-        if not facts:
-            return chunks[:top_k]
-
-        augmented = list(chunks)
-        for idx, fact in enumerate(facts, start=1):
-            augmented.append(
-                ChunkRecord(
-                    chunk_id=f"neo4j-fact-{idx}",
-                    title="Neo4j知识图谱",
-                    url=self.settings.neo4j_uri or "",
-                    text=fact,
-                    tokens=[],
-                    term_freq={},
-                    score=0.4 / idx,
-                    bm25_score=0.0,
-                    vector_score=0.0,
-                    keyword_score=0.0,
-                )
-            )
-        return augmented[:top_k]
-
-    def rerank(self, query: str, response: RetrievalResponse, top_k: int = 6) -> RerankResponse:
-        request = RerankRequest(query=query, chunks=response.chunks, top_k=top_k)
-        if self.settings.service_call_mode == "http":
-            body = self._post(
-                f"{self.settings.rerank_service_url}/rerank",
+                f"{self.settings.rag_agent_service_url}/rag/query",
                 request.model_dump(),
-                self.settings.rerank_service_timeout_seconds,
+                self.settings.rag_agent_service_timeout_seconds,
             )
-            return RerankResponse.model_validate(body)
-        ranked = self._reranker.rerank(query, response.chunks, top_k=top_k)
-        return RerankResponse(chunks=ranked)
+            return RagQueryResponse.model_validate(body)
+        return self._rag_service.run(session_id=session_id, query=query, top_k=top_k, debug=debug)
 
     def write_short_memory(self, session_id: str, key: str, value: str) -> None:
         request = MemoryWriteRequest(
@@ -237,22 +171,19 @@ class ServiceClient:
         return GenerationResponse(text=text)
 
     def citation_guard(self, sources: list[ChatSource]) -> CitationGuardResponse:
-        # Citation guard is lightweight and always local.
         return CitationGuardResponse(ok=len(sources) > 0)
 
     def dependency_health(self) -> dict[str, dict[str, str | bool]]:
         if self.settings.service_call_mode != "http":
             return {
-                "retrieval-service": {"healthy": True, "detail": "local mode"},
-                "rerank-service": {"healthy": True, "detail": "local mode"},
+                "rag-agent-service": {"healthy": True, "detail": "local mode"},
                 "memory-service": {"healthy": True, "detail": "local mode"},
                 "skill-service": {"healthy": True, "detail": "local mode"},
                 "generation-service": {"healthy": True, "detail": "local mode"},
             }
 
         targets = {
-            "retrieval-service": f"{self.settings.retrieval_service_url}/healthz",
-            "rerank-service": f"{self.settings.rerank_service_url}/healthz",
+            "rag-agent-service": f"{self.settings.rag_agent_service_url}/rag/healthz",
             "memory-service": f"{self.settings.memory_service_url}/healthz",
             "skill-service": f"{self.settings.skill_service_url}/healthz",
             "generation-service": f"{self.settings.generation_service_url}/healthz",
@@ -270,9 +201,16 @@ class ServiceClient:
 
     def reindex(self) -> dict:
         if self.settings.service_call_mode == "http":
-            with httpx.Client(timeout=10) as client:
-                response = client.post(f"{self.settings.retrieval_service_url}/reindex")
+            with httpx.Client(timeout=15) as client:
+                response = client.post(f"{self.settings.rag_agent_service_url}/rag/reindex")
                 response.raise_for_status()
                 return response.json()
-        self._store.load()
-        return {"chunks": len(self._store.chunks)}
+        return self._rag_service.reindex()
+
+    def rag_stats(self) -> dict:
+        if self.settings.service_call_mode == "http":
+            with httpx.Client(timeout=5) as client:
+                response = client.get(f"{self.settings.rag_agent_service_url}/rag/stats")
+                response.raise_for_status()
+                return response.json()
+        return self._rag_service.stats()

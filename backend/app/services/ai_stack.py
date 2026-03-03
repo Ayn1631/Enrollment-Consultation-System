@@ -6,7 +6,6 @@ from typing import TypedDict
 import httpx
 
 from app.models import FeatureFlag
-from app.services.store import ChunkRecord, DocumentStore
 
 
 # 关键变量：定义 Agent 功能执行优先级，保证引用校验在 RAG 后执行。
@@ -73,93 +72,6 @@ class LangGraphFeaturePlanner:
         ordered_pairs = [(idx, item) for idx, item in enumerate(features)]
         ordered_pairs.sort(key=lambda pair: (FEATURE_PRIORITY.get(pair[1], 99), pair[0]))
         return [item for _, item in ordered_pairs]
-
-
-class LangChainRAGAdapter:
-    """使用 LangChain BM25 检索文档，异常时回退到本地混合检索。"""
-
-    def __init__(self, store: DocumentStore):
-        self._store = store
-        self._retriever = None
-        self._initialized = False
-
-    def retrieve(self, query: str, top_k: int) -> list[ChunkRecord]:
-        """检索入口：优先 LangChain，失败回退 DocumentStore.search。"""
-        if top_k <= 0:
-            return []
-        if not self._ensure_retriever():
-            return self._store.search(query=query, top_k=top_k)
-
-        try:
-            self._retriever.k = top_k
-            docs = self._retriever.invoke(query)
-        except Exception:
-            return self._store.search(query=query, top_k=top_k)
-
-        mapped = self._map_documents_to_chunks(docs, top_k=top_k)
-        if mapped:
-            return mapped
-        return self._store.search(query=query, top_k=top_k)
-
-    def _ensure_retriever(self) -> bool:
-        """延迟初始化 BM25Retriever，避免未安装 LangChain 时启动失败。"""
-        if self._initialized:
-            return self._retriever is not None
-
-        self._initialized = True
-        try:
-            from langchain_community.retrievers import BM25Retriever
-            from langchain_core.documents import Document
-        except Exception:
-            self._retriever = None
-            return False
-
-        docs: list[Document] = []
-        for chunk in self._store.chunks:
-            docs.append(
-                Document(
-                    page_content=chunk.text,
-                    metadata={
-                        "chunk_id": chunk.chunk_id,
-                        "title": chunk.title,
-                        "url": chunk.url,
-                    },
-                )
-            )
-
-        if not docs:
-            self._retriever = None
-            return False
-
-        self._retriever = BM25Retriever.from_documents(docs)
-        return True
-
-    def _map_documents_to_chunks(self, docs: list, top_k: int) -> list[ChunkRecord]:
-        """把 LangChain Document 结果映射为系统统一 ChunkRecord。"""
-        by_chunk_id = {item.chunk_id: item for item in self._store.chunks}
-        rows: list[ChunkRecord] = []
-
-        for rank, doc in enumerate(docs[:top_k], start=1):
-            chunk_id = str(doc.metadata.get("chunk_id", ""))
-            source = by_chunk_id.get(chunk_id)
-            if source is None:
-                continue
-            score = 1.0 / rank
-            rows.append(
-                ChunkRecord(
-                    chunk_id=source.chunk_id,
-                    title=source.title,
-                    url=source.url,
-                    text=source.text,
-                    tokens=source.tokens,
-                    term_freq=source.term_freq,
-                    score=score,
-                    bm25_score=score,
-                    vector_score=score,
-                    keyword_score=score,
-                )
-            )
-        return rows
 
 
 @dataclass(slots=True)

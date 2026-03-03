@@ -22,19 +22,17 @@ from app.models import (
 from app.services.feature_registry import feature_catalog
 from app.services.gateway import GatewayDependencies, GatewayOrchestrator
 from app.services.service_client import ServiceClient
-from app.services.store import DocumentStore
 from app.state import ServiceContainer
 
 
 settings = get_settings()
 container = ServiceContainer()
-store = DocumentStore(settings.docs_dir)
-service_client = ServiceClient(settings, store=store)
+service_client = ServiceClient(settings)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    store.load()
+    service_client.startup()
     yield
 
 
@@ -166,6 +164,7 @@ def metrics() -> dict[str, object]:
             }
             for name, state in snapshots.items()
         },
+        "rag": service_client.rag_stats(),
     }
 
 
@@ -173,3 +172,8 @@ def metrics() -> dict[str, object]:
 def admin_reindex() -> dict[str, object]:
     payload = service_client.reindex()
     return {"status": "ok", "result": payload}
+
+
+@app.get("/api/admin/retrieval/stats", dependencies=[Depends(_require_admin_token)])
+def admin_retrieval_stats() -> dict[str, object]:
+    return {"status": "ok", "result": service_client.rag_stats()}

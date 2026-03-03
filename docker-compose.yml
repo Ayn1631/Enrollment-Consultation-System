@@ -10,8 +10,7 @@ services:
     environment:
       - USE_MOCK_GENERATION=false
       - SERVICE_CALL_MODE=http
-      - RETRIEVAL_SERVICE_URL=http://retrieval-service:8001
-      - RERANK_SERVICE_URL=http://rerank-service:8002
+      - RAG_AGENT_SERVICE_URL=http://rag-agent-service:8001
       - MEMORY_SERVICE_URL=http://memory-service:8003
       - SKILL_SERVICE_URL=http://skill-service:8004
       - GENERATION_SERVICE_URL=http://generation-service:8005
@@ -20,33 +19,24 @@ services:
     volumes:
       - ./docs:/app/docs:ro
     depends_on:
-      - retrieval-service
-      - rerank-service
+      - rag-agent-service
       - memory-service
       - skill-service
       - generation-service
       - postgres
       - redis
 
-  retrieval-service:
+  rag-agent-service:
     build:
       context: ./backend
-    container_name: admissions-retrieval-service
-    command: ["uvicorn", "app.service_apps.retrieval_api:app", "--host", "0.0.0.0", "--port", "8001"]
+    container_name: admissions-rag-agent-service
+    command: ["uvicorn", "app.service_apps.rag_agent_api:app", "--host", "0.0.0.0", "--port", "8001"]
     env_file:
       - ./backend/.env
     ports:
       - "8001:8001"
     volumes:
       - ./docs:/app/docs:ro
-
-  rerank-service:
-    build:
-      context: ./backend
-    container_name: admissions-rerank-service
-    command: ["uvicorn", "app.service_apps.rerank_api:app", "--host", "0.0.0.0", "--port", "8002"]
-    ports:
-      - "8002:8002"
 
   memory-service:
     build:

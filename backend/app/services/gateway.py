@@ -57,22 +57,23 @@ class GatewayOrchestrator:
         for feature in ordered_features:
             if feature == "rag":
                 rag_result = self.deps.container.isolation.execute(
-                    "retrieval-service",
-                    lambda: self._invoke_retrieval(last_user, fail_features),
+                    "rag-agent-service",
+                    lambda: self._invoke_rag(request.session_id, last_user, fail_features),
                 )
                 if rag_result.ok and rag_result.value is not None:
-                    retrieval = rag_result.value
-                    rerank_result = self.deps.container.isolation.execute(
-                        "rerank-service",
-                        lambda: self._invoke_rerank(last_user, retrieval, fail_features),
-                    )
-                    ranked = rerank_result.value if rerank_result.ok and rerank_result.value else retrieval
-                    if not rerank_result.ok:
-                        feature_notes.append("重排服务降级，使用原始召回结果。")
-                    for item in ranked.chunks[:6]:
-                        context_blocks.append(item.text)
-                    sources = [ChatSource(title=item.title, url=item.url) for item in ranked.chunks if item.url][:5]
-                    feature_notes.append("RAG 混合检索+重排已执行。")
+                    rag_output = rag_result.value
+                    context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
+                    sources = [
+                        ChatSource(title=item.title, url=item.url)
+                        for item in rag_output.sources
+                        if item.url
+                    ][:5]
+                    if rag_output.status == "degraded":
+                        degraded.append("rag")
+                        if rag_output.degrade_reason:
+                            feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
+                    else:
+                        feature_notes.append("RAG LangGraph 工作流执行成功。")
                 else:
                     degraded.append("rag")
                     feature_notes.append("RAG 检索失败，降级为无检索回答。")
@@ -189,17 +190,16 @@ class GatewayOrchestrator:
             degraded_features=session.degraded_features,
         )
 
-    def _invoke_retrieval(self, query: str, fail_features: set[str]):
-        """执行检索调用，支持测试注入 rag 故障。"""
+    def _invoke_rag(self, session_id: str, query: str, fail_features: set[str]):
+        """执行 LangGraph RAG 调用，支持测试注入 rag 故障。"""
         if "rag" in fail_features:
             raise RuntimeError("rag failure injected")
-        return self.deps.services.retrieve(query=query, top_k=10)
-
-    def _invoke_rerank(self, query: str, retrieval, fail_features: set[str]):
-        """执行重排调用，支持测试注入 rerank 故障。"""
-        if "rerank" in fail_features:
-            raise RuntimeError("rerank failure injected")
-        return self.deps.services.rerank(query=query, response=retrieval, top_k=6)
+        return self.deps.services.run_rag_graph(
+            session_id=session_id,
+            query=query,
+            top_k=self.deps.services.settings.rag_final_top_k,
+            debug=False,
+        )
 
     def _invoke_web_search(self, query: str, fail_features: set[str]) -> list[str]:
         """执行联网搜索补充，当前为轻量占位实现。"""
