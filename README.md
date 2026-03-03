@@ -42,6 +42,7 @@ npm run dev
 ```
 
 默认 `VITE_USE_MOCK=true`，若要联调后端请设置为 `false` 并配置 `VITE_API_BASE_URL`。
+若后端启用 `ADMIN_API_TOKEN`，前端需配置 `VITE_ADMIN_API_TOKEN` 以调用重建索引接口。
 
 ## 测试
 
