@@ -7,13 +7,14 @@
 - 前端功能可选开关：`rag`、`web_search`、`skill_exec`、`use_saved_skill`、`citation_guard`
 - 历史技能下拉单选（启用 `use_saved_skill` 时生效）
 - 后端网关编排 + 功能降级（除生成服务外，其他功能故障自动降级）
+- 服务级拆分：`retrieval`、`rerank`、`memory`、`skill`、`generation`、`observability`
 - SSE 流式返回，`done` 事件携带 `status/degraded_features/sources/trace_id`
 - 接口健康检查与依赖状态查看
 
 ## 目录
 
 - `frontend/` Vue3 + Vite
-- `backend/` FastAPI 网关与服务层
+- `backend/` FastAPI 网关与服务层（含 `service_apps` 微服务）
 - `docs/` 招生资料源数据
 - `docker-compose.yml` 一体化启动（前端/后端/Postgres/Redis）
 
@@ -59,3 +60,13 @@ npm run build
 ```bash
 docker compose up --build
 ```
+
+## 评测与发布门禁
+
+```bash
+cd backend
+python scripts/evaluate_gateway.py
+python scripts/gate_release.py
+```
+
+会在 `backend/reports/eval_report.json` 生成评测报告，并根据门槛给出发布是否通过。

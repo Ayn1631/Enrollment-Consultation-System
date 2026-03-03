@@ -201,3 +201,12 @@ class ServiceClient:
             except Exception as exc:  # noqa: BLE001
                 health[name] = {"healthy": False, "detail": str(exc)}
         return health
+
+    def reindex(self) -> dict:
+        if self.settings.service_call_mode == "http":
+            with httpx.Client(timeout=10) as client:
+                response = client.post(f"{self.settings.retrieval_service_url}/reindex")
+                response.raise_for_status()
+                return response.json()
+        self._store.load()
+        return {"chunks": len(self._store.chunks)}

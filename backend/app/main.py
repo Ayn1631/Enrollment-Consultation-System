@@ -156,3 +156,9 @@ def metrics() -> dict[str, object]:
             for name, state in snapshots.items()
         },
     }
+
+
+@app.post("/api/admin/reindex")
+def admin_reindex() -> dict[str, object]:
+    payload = service_client.reindex()
+    return {"status": "ok", "result": payload}

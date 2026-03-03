@@ -106,3 +106,11 @@ def test_health_dependencies_endpoint():
     assert data["app"] == "admissions-gateway"
     assert "dependencies" in data
 
+
+def test_admin_reindex_endpoint():
+    client = TestClient(app)
+    res = client.post("/api/admin/reindex")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "ok"
+    assert "result" in body

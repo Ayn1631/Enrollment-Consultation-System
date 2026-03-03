@@ -41,3 +41,8 @@ def retrieve(request: RetrievalRequest) -> RetrievalResponse:
         ]
     )
 
+
+@app.post("/reindex")
+def reindex() -> dict[str, int]:
+    store.load()
+    return {"chunks": len(store.chunks)}
