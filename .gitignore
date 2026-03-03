@@ -1,0 +1,41 @@
+# Project docs
+docs/
+
+# Python cache and virtual env
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and local runtime files
+*.log
+*.pid
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.*
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,46 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--ink-0);
+  background: radial-gradient(circle at 12% 12%, rgba(255, 255, 255, 0.96), transparent 55%),
+    radial-gradient(circle at 85% 10%, rgba(246, 228, 228, 0.9), transparent 50%),
+    linear-gradient(135deg, var(--bg-0), var(--bg-2));
+  min-height: 100vh;
+}
+
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+body::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
+  opacity: 0.14;
+  mix-blend-mode: soft-light;
+}
+
+body::after {
+  background: radial-gradient(circle at 18% 70%, rgba(139, 29, 29, 0.16), transparent 55%),
+    radial-gradient(circle at 80% 60%, rgba(176, 43, 43, 0.12), transparent 50%);
+  animation: glow-drift 18s ease-in-out infinite;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
