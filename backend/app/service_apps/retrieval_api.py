@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.config import get_settings
@@ -8,13 +10,16 @@ from app.services.store import DocumentStore
 
 
 settings = get_settings()
-app = FastAPI(title="retrieval-service")
 store = DocumentStore(settings.docs_dir)
 
 
-@app.on_event("startup")
-def startup() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     store.load()
+    yield
+
+
+app = FastAPI(title="retrieval-service", lifespan=lifespan)
 
 
 @app.get("/healthz")

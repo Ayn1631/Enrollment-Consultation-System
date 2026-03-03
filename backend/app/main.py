@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Iterator
 
@@ -26,21 +27,24 @@ from app.state import ServiceContainer
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name)
 container = ServiceContainer()
 store = DocumentStore(settings.docs_dir)
 service_client = ServiceClient(settings, store=store)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    store.load()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 gateway = GatewayOrchestrator(
     GatewayDependencies(
         container=container,
         services=service_client,
     )
 )
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    store.load()
 
 
 @app.get("/healthz", response_model=HealthResponse)
