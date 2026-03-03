@@ -16,7 +16,7 @@ export function useStream() {
     if (useMock) {
       return startMockStream(request, {
         onDelta: handlers.onDelta,
-        onDone: () => handlers.onDone({ finish_reason: 'stop' })
+        onDone: handlers.onDone
       })
     }
 

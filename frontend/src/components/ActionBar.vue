@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const props = defineProps<{ modelValue: string; isStreaming: boolean }>()
+const props = defineProps<{ modelValue: string; isStreaming: boolean; canSend?: boolean; blockedReason?: string }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   (e: 'send'): void
@@ -29,9 +29,10 @@ const handleKeydown = (event: KeyboardEvent) => {
     <div class="actions">
       <button class="ghost">语音</button>
       <button class="ghost">附件</button>
-      <button class="send" :disabled="props.isStreaming" @click="emit('send')">发送</button>
+      <button class="send" :disabled="props.isStreaming || props.canSend === false" @click="emit('send')">发送</button>
       <button v-if="props.isStreaming" class="stop" @click="emit('stop')">停止</button>
     </div>
+    <div v-if="props.canSend === false && props.blockedReason" class="blocked-tip">{{ props.blockedReason }}</div>
   </div>
 </template>
 
@@ -96,5 +97,11 @@ const handleKeydown = (event: KeyboardEvent) => {
 .send:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.blocked-tip {
+  font-size: 12px;
+  color: #875700;
+  padding-top: 2px;
 }
 </style>

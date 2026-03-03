@@ -1,25 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { ToolMode } from '../types'
+import type { FeatureFlag, FeatureMeta } from '../types'
 
-const props = defineProps<{ modelValue: ToolMode[] }>()
-const emit = defineEmits<{ (e: 'update:modelValue', value: ToolMode[]): void }>()
-
-const options: Array<{ value: ToolMode; label: string; hint: string }> = [
-  { value: 'search', label: '联网搜索', hint: '获取最新信息' },
-  { value: 'react', label: 'React', hint: '推理与多步判断' },
-  { value: 'plan', label: '规划执行', hint: '拆解任务步骤' },
-  { value: 'guide', label: '指引模式', hint: '流程化咨询' }
-]
+const props = defineProps<{ modelValue: FeatureFlag[]; options: FeatureMeta[] }>()
+const emit = defineEmits<{ (e: 'update:modelValue', value: FeatureFlag[]): void }>()
 
 const open = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 
 const currentLabel = computed(() => {
   if (!props.modelValue.length) return '请选择功能'
-  const labels = options
-    .filter((item) => props.modelValue.includes(item.value))
-    .map((item) => item.label)
+  const labels = props.options
+    .filter((item) => props.modelValue.includes(item.id))
+    .map((item) => item.label || item.id)
   return labels.join(' / ')
 })
 
@@ -31,7 +24,7 @@ const closeMenu = () => {
   open.value = false
 }
 
-const toggle = (value: ToolMode) => {
+const toggle = (value: FeatureFlag) => {
   const next = props.modelValue.includes(value)
     ? props.modelValue.filter((item) => item !== value)
     : [...props.modelValue, value]
@@ -61,17 +54,19 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 
     <div v-if="open" class="dropdown-menu">
       <button
-        v-for="option in options"
-        :key="option.value"
+        v-for="option in props.options"
+        :key="option.id"
         type="button"
         class="dropdown-item"
-        :class="{ active: props.modelValue.includes(option.value) }"
-        @click="toggle(option.value)"
+        :class="{ active: props.modelValue.includes(option.id) }"
+        @click="toggle(option.id)"
       >
-        <span class="check">{{ props.modelValue.includes(option.value) ? '✓' : '' }}</span>
+        <span class="check">{{ props.modelValue.includes(option.id) ? '✓' : '' }}</span>
         <span class="text">
-          <span class="label">{{ option.label }}</span>
-          <span class="hint">{{ option.hint }}</span>
+          <span class="label">{{ option.label || option.id }}</span>
+          <span class="hint">{{
+            option.dependencies?.length ? `依赖: ${option.dependencies.join(', ')}` : '可独立启用'
+          }}</span>
         </span>
       </button>
     </div>

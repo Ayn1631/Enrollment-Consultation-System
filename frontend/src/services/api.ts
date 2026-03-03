@@ -1,8 +1,13 @@
-import type { ChatRequest, ChatStreamEvent } from '../types'
+import type { ChatRequest, ChatStreamEvent, FeatureMeta, SavedSkill } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
-export async function postChat(request: ChatRequest): Promise<{ session_id: string }> {
+export async function postChat(request: ChatRequest): Promise<{
+  session_id: string
+  trace_id?: string
+  status?: 'ok' | 'degraded' | 'failed'
+  degraded_features?: string[]
+}> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: {
@@ -60,6 +65,22 @@ export async function getTools(): Promise<Array<{ id: string; label: string }>> 
   const res = await fetch(`${API_BASE}/api/tools`)
   if (!res.ok) {
     throw new Error(`GET /api/tools failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function getFeatures(): Promise<FeatureMeta[]> {
+  const res = await fetch(`${API_BASE}/api/features`)
+  if (!res.ok) {
+    throw new Error(`GET /api/features failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function getSavedSkills(): Promise<SavedSkill[]> {
+  const res = await fetch(`${API_BASE}/api/skills/saved`)
+  if (!res.ok) {
+    throw new Error(`GET /api/skills/saved failed: ${res.status}`)
   }
   return res.json()
 }

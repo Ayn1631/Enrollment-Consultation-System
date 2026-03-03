@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import ToolToggleGroup from './ToolToggleGroup.vue'
 import ModeSelector from './ModeSelector.vue'
-import type { ChatMode, ToolMode } from '../types'
+import type { ChatMode, FeatureFlag, FeatureMeta, SavedSkill } from '../types'
 
-const props = defineProps<{ tools: ToolMode[]; mode: ChatMode }>()
+const props = defineProps<{
+  features: FeatureFlag[]
+  featureOptions: FeatureMeta[]
+  mode: ChatMode
+  savedSkills: SavedSkill[]
+  savedSkillId: string
+}>()
 const emit = defineEmits<{
-  (e: 'update:tools', value: ToolMode[]): void
+  (e: 'update:features', value: FeatureFlag[]): void
   (e: 'update:mode', value: ChatMode): void
+  (e: 'update:savedSkillId', value: string): void
 }>()
 </script>
 
@@ -14,7 +21,24 @@ const emit = defineEmits<{
   <aside class="sidebar">
     <div class="panel">
       <div class="panel-title">功能权限</div>
-      <ToolToggleGroup :model-value="props.tools" @update:model-value="emit('update:tools', $event)" />
+      <ToolToggleGroup
+        :model-value="props.features"
+        :options="props.featureOptions"
+        @update:model-value="emit('update:features', $event)"
+      />
+      <div v-if="props.features.includes('use_saved_skill')" class="saved-skill">
+        <label class="skill-label" for="savedSkill">历史技能</label>
+        <select
+          id="savedSkill"
+          :value="props.savedSkillId"
+          @change="emit('update:savedSkillId', ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">请选择技能</option>
+          <option v-for="skill in props.savedSkills" :key="skill.id" :value="skill.id">
+            {{ skill.label }}
+          </option>
+        </select>
+      </div>
     </div>
 
     <div class="panel">
@@ -90,5 +114,23 @@ const emit = defineEmits<{
   margin: 0 0 8px;
   color: var(--ink-1);
   line-height: 1.5;
+}
+
+.saved-skill {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.saved-skill select {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.skill-label {
+  font-size: 12px;
+  color: var(--ink-2);
 }
 </style>

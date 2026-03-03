@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import MessageBubble from './MessageBubble.vue'
 import StreamBubble from './StreamBubble.vue'
-import type { ChatMessage } from '../types'
+import type { ChatMessage, FeatureFlag } from '../types'
 
-const props = defineProps<{ messages: ChatMessage[]; streamingText: string; isStreaming: boolean }>()
+const props = defineProps<{
+  messages: ChatMessage[]
+  streamingText: string
+  isStreaming: boolean
+  activeFeatures: FeatureFlag[]
+  degradedFeatures: FeatureFlag[]
+}>()
 </script>
 
 <template>
   <section class="chat-main">
     <div class="status">
       <div class="status-title">系统状态</div>
-      <div class="status-desc">数据来源已同步，建议开启联网搜索获取最新招生信息。</div>
+      <div class="status-desc">已启用：{{ props.activeFeatures.join(' / ') || '无' }}</div>
+      <div v-if="props.degradedFeatures.length" class="status-degraded">
+        已降级：{{ props.degradedFeatures.join(' / ') }}
+      </div>
     </div>
 
     <div class="messages">
@@ -45,6 +54,12 @@ const props = defineProps<{ messages: ChatMessage[]; streamingText: string; isSt
 
 .status-desc {
   color: var(--ink-1);
+}
+
+.status-degraded {
+  margin-top: 6px;
+  color: #9b5b00;
+  font-weight: 600;
 }
 
 .messages {

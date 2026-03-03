@@ -10,6 +10,10 @@ const props = defineProps<{ message: ChatMessage }>()
       <span class="role">{{ props.message.role === 'user' ? '你' : '系统' }}</span>
       <span class="time">{{ new Date(props.message.createdAt).toLocaleTimeString() }}</span>
     </div>
+    <div v-if="props.message.status === 'degraded'" class="degraded-banner">
+      部分能力降级：{{ props.message.degradedFeatures?.join(' / ') }}
+    </div>
+    <div v-if="props.message.status === 'failed'" class="degraded-banner failed">生成服务异常，本轮回答失败。</div>
     <p class="content">{{ props.message.content }}</p>
 
     <div v-if="props.message.sources?.length" class="sources">
@@ -60,6 +64,20 @@ const props = defineProps<{ message: ChatMessage }>()
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.6;
+}
+
+.degraded-banner {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 196, 0, 0.2);
+  color: #7b5000;
+  font-size: 12px;
+}
+
+.degraded-banner.failed {
+  background: rgba(198, 57, 57, 0.2);
+  color: #7f1e1e;
 }
 
 .sources {
