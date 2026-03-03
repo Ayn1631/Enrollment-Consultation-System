@@ -46,16 +46,27 @@ def on_startup() -> None:
 @app.get("/healthz", response_model=HealthResponse)
 def healthz() -> HealthResponse:
     snapshots = container.isolation.snapshot()
+    dependency_health = service_client.dependency_health()
     deps = [
         HealthDependency(
             name=name,
-            healthy=state.last_error is None,
+            healthy=(state.last_error is None) and bool(dependency_health.get(name, {}).get("healthy", True)),
             circuit_open=state.open_until > time.time(),
-            last_error=state.last_error,
+            last_error=state.last_error or str(dependency_health.get(name, {}).get("detail", "")),
             updated_at=state.updated_at,
         )
         for name, state in snapshots.items()
     ]
+    for name, item in dependency_health.items():
+        if name not in {dep.name for dep in deps}:
+            deps.append(
+                HealthDependency(
+                    name=name,
+                    healthy=bool(item.get("healthy", False)),
+                    circuit_open=False,
+                    last_error=None if item.get("healthy") else str(item.get("detail", "unhealthy")),
+                )
+            )
     overall = all(not dep.circuit_open for dep in deps) if deps else True
     return HealthResponse(app=settings.app_name, healthy=overall, dependencies=deps)
 
@@ -135,6 +146,7 @@ def metrics() -> dict[str, object]:
         "app": settings.app_name,
         "now": datetime.utcnow().isoformat(),
         "sessions": len(container.session_store._sessions),  # noqa: SLF001
+        "dependency_health": service_client.dependency_health(),
         "dependencies": {
             name: {
                 "failures": state.failures,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import time
 
 from app.config import Settings
 from app.contracts import (
@@ -38,10 +39,20 @@ class ServiceClient:
         self._generator = GenerationService(settings)
 
     def _post(self, url: str, payload: dict, timeout: float) -> dict:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, json=payload)
-            response.raise_for_status()
-            return response.json()
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(url, json=payload)
+                    response.raise_for_status()
+                    return response.json()
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt == 0:
+                    time.sleep(0.08)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("post request failed with unknown reason")
 
     def retrieve(self, query: str, top_k: int = 8) -> RetrievalResponse:
         if self.settings.service_call_mode == "http":
@@ -163,3 +174,30 @@ class ServiceClient:
         # Citation guard is lightweight and always local.
         return CitationGuardResponse(ok=len(sources) > 0)
 
+    def dependency_health(self) -> dict[str, dict[str, str | bool]]:
+        if self.settings.service_call_mode != "http":
+            return {
+                "retrieval-service": {"healthy": True, "detail": "local mode"},
+                "rerank-service": {"healthy": True, "detail": "local mode"},
+                "memory-service": {"healthy": True, "detail": "local mode"},
+                "skill-service": {"healthy": True, "detail": "local mode"},
+                "generation-service": {"healthy": True, "detail": "local mode"},
+            }
+
+        targets = {
+            "retrieval-service": f"{self.settings.retrieval_service_url}/healthz",
+            "rerank-service": f"{self.settings.rerank_service_url}/healthz",
+            "memory-service": f"{self.settings.memory_service_url}/healthz",
+            "skill-service": f"{self.settings.skill_service_url}/healthz",
+            "generation-service": f"{self.settings.generation_service_url}/healthz",
+        }
+        health: dict[str, dict[str, str | bool]] = {}
+        for name, url in targets.items():
+            try:
+                with httpx.Client(timeout=0.8) as client:
+                    res = client.get(url)
+                    res.raise_for_status()
+                health[name] = {"healthy": True, "detail": "ok"}
+            except Exception as exc:  # noqa: BLE001
+                health[name] = {"healthy": False, "detail": str(exc)}
+        return health
