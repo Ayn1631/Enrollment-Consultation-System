@@ -21,6 +21,7 @@ class GenerationService:
         temperature: float | None = None,
         top_p: float | None = None,
     ) -> str:
+        """统一生成入口：优先真实模型，缺少密钥或显式配置时走 mock。"""
         if self.settings.use_mock_generation or not self.settings.api_key:
             return self._mock_generate(user_query, context_blocks, feature_notes)
         return self._remote_generate(
@@ -33,7 +34,10 @@ class GenerationService:
         )
 
     def _mock_generate(self, user_query: str, context_blocks: list[str], feature_notes: list[str]) -> str:
+        """本地降级生成，用于离线开发和外部模型不可用时兜底。"""
+        # 关键变量：excerpt 限制上下文摘要长度，避免 mock 返回过长文本。
         excerpt = "\n".join(f"- {line[:110]}" for line in context_blocks[:4]) if context_blocks else "- 未命中可靠证据。"
+        # 关键变量：notes 聚合本轮能力执行情况，便于前端可解释展示。
         notes = "\n".join(f"- {note}" for note in feature_notes) if feature_notes else "- 未启用额外增强功能。"
         return textwrap.dedent(
             f"""
@@ -56,9 +60,11 @@ class GenerationService:
         temperature: float | None,
         top_p: float | None,
     ) -> str:
+        """调用远程 OpenAI 兼容接口生成答案。"""
         context_text = "\n".join(f"- {item}" for item in context_blocks[:6]) or "- 无可靠检索证据"
         note_text = "\n".join(f"- {item}" for item in feature_notes) or "- 无"
 
+        # 关键变量：messages 是最终送入模型的系统+用户双消息结构。
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
@@ -75,6 +81,7 @@ class GenerationService:
                 ),
             },
         ]
+        # 关键变量：payload 保持与 OpenAI Chat Completions 协议兼容。
         payload: dict[str, Any] = {
             "model": model or "gpt-4o-mini",
             "messages": messages,
@@ -98,4 +105,3 @@ class GenerationService:
         if not content:
             raise RuntimeError("generation response content is empty")
         return str(content)
-

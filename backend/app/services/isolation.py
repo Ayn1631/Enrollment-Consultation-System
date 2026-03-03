@@ -28,12 +28,15 @@ class CircuitState:
 
 class IsolationExecutor:
     def __init__(self, failure_threshold: int = 2, open_seconds: float = 5.0):
+        # 关键变量：failure_threshold 控制连续失败多少次后打开熔断。
         self.failure_threshold = failure_threshold
+        # 关键变量：open_seconds 控制熔断保持时间，避免雪崩重试。
         self.open_seconds = open_seconds
         self._states: dict[str, CircuitState] = {}
         self._lock = Lock()
 
     def execute(self, name: str, func: Callable[[], T]) -> IsolationResult[T]:
+        """执行受保护调用，内置失败计数、熔断和自动恢复。"""
         with self._lock:
             state = self._states.setdefault(name, CircuitState())
             now = time.time()
@@ -61,6 +64,6 @@ class IsolationExecutor:
         return IsolationResult(ok=True, value=value)
 
     def snapshot(self) -> dict[str, CircuitState]:
+        """返回当前隔离状态快照，用于健康检查和运维面板展示。"""
         with self._lock:
             return dict(self._states)
-
