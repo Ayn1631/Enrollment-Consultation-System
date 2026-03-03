@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-from app.config import DOCS_DIR
-from app.services.ai_stack import (
-    LangChain4jSkillBridge,
-    LangChainRAGAdapter,
-    LangGraphFeaturePlanner,
-    Neo4jKnowledgeAdapter,
-)
-from app.services.store import DocumentStore
+from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanner, Neo4jKnowledgeAdapter
 
 
 def test_langgraph_planner_fallback_keeps_priority_and_dedup(monkeypatch):
@@ -64,16 +57,3 @@ def test_neo4j_adapter_returns_empty_when_disabled():
     adapter = Neo4jKnowledgeAdapter(uri="", user="", password="", database="neo4j")
     assert adapter.enabled() is False
     assert adapter.fetch_facts("招生") == []
-
-
-def test_langchain_rag_adapter_falls_back_to_store(monkeypatch):
-    store = DocumentStore(DOCS_DIR)
-    store.load()
-    adapter = LangChainRAGAdapter(store)
-
-    def _always_false():
-        return False
-
-    monkeypatch.setattr(adapter, "_ensure_retriever", _always_false)
-    rows = adapter.retrieve(query="招生章程", top_k=3)
-    assert len(rows) <= 3

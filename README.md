@@ -8,7 +8,7 @@
 - 历史技能下拉单选（启用 `use_saved_skill` 时生效）
 - 后端网关编排 + 功能降级（除生成服务外，其他功能故障自动降级）
 - 后端特性依赖自动补全：`use_saved_skill -> skill_exec`，`citation_guard -> rag`
-- 服务级拆分：`retrieval`、`rerank`、`memory`、`skill`、`generation`、`observability`
+- 服务级拆分：`rag-agent`、`memory`、`skill`、`generation`、`observability`
 - RAG/Agent 技术栈：`LangChain` + `LangGraph` + `Neo4j` + `LangChain4j Bridge`
 - SSE 流式返回，`done` 事件携带 `status/degraded_features/sources/trace_id`
 - 接口健康检查与依赖状态查看
@@ -33,9 +33,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 关键环境变量：
 - `SERVICE_CALL_MODE=local|http`：`local` 为进程内调用；`http` 通过各微服务 URL 调用。
 - `ADMIN_API_TOKEN`：为空时管理接口免鉴权；非空时调用 `/api/admin/*` 必须带 `x-admin-token`。
-- `RETRIEVAL_SERVICE_URL`、`RERANK_SERVICE_URL`、`MEMORY_SERVICE_URL`、`SKILL_SERVICE_URL`、`GENERATION_SERVICE_URL`：仅 `http` 模式使用。
-- `RAG_STACK=langchain|native`：`langchain` 优先走 LangChain 检索并可叠加 Neo4j 事实。
+- `RAG_AGENT_SERVICE_URL`、`MEMORY_SERVICE_URL`、`SKILL_SERVICE_URL`、`GENERATION_SERVICE_URL`：仅 `http` 模式使用。
 - `AGENT_STACK=langgraph|native`：`langgraph` 使用 LangGraph 规划功能执行顺序。
+- `EMBEDDING_API_URL`：Embedding 接口地址；为空时自动由 `API_URL` 推导 `/embeddings`。
+- `EMBEDDING_MODEL`：默认 `text-embedding-3-large`。
+- `RAG_FAISS_DIR`、`RAG_CHUNK_SIZE`、`RAG_CHUNK_OVERLAP`、`RAG_RETRIEVE_TOP_N`、`RAG_FINAL_TOP_K`：RAG 索引与检索参数。
+- `RAG_CITATION_MIN_SOURCES`、`RAG_CITATION_MIN_TOP1_SCORE`：强制引用校验阈值。
 - `NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD/NEO4J_DATABASE`：启用 Neo4j 图谱增强所需。
 - `LANGCHAIN4J_SERVICE_URL`：配置后，历史技能优先通过 LangChain4j 服务执行。
 

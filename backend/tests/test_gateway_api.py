@@ -115,8 +115,7 @@ def test_health_overall_false_when_dependency_unhealthy(monkeypatch):
         main_module.service_client,
         "dependency_health",
         lambda: {
-            "retrieval-service": {"healthy": False, "detail": "down"},
-            "rerank-service": {"healthy": True, "detail": "ok"},
+            "rag-agent-service": {"healthy": False, "detail": "down"},
             "memory-service": {"healthy": True, "detail": "ok"},
             "skill-service": {"healthy": True, "detail": "ok"},
             "generation-service": {"healthy": True, "detail": "ok"},
@@ -132,6 +131,15 @@ def test_health_overall_false_when_dependency_unhealthy(monkeypatch):
 def test_admin_reindex_endpoint():
     client = TestClient(app)
     res = client.post("/api/admin/reindex")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "ok"
+    assert "result" in body
+
+
+def test_admin_retrieval_stats_endpoint():
+    client = TestClient(app)
+    res = client.get("/api/admin/retrieval/stats")
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "ok"

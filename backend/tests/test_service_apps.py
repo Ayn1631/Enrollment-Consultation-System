@@ -4,39 +4,34 @@ from fastapi.testclient import TestClient
 
 from app.service_apps.generation_api import app as generation_app
 from app.service_apps.memory_api import app as memory_app
-from app.service_apps.rerank_api import app as rerank_app
-from app.service_apps.retrieval_api import app as retrieval_app
+from app.service_apps.rag_agent_api import app as rag_agent_app
 from app.service_apps.skill_api import app as skill_app
 
 
-def test_retrieval_service_endpoint():
-    client = TestClient(retrieval_app)
-    res = client.post("/retrieve", json={"query": "招生章程", "top_k": 3})
-    assert res.status_code == 200
-    assert "chunks" in res.json()
+def test_rag_agent_query_and_stats_endpoints():
+    client = TestClient(rag_agent_app)
+    stats_res = client.get("/rag/stats")
+    assert stats_res.status_code == 200
+    assert "chunks" in stats_res.json()
+
+    query_res = client.post(
+        "/rag/query",
+        json={"session_id": "s-rag-1", "query": "请介绍招生章程重点", "top_k": 3, "debug": True},
+    )
+    assert query_res.status_code == 200
+    body = query_res.json()
+    assert "trace_id" in body
+    assert "context_blocks" in body
+    assert "sources" in body
 
 
-def test_rerank_service_endpoint():
-    client = TestClient(rerank_app)
-    payload = {
-        "query": "学费资助",
-        "chunks": [
-            {
-                "chunk_id": "c1",
-                "title": "t1",
-                "url": "u1",
-                "text": "学费政策内容",
-                "score": 0.2,
-                "bm25_score": 0.2,
-                "vector_score": 0.1,
-                "keyword_score": 0.0,
-            }
-        ],
-        "top_k": 1,
-    }
-    res = client.post("/rerank", json=payload)
+def test_rag_agent_reindex_endpoint():
+    client = TestClient(rag_agent_app)
+    res = client.post("/rag/reindex")
     assert res.status_code == 200
-    assert len(res.json()["chunks"]) == 1
+    body = res.json()
+    assert body["status"] == "ok"
+    assert body["chunks"] >= 0
 
 
 def test_memory_service_write_read():
@@ -81,4 +76,3 @@ def test_generation_service_endpoint():
     )
     assert res.status_code == 200
     assert "text" in res.json()
-

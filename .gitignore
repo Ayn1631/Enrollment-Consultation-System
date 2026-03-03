@@ -5,6 +5,7 @@ frontend/node_modules/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/reports/
+backend/data/
 
 # Python cache and virtual env
 __pycache__/
