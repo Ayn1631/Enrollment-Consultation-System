@@ -7,6 +7,14 @@ import type {
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_API_TOKEN ?? ''
+
+function adminHeaders(): Record<string, string> {
+  if (!ADMIN_TOKEN) {
+    return {}
+  }
+  return { 'x-admin-token': ADMIN_TOKEN }
+}
 
 export async function postChat(request: ChatRequest): Promise<{
   session_id: string
@@ -100,7 +108,10 @@ export async function getHealth(): Promise<HealthResponse> {
 }
 
 export async function postReindex(): Promise<{ status: string; result: { chunks: number } }> {
-  const res = await fetch(`${API_BASE}/api/admin/reindex`, { method: 'POST' })
+  const res = await fetch(`${API_BASE}/api/admin/reindex`, {
+    method: 'POST',
+    headers: adminHeaders()
+  })
   if (!res.ok) {
     throw new Error(`POST /api/admin/reindex failed: ${res.status}`)
   }
