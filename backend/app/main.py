@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Iterator
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
@@ -143,7 +143,14 @@ def stream_chat(session_id: str):
     return StreamingResponse(event_iter(), media_type="text/event-stream")
 
 
-@app.get("/api/admin/metrics")
+def _require_admin_token(x_admin_token: str | None = Header(default=None)) -> None:
+    if not settings.admin_api_token:
+        return
+    if x_admin_token != settings.admin_api_token:
+        raise HTTPException(status_code=401, detail="unauthorized admin token")
+
+
+@app.get("/api/admin/metrics", dependencies=[Depends(_require_admin_token)])
 def metrics() -> dict[str, object]:
     snapshots = container.isolation.snapshot()
     return {
@@ -162,7 +169,7 @@ def metrics() -> dict[str, object]:
     }
 
 
-@app.post("/api/admin/reindex")
+@app.post("/api/admin/reindex", dependencies=[Depends(_require_admin_token)])
 def admin_reindex() -> dict[str, object]:
     payload = service_client.reindex()
     return {"status": "ok", "result": payload}

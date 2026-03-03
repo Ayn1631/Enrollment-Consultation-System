@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         alias="API_URL",
     )
     api_key: str = Field(default="", alias="API_KEY")
+    admin_api_token: str = Field(default="", alias="ADMIN_API_TOKEN")
     request_timeout_seconds: float = Field(default=6.0, alias="REQUEST_TIMEOUT_SECONDS")
     stream_chunk_size: int = Field(default=24, alias="STREAM_CHUNK_SIZE")
     docs_dir: Path = DOCS_DIR
