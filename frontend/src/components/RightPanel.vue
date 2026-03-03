@@ -1,10 +1,18 @@
 <script setup lang="ts">
+import type { HealthDependency } from '../types'
+
 const props = defineProps<{
   open: boolean
   temperature: number
   topP: number
   model: string
   strictCitation: boolean
+  healthLoading: boolean
+  reindexLoading: boolean
+  healthApp: string
+  healthOverall: boolean
+  dependencies: HealthDependency[]
+  reindexInfo: string
 }>()
 
 const emit = defineEmits<{
@@ -13,6 +21,8 @@ const emit = defineEmits<{
   (e: 'update:topP', value: number): void
   (e: 'update:model', value: string): void
   (e: 'update:strictCitation', value: boolean): void
+  (e: 'refreshHealth'): void
+  (e: 'reindex'): void
 }>()
 </script>
 
@@ -70,6 +80,33 @@ const emit = defineEmits<{
       </div>
 
       <div class="note">提示：后端对接完成后，这些参数将实时影响模型响应。</div>
+
+      <div class="panel-title">运行状态</div>
+      <div class="health-card">
+        <div class="health-head">
+          <span>{{ props.healthApp || 'gateway' }}</span>
+          <span :class="['chip', props.healthOverall ? 'ok' : 'bad']">
+            {{ props.healthOverall ? '健康' : '异常' }}
+          </span>
+        </div>
+        <div class="dep-list">
+          <div class="dep-row" v-for="dep in props.dependencies" :key="dep.name">
+            <span>{{ dep.name }}</span>
+            <span :class="['chip', dep.healthy && !dep.circuit_open ? 'ok' : 'bad']">
+              {{ dep.healthy && !dep.circuit_open ? 'ok' : 'degraded' }}
+            </span>
+          </div>
+        </div>
+        <div class="ops">
+          <button class="op-btn" :disabled="props.healthLoading" @click="emit('refreshHealth')">
+            {{ props.healthLoading ? '刷新中...' : '刷新健康状态' }}
+          </button>
+          <button class="op-btn warn" :disabled="props.reindexLoading" @click="emit('reindex')">
+            {{ props.reindexLoading ? '执行中...' : '重建索引' }}
+          </button>
+        </div>
+        <div v-if="props.reindexInfo" class="reindex-info">{{ props.reindexInfo }}</div>
+      </div>
     </div>
   </aside>
 </template>
@@ -138,5 +175,73 @@ const emit = defineEmits<{
   font-size: 12px;
   color: var(--ink-2);
   line-height: 1.6;
+}
+
+.health-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  display: grid;
+  gap: 8px;
+}
+
+.health-head,
+.dep-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.dep-list {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.chip {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.chip.ok {
+  background: rgba(55, 155, 92, 0.15);
+  color: #1e6d3f;
+}
+
+.chip.bad {
+  background: rgba(190, 72, 72, 0.18);
+  color: #8d1f1f;
+}
+
+.ops {
+  display: grid;
+  gap: 8px;
+}
+
+.op-btn {
+  border: 1px solid var(--line-soft);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.op-btn.warn {
+  border-color: rgba(183, 139, 58, 0.45);
+  background: rgba(183, 139, 58, 0.1);
+}
+
+.op-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.reindex-info {
+  font-size: 12px;
+  color: var(--ink-2);
 }
 </style>

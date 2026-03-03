@@ -1,4 +1,10 @@
-import type { ChatRequest, ChatStreamEvent, FeatureMeta, SavedSkill } from '../types'
+import type {
+  ChatRequest,
+  ChatStreamEvent,
+  FeatureMeta,
+  HealthResponse,
+  SavedSkill
+} from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
@@ -81,6 +87,22 @@ export async function getSavedSkills(): Promise<SavedSkill[]> {
   const res = await fetch(`${API_BASE}/api/skills/saved`)
   if (!res.ok) {
     throw new Error(`GET /api/skills/saved failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const res = await fetch(`${API_BASE}/healthz/dependencies`)
+  if (!res.ok) {
+    throw new Error(`GET /healthz/dependencies failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function postReindex(): Promise<{ status: string; result: { chunks: number } }> {
+  const res = await fetch(`${API_BASE}/api/admin/reindex`, { method: 'POST' })
+  if (!res.ok) {
+    throw new Error(`POST /api/admin/reindex failed: ${res.status}`)
   }
   return res.json()
 }

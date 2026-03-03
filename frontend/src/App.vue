@@ -5,10 +5,18 @@ import LeftSidebar from './components/LeftSidebar.vue'
 import ChatMain from './components/ChatMain.vue'
 import ActionBar from './components/ActionBar.vue'
 import RightPanel from './components/RightPanel.vue'
-import { getFeatures, getSavedSkills } from './services/api'
+import { getFeatures, getHealth, getSavedSkills, postReindex } from './services/api'
 import { useStream } from './composables/useStream'
 import { buildChatRequest, validateFeatureSelection } from './utils/requestBuilder'
-import type { ChatMessage, ChatMode, ChatRequest, FeatureFlag, FeatureMeta, SavedSkill } from './types'
+import type {
+  ChatMessage,
+  ChatMode,
+  ChatRequest,
+  FeatureFlag,
+  FeatureMeta,
+  HealthDependency,
+  SavedSkill
+} from './types'
 
 const { startStream } = useStream()
 
@@ -36,6 +44,12 @@ const topP = ref(0.9)
 const model = ref('zyit-gpt')
 const strictCitation = ref(true)
 const rightOpen = ref(true)
+const healthLoading = ref(false)
+const reindexLoading = ref(false)
+const healthApp = ref('')
+const healthOverall = ref(true)
+const healthDependencies = ref<HealthDependency[]>([])
+const reindexInfo = ref('')
 
 const streamingText = ref('')
 const streaming = ref(false)
@@ -80,8 +94,40 @@ const loadMeta = async () => {
   }
 }
 
+const refreshHealth = async () => {
+  healthLoading.value = true
+  try {
+    const health = await getHealth()
+    healthApp.value = health.app
+    healthOverall.value = health.healthy
+    healthDependencies.value = health.dependencies
+  } catch {
+    healthApp.value = 'gateway'
+    healthOverall.value = false
+    healthDependencies.value = [
+      { name: 'api-gateway', healthy: false, circuit_open: false, last_error: '无法连接后端' }
+    ]
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+const triggerReindex = async () => {
+  reindexLoading.value = true
+  try {
+    const result = await postReindex()
+    reindexInfo.value = `重建完成，当前索引块数：${result.result.chunks}`
+    await refreshHealth()
+  } catch {
+    reindexInfo.value = '重建索引失败，请检查后端服务状态。'
+  } finally {
+    reindexLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadMeta()
+  refreshHealth()
 })
 
 const handleSend = async () => {
@@ -227,6 +273,14 @@ const toggleRightPanel = () => {
         v-model:topP="topP"
         v-model:model="model"
         v-model:strictCitation="strictCitation"
+        :health-loading="healthLoading"
+        :reindex-loading="reindexLoading"
+        :health-app="healthApp"
+        :health-overall="healthOverall"
+        :dependencies="healthDependencies"
+        :reindex-info="reindexInfo"
+        @refresh-health="refreshHealth"
+        @reindex="triggerReindex"
         @toggle="toggleRightPanel"
       />
     </div>

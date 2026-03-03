@@ -22,6 +22,19 @@ export interface SavedSkill {
   description: string
 }
 
+export interface HealthDependency {
+  name: string
+  healthy: boolean
+  circuit_open: boolean
+  last_error?: string | null
+}
+
+export interface HealthResponse {
+  app: string
+  healthy: boolean
+  dependencies: HealthDependency[]
+}
+
 export interface ChatMessage {
   id: string
   role: Role
