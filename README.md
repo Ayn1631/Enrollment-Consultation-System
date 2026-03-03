@@ -28,6 +28,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 默认会读取 `backend/.env`。
 
+关键环境变量：
+- `SERVICE_CALL_MODE=local|http`：`local` 为进程内调用；`http` 通过各微服务 URL 调用。
+- `ADMIN_API_TOKEN`：为空时管理接口免鉴权；非空时调用 `/api/admin/*` 必须带 `x-admin-token`。
+- `RETRIEVAL_SERVICE_URL`、`RERANK_SERVICE_URL`、`MEMORY_SERVICE_URL`、`SKILL_SERVICE_URL`、`GENERATION_SERVICE_URL`：仅 `http` 模式使用。
+
 ## 前端运行
 
 ```bash
@@ -74,3 +79,9 @@ python scripts/gate_release.py
 ```
 
 会在 `backend/reports/eval_report.json` 生成评测报告，并根据门槛给出发布是否通过。
+
+可选发布门槛配置：
+- `GATE_MIN_PASS_RATE`（默认 `0.8`）
+- `GATE_MAX_P95_MS`（默认 `1500`）
+- `GATE_MAX_FAILED_ROWS`（默认 `2`）
+- `GATE_REPORT_PATH`（默认 `reports/eval_report.json`）
