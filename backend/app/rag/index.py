@@ -50,7 +50,7 @@ class OpenAICompatibleEmbeddings(Embeddings):
             data = body.get("data", [])
             if len(data) != len(texts):
                 raise RuntimeError("embedding response size mismatch")
-            return [list(item.get("embedding", [])) for item in data]
+            return [self._normalize_vector(list(item.get("embedding", []))) for item in data]
         except Exception:
             return [self._local_fallback_embedding(text) for text in texts]
 
@@ -62,7 +62,16 @@ class OpenAICompatibleEmbeddings(Embeddings):
         for idx in range(dim):
             value = ((seed + idx * 13) % 97) / 97.0
             vector.append(value)
-        return vector
+        return self._normalize_vector(vector)
+
+    def _normalize_vector(self, vector: list[float]) -> list[float]:
+        """统一执行 L2 归一化，保证余弦相似度可比。"""
+        if not vector:
+            return []
+        norm = sum(item * item for item in vector) ** 0.5
+        if norm == 0:
+            return vector
+        return [item / norm for item in vector]
 
 
 class RagIndexManager:
@@ -118,6 +127,13 @@ class RagIndexManager:
             "embedding_model": self.settings.embedding_model,
             "faiss_dir": str(self.faiss_dir),
         }
+
+    def all_documents(self) -> list[Document]:
+        """返回当前索引中的全部文档快照，供多路召回器复用。"""
+        return [
+            Document(page_content=doc.page_content, metadata=dict(doc.metadata))
+            for doc in self._documents
+        ]
 
     def get_bm25_retriever(self, top_k: int):
         """返回稀疏检索器，并按请求设置 top_k。"""

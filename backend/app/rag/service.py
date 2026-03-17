@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.contracts import RagEvidence, RagQueryResponse
-from app.rag.citation_guard import CitationGuard
+from app.rag.citation_guard import CitationGuard, RetrievalQualityGate
 from app.rag.graph import RagGraphOrchestrator
 from app.rag.index import RagIndexManager
 from app.rag.rerank import ListwiseReranker
@@ -23,14 +23,17 @@ class RagGraphService:
             min_sources=settings.rag_citation_min_sources,
             min_top1_score=settings.rag_citation_min_top1_score,
         )
+        self.quality_gate = RetrievalQualityGate(min_coverage=settings.rag_quality_min_coverage)
         self.retriever = HybridRetriever(index=self.index)
         self.orchestrator = RagGraphOrchestrator(
             rewriter=self.rewriter,
             retriever=self.retriever,
             reranker=self.reranker,
+            quality_gate=self.quality_gate,
             citation_guard=self.guard,
             retrieve_top_n=settings.rag_retrieve_top_n,
             final_top_k=settings.rag_final_top_k,
+            retry_top_n=settings.rag_retry_top_n,
             node_timeout_ms=settings.rag_node_timeout_ms,
         )
         self.neo4j_adapter = Neo4jKnowledgeAdapter(
@@ -46,6 +49,8 @@ class RagGraphService:
 
     def run(self, session_id: str, query: str, top_k: int = 8, debug: bool = False) -> RagQueryResponse:
         """执行一轮 RAG 查询并返回上下文、来源与降级状态。"""
+        if getattr(self.index, "_bm25", None) is None:
+            self.index.startup()
         # 关键变量：effective_top_k 保证请求参数不会突破系统上限。
         effective_top_k = max(1, min(top_k, self.settings.rag_final_top_k))
         result = self.orchestrator.run(session_id=session_id, query=query, top_k=effective_top_k)

@@ -60,7 +60,9 @@ class ListwiseReranker:
                 overlap += min(text.count(token), 4) * 0.1
             base_score = float(doc.metadata.get("score", 0.0))
             recency_bonus = 1.0 / (idx + 1)
-            score = base_score * 0.6 + overlap + recency_bonus * 0.05
+            publish_date = str(doc.metadata.get("publish_date", "")).strip()
+            freshness = 0.03 if publish_date else 0.0
+            score = base_score * 0.6 + overlap + recency_bonus * 0.05 + freshness
             cloned = Document(page_content=doc.page_content, metadata=dict(doc.metadata))
             cloned.metadata["score"] = score
             scored.append((score, cloned))

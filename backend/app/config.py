@@ -35,8 +35,10 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = Field(default=80, alias="RAG_CHUNK_OVERLAP")
     rag_retrieve_top_n: int = Field(default=40, alias="RAG_RETRIEVE_TOP_N")
     rag_final_top_k: int = Field(default=8, alias="RAG_FINAL_TOP_K")
+    rag_retry_top_n: int = Field(default=64, alias="RAG_RETRY_TOP_N")
     rag_citation_min_sources: int = Field(default=2, alias="RAG_CITATION_MIN_SOURCES")
     rag_citation_min_top1_score: float = Field(default=0.18, alias="RAG_CITATION_MIN_TOP1_SCORE")
+    rag_quality_min_coverage: float = Field(default=0.25, alias="RAG_QUALITY_MIN_COVERAGE")
     rag_node_timeout_ms: int = Field(default=1200, alias="RAG_NODE_TIMEOUT_MS")
 
     neo4j_uri: str = Field(default="", alias="NEO4J_URI")

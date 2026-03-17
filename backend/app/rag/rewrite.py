@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -17,7 +18,7 @@ class QueryRewriter:
             [
                 (
                     "system",
-                    "你是招生检索改写器。输出2-3条简短检索语句，每行一条，禁止解释。",
+                    "你是招生检索改写器。先判断是否需要改写；无必要时保留原问。必须保留年份、省份、专业、分数、金额、否定词等硬约束。输出2-3条简短检索语句，每行一条，禁止解释。",
                 ),
                 ("user", "原始问题：{query}"),
             ]
@@ -80,6 +81,28 @@ class QueryRewriter:
     def _fallback_rewrite(self, query: str) -> list[str]:
         """无可用 LLM 时，至少返回原问题和两个轻量变体。"""
         variants = [query]
-        variants.append(f"{query} 招生章程")
-        variants.append(f"{query} 官方政策")
+        if self._needs_rewrite(query):
+            suffixes = ["招生章程", "官方政策"]
+            for suffix in suffixes:
+                variants.append(f"{query} {suffix}".strip())
+        else:
+            variants.append(f"{query} 官方")
+            constraint_tail = " ".join(self._extract_constraints(query))
+            if constraint_tail:
+                variants.append(f"{query} {constraint_tail}".strip())
+            else:
+                variants.append(f"{query} 招生")
         return list(dict.fromkeys(variants))[:3]
+
+    def _needs_rewrite(self, query: str) -> bool:
+        """简单判断是否需要扩展召回，而不是逮啥都改。"""
+        if len(query) >= 18:
+            return True
+        if any(keyword in query for keyword in ("怎么", "如何", "能不能", "是否", "哪些", "多少")):
+            return True
+        return False
+
+    def _extract_constraints(self, query: str) -> list[str]:
+        """提取年份、数字和否定等硬约束，避免改写跑偏。"""
+        constraints = re.findall(r"20\d{2}|\d+分|\d+元|不(?:要|能|可以|允许)|河南|河北|艺术类|理工类", query)
+        return list(dict.fromkeys(constraints))

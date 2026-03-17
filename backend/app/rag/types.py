@@ -21,10 +21,16 @@ class RagGraphState(TypedDict, total=False):
     session_id: str
     raw_query: str
     normalized_query: str
+    route_label: str
+    route_reason: str
+    route_retrieve_top_n: int
     rewritten_queries: list[str]
     retrieved_docs: list[Document]
     reranked_docs: list[Document]
     final_context_blocks: list[str]
+    quality_passed: bool
+    quality_report: dict[str, float | int | bool | str | None]
+    retry_count: int
     guard_passed: bool
     degrade_reason: str | None
     latency_breakdown_ms: dict[str, float]
