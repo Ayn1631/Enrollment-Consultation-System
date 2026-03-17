@@ -148,10 +148,12 @@ class RagGraphOrchestrator:
             normalized = str(state.get("normalized_query", ""))
             route_label, route_reason = self._classify_route(normalized)
             top_n = self._route_top_n(route_label)
+            summary_focus_parent_ids = self.retriever.locate_summary_parents(normalized, top_n=3) if route_label == "policy" else []
             return {
                 "route_label": route_label,
                 "route_reason": route_reason,
                 "route_retrieve_top_n": top_n,
+                "summary_focus_parent_ids": summary_focus_parent_ids,
             }
 
         return self._timed(state, "route_query", _run)
@@ -163,7 +165,11 @@ class RagGraphOrchestrator:
             if not queries:
                 return {"retrieved_docs": []}
             retrieve_top_n = int(state.get("route_retrieve_top_n") or self.retrieve_top_n)
-            rows = self.retriever.retrieve(queries=queries, top_n=retrieve_top_n)
+            rows = self.retriever.retrieve(
+                queries=queries,
+                top_n=retrieve_top_n,
+                focus_parent_ids=list(state.get("summary_focus_parent_ids", [])),
+            )
             docs: list[Document] = []
             for item in rows:
                 doc = Document(page_content=item.document.page_content, metadata=dict(item.document.metadata))
@@ -254,6 +260,7 @@ class RagGraphOrchestrator:
                 rows = self.retriever.retrieve(
                     queries=retry_queries,
                     top_n=max(self.retry_top_n, int(state.get("route_retrieve_top_n") or 0)),
+                    focus_parent_ids=list(state.get("summary_focus_parent_ids", [])),
                 )
             except Exception:
                 return {"retry_count": retry_count + 1, "degrade_reason": "retry_retrieval_failed"}

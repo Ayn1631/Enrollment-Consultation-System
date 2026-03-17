@@ -49,6 +49,30 @@ def test_memory_service_write_read():
     assert len(read_res.json()["entries"]) >= 1
 
 
+def test_memory_service_supports_long_and_special_kinds():
+    client = TestClient(memory_app)
+    client.post(
+        "/memory/write",
+        json={
+            "session_id": "s-memory-kinds",
+            "entry": {"key": "rolling_summary", "value": "用户关注学费和资助", "kind": "long", "confidence": 0.8},
+        },
+    )
+    client.post(
+        "/memory/write",
+        json={
+            "session_id": "s-memory-kinds",
+            "entry": {"key": "response_style", "value": "偏好简短回答", "kind": "special", "confidence": 0.9},
+        },
+    )
+    long_res = client.post("/memory/read?kind=long", json={"session_id": "s-memory-kinds"})
+    special_res = client.post("/memory/read?kind=special", json={"session_id": "s-memory-kinds"})
+    assert long_res.status_code == 200
+    assert special_res.status_code == 200
+    assert long_res.json()["entries"][0]["key"] == "rolling_summary"
+    assert special_res.json()["entries"][0]["key"] == "response_style"
+
+
 def test_skill_service_saved_list_and_execute():
     client = TestClient(skill_app)
     list_res = client.get("/skills/saved?active_only=true")

@@ -25,10 +25,32 @@ class MemoryManager:
     def write(self, session_id: str, entry: MemoryEntry) -> None:
         if entry.expires_at is None and entry.kind == "short":
             entry.expires_at = datetime.utcnow() + timedelta(hours=4)
+        if entry.expires_at is None and entry.kind == "special":
+            entry.expires_at = datetime.utcnow() + timedelta(days=90)
         with self._lock:
             session = self._get(session_id)
             bucket = self._bucket(session, entry.kind)
             bucket[entry.key] = entry
+
+    def append_long_summary(self, session_id: str, snippet: str, max_length: int = 600) -> MemoryEntry:
+        """维护滚动长期摘要，避免每轮都做全量重写。"""
+        with self._lock:
+            session = self._get(session_id)
+            bucket = self._bucket(session, "long")
+            existing = bucket.get("rolling_summary")
+            previous = existing.value if existing else ""
+            merged = self._merge_summary(previous=previous, snippet=snippet, max_length=max_length)
+            entry = MemoryEntry(
+                key="rolling_summary",
+                value=merged,
+                kind="long",
+                confidence=0.72,
+                source="rolling_summary",
+                last_verified=datetime.utcnow(),
+                expires_at=datetime.utcnow() + timedelta(days=30),
+            )
+            bucket[entry.key] = entry
+            return entry
 
     def read(self, session_id: str, kind: str, key: str | None = None) -> list[MemoryEntry]:
         with self._lock:
@@ -56,3 +78,15 @@ class MemoryManager:
             return session.special
         raise ValueError(f"unknown memory kind: {kind}")
 
+    def _merge_summary(self, previous: str, snippet: str, max_length: int) -> str:
+        """增量合并长期摘要，保持信息简洁。"""
+        normalized_prev = " ".join(previous.split()).strip()
+        normalized_snippet = " ".join(snippet.split()).strip()
+        if not normalized_prev:
+            return normalized_snippet[:max_length]
+        if normalized_snippet in normalized_prev:
+            return normalized_prev[:max_length]
+        merged = f"{normalized_prev} | {normalized_snippet}".strip(" |")
+        if len(merged) <= max_length:
+            return merged
+        return merged[-max_length:]

@@ -43,6 +43,15 @@ class RagIngestor:
                 parent_text = self._build_contextual_chunk(parent_chunk, metadata)
                 parent_id = f"{metadata['doc_id']}-parent-{parent_idx}"
                 section_hint = self._extract_section_hint(parent_chunk)
+                summary_doc = self._build_summary_document(
+                    metadata=metadata,
+                    parent_idx=parent_idx,
+                    parent_id=parent_id,
+                    parent_chunk=parent_chunk,
+                    parent_text=parent_text,
+                    section_hint=section_hint,
+                )
+                rows.append(summary_doc)
                 child_chunks = self._split_text(
                     parent_chunk,
                     chunk_size=self.chunk_size,
@@ -69,6 +78,7 @@ class RagIngestor:
                             metadata={
                                 **metadata,
                                 "chunk_id": chunk_id,
+                                "chunk_level": "small",
                                 "parent_id": parent_id,
                                 "parent_text": parent_text,
                                 "section_hint": section_hint,
@@ -145,6 +155,37 @@ class RagIngestor:
         prefix = "\n".join(prefix_parts)
         return f"{prefix}\n正文：{chunk.strip()}".strip()
 
+    def _build_summary_document(
+        self,
+        metadata: dict[str, str],
+        parent_idx: int,
+        parent_id: str,
+        parent_chunk: str,
+        parent_text: str,
+        section_hint: str,
+    ) -> Document:
+        """为每个大块构建章节摘要层，供复杂问题先做导航定位。"""
+        summary_text = self._summarize_parent_chunk(parent_chunk)
+        summary_body = (
+            f"标题：{metadata['source_title']}\n"
+            f"主题：{metadata['topic']}\n"
+            f"摘要层：{section_hint}\n"
+            f"摘要内容：{summary_text}"
+        )
+        return Document(
+            page_content=summary_body,
+            metadata={
+                **metadata,
+                "chunk_id": f"{metadata['doc_id']}-summary-{parent_idx}",
+                "chunk_level": "summary",
+                "parent_id": parent_id,
+                "parent_text": parent_text,
+                "section_hint": section_hint,
+                "chunk_text": summary_text,
+                "chunk_text_hash": self._normalized_hash(summary_text),
+            },
+        )
+
     def _extract_section_hint(self, text: str) -> str:
         """从块内提取最有代表性的章节点提示。"""
         patterns = [
@@ -188,6 +229,19 @@ class RagIngestor:
         """生成段落级去重哈希，避免重复内容污染召回。"""
         normalized = re.sub(r"\s+", " ", text).strip().lower()
         return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+
+    def _summarize_parent_chunk(self, text: str) -> str:
+        """抽取章节标题和关键句，构造轻量摘要层。"""
+        normalized = [line.strip() for line in text.splitlines() if line.strip()]
+        highlights: list[str] = []
+        for line in normalized:
+            if any(token in line for token in ("第", "学费", "资助", "录取", "招生", "电话", "地址", "奖学金", "贷款", "公告")):
+                highlights.append(line)
+            if len(highlights) >= 4:
+                break
+        if not highlights:
+            highlights = normalized[:3]
+        return "；".join(item[:80] for item in highlights if item)[:320]
 
     def _derive_effective_window(
         self,

@@ -24,6 +24,7 @@ class RagGraphState(TypedDict, total=False):
     route_label: str
     route_reason: str
     route_retrieve_top_n: int
+    summary_focus_parent_ids: list[str]
     rewritten_queries: list[str]
     retrieved_docs: list[Document]
     reranked_docs: list[Document]

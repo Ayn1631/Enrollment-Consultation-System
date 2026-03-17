@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from app.contracts import GenerationRequest
+from app.contracts import GenerationRequest, MemoryEntry
 from app.models import (
     ChatCreateResponse,
     ChatRequest,
@@ -42,7 +42,7 @@ class GatewayOrchestrator:
             last_user = "请介绍中原工学院招生政策要点。"
         ordered_features = self.deps.services.plan_features(request.features)
 
-        # Short-term memory read (degradable)
+        # 记忆读取：短期 / 长期 / 特殊分层接入。
         memory_result = self.deps.container.isolation.execute(
             "memory-service",
             lambda: self.deps.services.read_short_memory(request.session_id),
@@ -53,6 +53,22 @@ class GatewayOrchestrator:
         else:
             degraded.append("skill_exec") if False else None
             feature_notes.append("短期记忆不可用，已忽略。")
+        self._append_optional_memory_context(
+            context_blocks=context_blocks,
+            feature_notes=feature_notes,
+            session_id=request.session_id,
+            kind="long",
+            label="长期记忆",
+            prefix="[long-memory]",
+        )
+        self._append_optional_memory_context(
+            context_blocks=context_blocks,
+            feature_notes=feature_notes,
+            session_id=request.session_id,
+            kind="special",
+            label="特殊记忆",
+            prefix="[special-memory]",
+        )
 
         for feature in ordered_features:
             if feature == "rag":
@@ -173,6 +189,22 @@ class GatewayOrchestrator:
             "memory-service",
             lambda: self.deps.services.write_short_memory(request.session_id, "last_user_query", last_user),
         )
+        self.deps.container.isolation.execute(
+            "memory-service",
+            lambda: self.deps.services.append_long_memory_summary(
+                request.session_id,
+                self._build_long_memory_snippet(last_user=last_user, response_text=final_text),
+            ),
+        )
+        special_preference = self._infer_special_memory(last_user)
+        if special_preference is not None:
+            self.deps.container.isolation.execute(
+                "memory-service",
+                lambda: self.deps.services.write_memory(
+                    request.session_id,
+                    special_preference,
+                ),
+            )
 
         session = SessionResult(
             session_id=request.session_id,
@@ -255,3 +287,46 @@ class GatewayOrchestrator:
             )
         )
         return result.text
+
+    def _append_optional_memory_context(
+        self,
+        context_blocks: list[str],
+        feature_notes: list[str],
+        session_id: str,
+        kind: str,
+        label: str,
+        prefix: str,
+    ) -> None:
+        """按种类加载非关键记忆，失败时只记备注不打断主流程。"""
+        memory_result = self.deps.container.isolation.execute(
+            "memory-service",
+            lambda: self.deps.services.read_memory(session_id=session_id, kind=kind),
+        )
+        if memory_result.ok and memory_result.value and memory_result.value.entries:
+            context_blocks.extend([f"{prefix} {item.value}" for item in memory_result.value.entries[:2]])
+            feature_notes.append(f"{label}已接入上下文。")
+
+    def _build_long_memory_snippet(self, last_user: str, response_text: str) -> str:
+        """构造滚动摘要片段，给长期记忆做增量更新。"""
+        answer_excerpt = " ".join(response_text.split())[:160]
+        return f"用户关注：{last_user[:80]}；系统回应摘要：{answer_excerpt}"
+
+    def _infer_special_memory(self, last_user: str):
+        """从用户表达中提炼稳定偏好，写入 special memory。"""
+        preference_map = {
+            "简短": "偏好简短回答",
+            "简洁": "偏好简短回答",
+            "详细": "偏好详细回答",
+            "分点": "偏好分点回答",
+            "表格": "偏好表格化展示",
+        }
+        for keyword, value in preference_map.items():
+            if keyword in last_user:
+                return MemoryEntry(
+                    key="response_style",
+                    value=value,
+                    kind="special",
+                    confidence=0.88,
+                    source="user_preference",
+                )
+        return None

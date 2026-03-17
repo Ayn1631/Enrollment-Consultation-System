@@ -34,15 +34,16 @@ class HybridRetriever:
         self.exact_weight = exact_weight
         self.rrf_k = rrf_k
 
-    def retrieve(self, queries: list[str], top_n: int) -> list[RetrievedItem]:
+    def retrieve(self, queries: list[str], top_n: int, focus_parent_ids: list[str] | None = None) -> list[RetrievedItem]:
         """执行多查询召回并融合分数后返回 top_n。"""
         merged_scores: dict[str, float] = {}
         merged_docs: dict[str, Document] = {}
+        focus_parent_ids = focus_parent_ids or []
 
         for query in queries:
             if not query.strip():
                 continue
-            rows = self._retrieve_single_query(query=query, top_n=top_n)
+            rows = self._retrieve_single_query(query=query, top_n=top_n, focus_parent_ids=focus_parent_ids)
             for item in rows:
                 chunk_id = str(item.document.metadata.get("chunk_id", ""))
                 if not chunk_id:
@@ -57,7 +58,7 @@ class HybridRetriever:
         ranked.sort(key=lambda row: row.score, reverse=True)
         return ranked[:top_n]
 
-    def _retrieve_single_query(self, query: str, top_n: int) -> list[RetrievedItem]:
+    def _retrieve_single_query(self, query: str, top_n: int, focus_parent_ids: list[str]) -> list[RetrievedItem]:
         """执行单查询召回，并使用 RRF 融合三路排序。"""
         bm25 = self.index.get_bm25_retriever(top_k=top_n)
         sparse_docs = bm25.invoke(query)
@@ -79,9 +80,47 @@ class HybridRetriever:
         ranked_items: list[RetrievedItem] = []
         for doc in merged:
             chunk_id = str(doc.metadata.get("chunk_id", ""))
-            score = scores.get(chunk_id, 0.0) + self._temporal_bonus(query=query, doc=doc)
+            score = scores.get(chunk_id, 0.0) + self._temporal_bonus(query=query, doc=doc) + self._parent_focus_bonus(doc, focus_parent_ids)
             ranked_items.append(RetrievedItem(document=doc, score=score))
         return ranked_items
+
+    def locate_summary_parents(self, query: str, top_n: int = 3) -> list[str]:
+        """先检索摘要层，返回应重点关注的 parent_id。"""
+        summary_docs = [doc for doc in self.index.all_documents() if str(doc.metadata.get("chunk_level", "")) == "summary"]
+        if not summary_docs:
+            return []
+        tokens = self._tokenize(query)
+        scored: list[tuple[float, str]] = []
+        for doc in summary_docs:
+            text = " ".join(
+                [
+                    str(doc.metadata.get("section_hint", "")),
+                    str(doc.metadata.get("topic", "")),
+                    str(doc.metadata.get("chunk_text", "")),
+                    doc.page_content,
+                ]
+            ).lower()
+            token_hits = sum(1 for token in tokens if token in text)
+            if token_hits <= 0:
+                continue
+            parent_id = str(doc.metadata.get("parent_id", ""))
+            if not parent_id:
+                continue
+            score = token_hits / max(len(tokens), 1)
+            if any(token.isdigit() and token in text for token in tokens):
+                score += 0.2
+            scored.append((score, parent_id))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for _, parent_id in scored:
+            if parent_id in seen:
+                continue
+            seen.add(parent_id)
+            ordered.append(parent_id)
+            if len(ordered) >= top_n:
+                break
+        return ordered
 
     def _build_rank_score_map(self, sparse_docs: list[Document], dense_docs: list[Document], exact_docs: list[Document]) -> dict[str, float]:
         """使用 RRF 把多路排序位置映射为可比较分值。"""
@@ -207,6 +246,14 @@ class HybridRetriever:
             ]
         )
         return any(year in haystack for year in years)
+
+    def _parent_focus_bonus(self, doc: Document, focus_parent_ids: list[str]) -> float:
+        if not focus_parent_ids:
+            return 0.0
+        parent_id = str(doc.metadata.get("parent_id", ""))
+        if parent_id and parent_id in set(focus_parent_ids):
+            return 0.9
+        return -0.05 if str(doc.metadata.get("chunk_level", "")) == "summary" else 0.0
 
     def _is_time_sensitive(self, query: str) -> bool:
         keywords = ("最新", "当前", "现在", "今年", "最近", "近期", "公告", "通知")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.config import DOCS_DIR, Settings
-from app.contracts import RagQueryResponse
+from app.contracts import MemoryEntry, RagQueryResponse
 from app.services.service_client import ServiceClient
 
 
@@ -147,3 +147,17 @@ def test_execute_skill_prefers_langchain4j_bridge(monkeypatch):
     monkeypatch.setattr(client, "_langchain4j_bridge", _FakeBridge())
     result = client.execute_skill(query="招生政策", session_id="s1", saved_skill_id="skill-v1")
     assert result.note == "来自LangChain4j的技能结果"
+
+
+def test_memory_client_supports_long_and_special_memory():
+    settings = _local_settings()
+    client = ServiceClient(settings=settings)
+    client.write_memory(
+        session_id="s-memory",
+        entry=MemoryEntry(key="response_style", value="偏好简短回答", kind="special", confidence=0.88),
+    )
+    client.append_long_memory_summary("s-memory", "用户关注学费和资助")
+    special_entries = client.read_memory("s-memory", kind="special").entries
+    long_entries = client.read_memory("s-memory", kind="long").entries
+    assert special_entries[0].value == "偏好简短回答"
+    assert "用户关注学费和资助" in long_entries[0].value

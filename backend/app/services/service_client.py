@@ -78,10 +78,13 @@ class ServiceClient:
         return self._rag_service.run(session_id=session_id, query=query, top_k=top_k, debug=debug)
 
     def write_short_memory(self, session_id: str, key: str, value: str) -> None:
-        request = MemoryWriteRequest(
-            session_id=session_id,
-            entry=MemoryEntry(key=key, value=value, kind="short"),
-        )
+        self.write_memory(session_id=session_id, entry=MemoryEntry(key=key, value=value, kind="short"))
+
+    def read_short_memory(self, session_id: str) -> MemoryReadResponse:
+        return self.read_memory(session_id=session_id, kind="short")
+
+    def write_memory(self, session_id: str, entry: MemoryEntry) -> None:
+        request = MemoryWriteRequest(session_id=session_id, entry=entry)
         if self.settings.service_call_mode == "http":
             self._post(
                 f"{self.settings.memory_service_url}/memory/write",
@@ -91,17 +94,27 @@ class ServiceClient:
             return
         self._memory.write(session_id, request.entry)
 
-    def read_short_memory(self, session_id: str) -> MemoryReadResponse:
-        query = MemoryQuery(session_id=session_id)
+    def read_memory(self, session_id: str, kind: str, key: str | None = None) -> MemoryReadResponse:
+        query = MemoryQuery(session_id=session_id, key=key)
         if self.settings.service_call_mode == "http":
             body = self._post(
-                f"{self.settings.memory_service_url}/memory/read?kind=short",
+                f"{self.settings.memory_service_url}/memory/read?kind={kind}",
                 query.model_dump(),
                 self.settings.memory_service_timeout_seconds,
             )
             return MemoryReadResponse.model_validate(body)
-        entries = self._memory.read(session_id, kind="short")
+        entries = self._memory.read(session_id, kind=kind, key=key)
         return MemoryReadResponse(entries=entries)
+
+    def append_long_memory_summary(self, session_id: str, snippet: str) -> MemoryEntry:
+        if self.settings.service_call_mode == "http":
+            existing = self.read_memory(session_id=session_id, kind="long", key="rolling_summary").entries
+            previous = existing[0].value if existing else ""
+            merged = f"{previous} | {snippet}".strip(" |")[-600:]
+            entry = MemoryEntry(key="rolling_summary", value=merged, kind="long", confidence=0.72, source="rolling_summary")
+            self.write_memory(session_id=session_id, entry=entry)
+            return entry
+        return self._memory.append_long_summary(session_id=session_id, snippet=snippet)
 
     def execute_skill(self, query: str, session_id: str, saved_skill_id: str | None = None) -> SkillExecuteResponse:
         """技能执行入口：保存技能优先走 LangChain4j 桥接，失败后回退本地策略。"""

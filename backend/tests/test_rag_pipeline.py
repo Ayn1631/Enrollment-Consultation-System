@@ -180,7 +180,7 @@ def test_rag_graph_retry_retrieve_recovers_low_coverage():
         def __init__(self):
             self.calls = 0
 
-        def retrieve(self, queries: list[str], top_n: int):
+        def retrieve(self, queries: list[str], top_n: int, focus_parent_ids: list[str] | None = None):
             self.calls += 1
             if self.calls == 1:
                 return [
@@ -258,3 +258,32 @@ def test_ingestor_extracts_metadata_and_parent_context(tmp_path):
     assert first.metadata["parent_id"].startswith("01-招生政策-parent-")
     assert "标题：2025 招生政策" in first.page_content
     assert first.metadata["chunk_text_hash"]
+
+
+def test_ingestor_builds_summary_layer_and_locator_hits_parent(tmp_path):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    sample = docs_dir / "01-招生政策.md"
+    sample.write_text(
+        "# 原文（来源：https://example.com/policy）\n"
+        "网页标题：2025 招生政策\n"
+        "抓取时间：2026-02-13\n"
+        "发布时间：2025-05-15\n\n"
+        "第一章 总则\n"
+        "第十七条 学费标准如下，理工类 5000 元，住宿费 800 元。\n"
+        "第十八条 国家助学贷款每生每年最高 20000 元。\n",
+        encoding="utf-8",
+    )
+    ingestor = RagIngestor(docs_dir=docs_dir, chunk_size=80, chunk_overlap=10)
+    docs = ingestor.load_documents()
+    summary_docs = [doc for doc in docs if doc.metadata.get("chunk_level") == "summary"]
+    assert summary_docs
+
+    class _Index:
+        def all_documents(self):
+            return docs
+
+    retriever = HybridRetriever(index=_Index())
+    parents = retriever.locate_summary_parents("助学贷款 20000 元", top_n=2)
+    assert parents
+    assert parents[0].startswith("01-招生政策-parent-")

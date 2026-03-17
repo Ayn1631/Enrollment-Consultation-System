@@ -167,3 +167,25 @@ def test_citation_guard_dependency_auto_enables_rag():
     data = res.json()
     assert data["status"] == "degraded"
     assert "rag" in data["degraded_features"]
+
+
+def test_gateway_persists_special_and_long_memory_into_followup_context():
+    client = TestClient(app)
+    session_id = uuid.uuid4().hex
+    first_payload = _base_payload()
+    first_payload["session_id"] = session_id
+    first_payload["messages"] = [{"role": "user", "content": "请简短介绍招生政策重点"}]
+    first_res = client.post("/api/chat", json=first_payload)
+    assert first_res.status_code == 200
+
+    second_payload = _base_payload()
+    second_payload["session_id"] = session_id
+    second_payload["messages"] = [{"role": "user", "content": "再说一下学费"}]
+    second_res = client.post("/api/chat", json=second_payload)
+    assert second_res.status_code == 200
+
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "偏好简短回答" in body
+    assert "用户关注" in body
