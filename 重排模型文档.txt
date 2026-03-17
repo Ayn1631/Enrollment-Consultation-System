@@ -1,0 +1,203 @@
+Skip to main content
+
+简体中文
+
+Search...
+⌘K
+用户指南
+场景示例
+API手册
+更新公告
+条款与协议
+文本系列
+POST
+创建对话请求（OpenAI）
+POST
+创建对话请求（Anthropic）
+POST
+创建嵌入请求
+POST
+创建重排序请求
+图像系列
+POST
+创建图片生成请求
+语音系列
+POST
+上传参考音频
+POST
+创建文本转语音请求
+GET
+参考音频列表获取
+POST
+删除参考音频
+POST
+创建语音转文本请求
+视频系列
+POST
+创建视频生成请求
+POST
+获取视频生成链接请求
+批量处理
+POST
+上传文件
+GET
+获取文件列表
+POST
+创建batch任务
+GET
+获取batch任务详情
+GET
+获取batch任务列表
+POST
+取消batch任务
+平台系列
+GET
+获取用户模型列表
+Create Rerank
+
+curl --request POST \
+  --url https://api.siliconflow.cn/v1/rerank \
+  --header 'Authorization: Bearer <token>' \
+  --header 'Content-Type: application/json' \
+  --data '
+{
+  "model": "BAAI/bge-reranker-v2-m3",
+  "query": "Apple",
+  "documents": [
+    "apple",
+    "banana",
+    "fruit",
+    "vegetable"
+  ]
+}
+'
+
+200
+
+400
+
+401
+
+403
+
+404
+
+429
+
+503
+
+504
+{
+  "id": "<string>",
+  "results": [
+    {
+      "document": {
+        "text": "<string>"
+      },
+      "index": 123,
+      "relevance_score": 123
+    }
+  ],
+  "meta": [
+    {
+      "tokens": {
+        "input_tokens": 123,
+        "output_tokens": 123
+      }
+    }
+  ]
+}
+文本系列
+创建重排序请求
+Creates a rerank request.
+
+POST
+/
+rerank
+Authorizations
+​
+Authorization
+stringheaderrequired
+Use the following format for authentication: Bearer
+
+Body
+application/json
+​
+model
+stringrequired
+Corresponding Model Name. To better enhance service quality, we will make periodic changes to the models provided by this service, including but not limited to model on/offlining and adjustments to model service capabilities. We will notify you of such changes through appropriate means such as announcements or message pushes where feasible. For a complete list of available models, please check the Models.
+
+Example:
+"BAAI/bge-reranker-v2-m3"
+
+​
+query
+stringrequired
+Required. The search query.
+
+Example:
+"Apple"
+
+​
+documents
+string[]required
+Currently, only string lists are supported. Document objects will be supported in the future.
+
+Minimum array length: 1
+Example:
+["apple", "banana", "fruit", "vegetable"]
+​
+instruction
+string
+The instruction for the reranker, only support Qwen/Qwen3-Reranker-8B, Qwen/Qwen3-Reranker-4B,Qwen/Qwen3-Reranker-0.6B.
+
+Example:
+"Please rerank the documents based on the query."
+
+​
+top_n
+integer
+Number of most relevant documents or indices to return.
+
+Example:
+4
+
+​
+return_documents
+boolean
+If false, the response does not include document text; if true, it includes the input document text.
+
+​
+max_chunks_per_doc
+integer
+Maximum number of chunks generated from within a document. Long documents are divided into multiple chunks for calculation, and the highest score among the chunks is taken as the document's score. only BAAI/bge-reranker-v2-m3, Pro/BAAI/bge-reranker-v2-m3, netease-youdao/bce-reranker-base_v1 support this field.
+
+​
+overlap_tokens
+integer
+Number of token overlaps between adjacent chunks when documents are chunked. only BAAI/bge-reranker-v2-m3, Pro/BAAI/bge-reranker-v2-m3, netease-youdao/bce-reranker-base_v1 support this field.
+
+Required range: x <= 80
+Response
+
+200
+
+application/json
+The response from the model. The response header contains the x-siliconcloud-trace-id field, which serves as a unique identifier for tracing requests, facilitating log queries and issue troubleshooting.
+
+​
+id
+stringrequired
+​
+results
+object[]required
+Show child attributes
+
+​
+meta
+object[]
+Show child attributes
+
+创建嵌入请求
+创建图片生成请求
+Powered by

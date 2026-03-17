@@ -49,7 +49,7 @@ class RagGraphOrchestrator:
         """执行图工作流并把状态投影为对外响应结构。"""
         initial_state: RagGraphState = {
             "trace_id": uuid.uuid4().hex,
-            "session_id": session_id,
+            "session_id": dsession_id,
             "raw_query": query,
             "latency_breakdown_ms": {},
             "degrade_reason": None,
