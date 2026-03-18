@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     embedding_api_url: str = Field(default="", alias="EMBEDDING_API_URL")
     embedding_model: str = Field(default="text-embedding-3-large", alias="EMBEDDING_MODEL")
+    embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
     rag_faiss_dir: Path = Field(default=ROOT_DIR / "backend" / "data" / "faiss", alias="RAG_FAISS_DIR")
     rag_chunk_size: int = Field(default=500, alias="RAG_CHUNK_SIZE")
     rag_chunk_overlap: int = Field(default=80, alias="RAG_CHUNK_OVERLAP")

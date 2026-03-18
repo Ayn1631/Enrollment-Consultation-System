@@ -16,11 +16,20 @@ from app.rag.ingest import RagIngestor
 class OpenAICompatibleEmbeddings(Embeddings):
     """OpenAI 兼容 Embedding 客户端，支持同源 /embeddings 端点。"""
 
-    def __init__(self, endpoint: str, api_key: str, model: str, timeout_seconds: float, force_local: bool = False):
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        model: str,
+        timeout_seconds: float,
+        batch_size: int = 16,
+        force_local: bool = False,
+    ):
         self.endpoint = endpoint
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.batch_size = max(1, batch_size)
         self.force_local = force_local
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -37,22 +46,29 @@ class OpenAICompatibleEmbeddings(Embeddings):
             return []
         if self.force_local or not self.api_key:
             return [self._local_fallback_embedding(text) for text in texts]
+        try:
+            results: list[list[float]] = []
+            for start in range(0, len(texts), self.batch_size):
+                batch = texts[start : start + self.batch_size]
+                results.extend(self._embed_remote_batch(batch))
+            return results
+        except Exception:
+            return [self._local_fallback_embedding(text) for text in texts]
+
+    def _embed_remote_batch(self, texts: list[str]) -> list[list[float]]:
         payload: dict[str, Any] = {"model": self.model, "input": texts}
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        try:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                response = client.post(self.endpoint, headers=headers, json=payload)
-                response.raise_for_status()
-                body = response.json()
-            data = body.get("data", [])
-            if len(data) != len(texts):
-                raise RuntimeError("embedding response size mismatch")
-            return [self._normalize_vector(list(item.get("embedding", []))) for item in data]
-        except Exception:
-            return [self._local_fallback_embedding(text) for text in texts]
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            response = client.post(self.endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            body = response.json()
+        data = body.get("data", [])
+        if len(data) != len(texts):
+            raise RuntimeError("embedding response size mismatch")
+        return [self._normalize_vector(list(item.get("embedding", []))) for item in data]
 
     def _local_fallback_embedding(self, text: str) -> list[float]:
         """离线降级向量，保证无网络场景仍可构建 FAISS。"""
@@ -92,6 +108,7 @@ class RagIndexManager:
             api_key=settings.api_key,
             model=settings.embedding_model,
             timeout_seconds=settings.request_timeout_seconds,
+            batch_size=settings.embedding_batch_size,
             force_local=settings.use_mock_generation,
         )
         self._ingestor = RagIngestor(
