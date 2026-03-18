@@ -107,6 +107,7 @@ class ChatStreamDone(BaseModel):
     degraded_features: list[FeatureFlag] = Field(default_factory=list)
     sources: list[ChatSource] = Field(default_factory=list)
     trace_id: str = ""
+    tool_audit: list[str] = Field(default_factory=list)
 
 
 class FeatureMeta(BaseModel):
@@ -144,6 +145,7 @@ class SessionResult(BaseModel):
     status: ChatStatus
     degraded_features: list[FeatureFlag] = Field(default_factory=list)
     sources: list[ChatSource] = Field(default_factory=list)
+    tool_audit: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     finish_reason: FinishReason = "stop"
     error_message: str | None = None

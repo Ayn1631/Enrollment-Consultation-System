@@ -66,6 +66,18 @@ def test_web_search_failure_should_degrade_not_fail():
     assert "web_search" in data["degraded_features"]
 
 
+def test_web_search_should_be_blocked_for_non_time_sensitive_query():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["messages"] = [{"role": "user", "content": "学校地址是什么"}]
+    res = client.post("/api/chat", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "degraded"
+    assert "web_search" in data["degraded_features"]
+
+
 def test_skill_exec_failure_should_degrade_not_fail():
     client = TestClient(app)
     payload = _base_payload()
@@ -158,6 +170,18 @@ def test_saved_skill_dependency_auto_enables_skill_exec():
     assert "skill_exec" in data["degraded_features"]
 
 
+def test_unknown_saved_skill_should_be_blocked_by_whitelist():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["use_saved_skill"]
+    payload["saved_skill_id"] = "unknown_skill_v999"
+    res = client.post("/api/chat", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "degraded"
+    assert "use_saved_skill" in data["degraded_features"]
+
+
 def test_citation_guard_dependency_auto_enables_rag():
     client = TestClient(app)
     payload = _base_payload()
@@ -189,3 +213,18 @@ def test_gateway_persists_special_and_long_memory_into_followup_context():
     body = stream_res.text
     assert "偏好简短回答" in body
     assert "用户关注" in body
+
+
+def test_stream_done_event_contains_tool_audit():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["messages"] = [{"role": "user", "content": "学校地址是什么"}]
+    post_res = client.post("/api/chat", json=payload)
+    assert post_res.status_code == 200
+    session_id = post_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "tool_audit" in body
+    assert "web_search:blocked:not_time_sensitive" in body

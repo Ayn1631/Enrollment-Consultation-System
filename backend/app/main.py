@@ -135,6 +135,7 @@ def stream_chat(session_id: str):
             degraded_features=session.degraded_features,
             sources=session.sources,
             trace_id=session.trace_id,
+            tool_audit=session.tool_audit,
         )
         yield f"event: done\ndata: {done.model_dump_json()}\n\n"
 

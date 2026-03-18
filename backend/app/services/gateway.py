@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -23,6 +24,8 @@ class GatewayDependencies:
 
 
 class GatewayOrchestrator:
+    WEB_SEARCH_ALLOWED_DOMAINS: tuple[str, ...] = ("zsc.zut.edu.cn", "zut.edu.cn")
+
     def __init__(self, deps: GatewayDependencies):
         self.deps = deps
 
@@ -35,6 +38,7 @@ class GatewayOrchestrator:
         feature_notes: list[str] = []
         sources: list[ChatSource] = []
         context_blocks: list[str] = []
+        tool_audit: list[str] = []
         status: ChatStatus = "ok"
 
         last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
@@ -96,9 +100,15 @@ class GatewayOrchestrator:
                 continue
 
             if feature == "web_search":
+                allowed, guarded_query, reason = self._guard_web_search(last_user)
+                tool_audit.append(f"web_search:{'allowed' if allowed else 'blocked'}:{reason}")
+                if not allowed:
+                    degraded.append("web_search")
+                    feature_notes.append(f"联网搜索已拦截：{reason}")
+                    continue
                 web_result = self.deps.container.isolation.execute(
                     "web-search-service",
-                    lambda: self._invoke_web_search(last_user, fail_features),
+                    lambda: self._invoke_web_search(guarded_query, fail_features),
                 )
                 if web_result.ok and web_result.value:
                     context_blocks.extend(web_result.value)
@@ -109,6 +119,12 @@ class GatewayOrchestrator:
                 continue
 
             if feature == "skill_exec":
+                allowed, reason = self._guard_skill_request(query=last_user, saved_skill_id=None)
+                tool_audit.append(f"skill_exec:{'allowed' if allowed else 'blocked'}:{reason}")
+                if not allowed:
+                    degraded.append("skill_exec")
+                    feature_notes.append(f"技能执行已拦截：{reason}")
+                    continue
                 skill_result = self.deps.container.isolation.execute(
                     "skill-service",
                     lambda: self._invoke_skill(last_user, request.session_id, None, fail_features),
@@ -121,6 +137,12 @@ class GatewayOrchestrator:
                 continue
 
             if feature == "use_saved_skill":
+                allowed, reason = self._guard_skill_request(query=last_user, saved_skill_id=request.saved_skill_id)
+                tool_audit.append(f"use_saved_skill:{'allowed' if allowed else 'blocked'}:{reason}")
+                if not allowed:
+                    degraded.append("use_saved_skill")
+                    feature_notes.append(f"历史技能调用已拦截：{reason}")
+                    continue
                 saved_skill_result = self.deps.container.isolation.execute(
                     "saved-skill-service",
                     lambda: self._invoke_skill(last_user, request.session_id, request.saved_skill_id, fail_features),
@@ -161,6 +183,7 @@ class GatewayOrchestrator:
                 status="failed",
                 degraded_features=list(dict.fromkeys(degraded)),
                 sources=sources,
+                tool_audit=tool_audit,
                 finish_reason="error",
                 error_message=generation_result.error or "generation failed",
             )
@@ -213,6 +236,7 @@ class GatewayOrchestrator:
             status=status,
             degraded_features=list(dict.fromkeys(degraded)),
             sources=sources,
+            tool_audit=tool_audit,
         )
         self.deps.container.session_store.set(request.session_id, session)
         return ChatCreateResponse(
@@ -237,7 +261,8 @@ class GatewayOrchestrator:
         """执行联网搜索补充，当前为轻量占位实现。"""
         if "web_search" in fail_features:
             raise RuntimeError("web search failure injected")
-        return [f"联网补充：关于“{query}”请以招生官网最新通知为准。"]
+        allowed = "、".join(self.WEB_SEARCH_ALLOWED_DOMAINS)
+        return [f"联网补充：关于“{query}”仅允许参考 {allowed} 等白名单官方站点的最新通知。"]
 
     def _invoke_skill(
         self,
@@ -330,3 +355,34 @@ class GatewayOrchestrator:
                     source="user_preference",
                 )
         return None
+
+    def _guard_web_search(self, query: str) -> tuple[bool, str, str]:
+        """联网搜索白名单与参数校验，只放行强时效且长度受控的问题。"""
+        normalized = " ".join(query.split()).strip()
+        if not normalized:
+            return False, normalized, "empty_query"
+        if len(normalized) > 120:
+            return False, normalized[:120], "query_too_long"
+        if not self._is_time_sensitive_query(normalized):
+            return False, normalized, "not_time_sensitive"
+        cleaned = re.sub(r"[^\w\u4e00-\u9fff\s\-:/\.]", " ", normalized)
+        cleaned = " ".join(cleaned.split())
+        return True, cleaned, "official_whitelist"
+
+    def _guard_skill_request(self, query: str, saved_skill_id: str | None) -> tuple[bool, str]:
+        """技能调用最小权限校验：参数长度和 saved skill 白名单。"""
+        normalized = " ".join(query.split()).strip()
+        if not normalized:
+            return False, "empty_query"
+        if len(normalized) > 200:
+            return False, "query_too_long"
+        if saved_skill_id:
+            allowed_ids = {item.id for item in self.deps.services.list_saved_skills().skills}
+            if saved_skill_id not in allowed_ids:
+                return False, "saved_skill_not_allowed"
+            return True, "saved_skill_whitelisted"
+        return True, "generic_skill_allowed"
+
+    def _is_time_sensitive_query(self, query: str) -> bool:
+        keywords = ("最新", "当前", "现在", "今年", "最近", "近期", "公告", "通知", "今日", "今天")
+        return any(keyword in query for keyword in keywords) or bool(re.search(r"\b20\d{2}\b", query))
