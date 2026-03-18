@@ -175,6 +175,24 @@ def test_retrieval_quality_gate_detects_conflicting_versions():
     assert report.reason == "conflicting_evidence"
 
 
+def test_retrieval_quality_gate_resolves_conflict_by_publish_date():
+    gate = RetrievalQualityGate(min_coverage=0.1)
+    docs = [
+        Document(
+            page_content="2025 招生章程",
+            metadata={"source_url": "https://zsc.zut.edu.cn/info/1", "publish_date": "2025-05-15", "effective_date": "2025-01-01"},
+        ),
+        Document(
+            page_content="2024 招生章程",
+            metadata={"source_url": "https://zsc.zut.edu.cn/info/2", "publish_date": "2024-05-15", "effective_date": "2024-01-01"},
+        ),
+    ]
+    result = gate.resolve_conflicts("最新招生章程", docs)
+    assert result.resolved is True
+    assert len(result.docs) == 1
+    assert result.docs[0].metadata["publish_date"] == "2025-05-15"
+
+
 def test_rag_graph_retry_retrieve_recovers_low_coverage():
     class _RetryRetriever:
         def __init__(self):
@@ -231,6 +249,63 @@ def test_rag_graph_retry_retrieve_recovers_low_coverage():
     assert retriever.calls == 2
     assert result.status == "ok"
     assert any("学费 5000 元" in block for block in result.context_blocks)
+
+
+def test_rag_graph_resolves_conflicting_versions_without_degrade():
+    class _ConflictRetriever:
+        def locate_summary_parents(self, query: str, top_n: int = 3):
+            return []
+
+        def retrieve(self, queries: list[str], top_n: int, focus_parent_ids: list[str] | None = None):
+            docs = [
+                Document(
+                    page_content="标题：2025 招生章程\n正文：2025 年学费为 5000 元",
+                    metadata={
+                        "chunk_id": "n1",
+                        "source_title": "2025招生章程",
+                        "source_url": "https://zsc.zut.edu.cn/info/2025",
+                        "chunk_text": "2025 年学费为 5000 元",
+                        "publish_date": "2025-05-15",
+                        "effective_date": "2025-01-01",
+                        "parent_text": "标题：2025 招生章程\n正文：2025 年学费为 5000 元",
+                    },
+                ),
+                Document(
+                    page_content="标题：2024 招生章程\n正文：2024 年学费为 4800 元",
+                    metadata={
+                        "chunk_id": "o1",
+                        "source_title": "2024招生章程",
+                        "source_url": "https://zsc.zut.edu.cn/info/2024",
+                        "chunk_text": "2024 年学费为 4800 元",
+                        "publish_date": "2024-05-15",
+                        "effective_date": "2024-01-01",
+                        "parent_text": "标题：2024 招生章程\n正文：2024 年学费为 4800 元",
+                    },
+                ),
+            ]
+            return [RetrievedItem(document=doc, score=0.9 - idx * 0.1) for idx, doc in enumerate(docs)]
+
+    class _PassThroughReranker:
+        def rerank(self, query: str, docs: list[Document], top_k: int):
+            return docs[:top_k], False
+
+    settings = Settings(api_key="", api_url="https://example.com/v1/chat/completions", service_call_mode="local")
+    graph = RagGraphOrchestrator(
+        rewriter=QueryRewriter(settings),
+        retriever=_ConflictRetriever(),
+        reranker=_PassThroughReranker(),
+        quality_gate=RetrievalQualityGate(min_coverage=0.1),
+        citation_guard=CitationGuard(min_sources=1, min_top1_score=0.1),
+        retrieve_top_n=4,
+        final_top_k=2,
+        retry_top_n=6,
+        node_timeout_ms=1200,
+    )
+    graph.rewriter._llm = None
+    result = graph.run(session_id="s3", query="最新招生章程", top_k=2)
+    assert result.status == "ok"
+    assert result.degrade_reason is None
+    assert any("2025 年学费为 5000 元" in block for block in result.context_blocks)
 
 
 def test_ingestor_extracts_metadata_and_parent_context(tmp_path):

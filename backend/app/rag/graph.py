@@ -7,7 +7,7 @@ import re
 
 from langchain_core.documents import Document
 
-from app.rag.citation_guard import CitationGuard, RetrievalQualityGate
+from app.rag.citation_guard import CitationGuard, RetrievalQualityGate, RetrievalQualityReport
 from app.rag.rerank import ListwiseReranker
 from app.rag.retrievers import HybridRetriever
 from app.rag.rewrite import QueryRewriter
@@ -60,16 +60,19 @@ class RagGraphOrchestrator:
             "degrade_reason": None,
         }
         state = self._graph.invoke(initial_state)
-        docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
+        docs = list(state.get("resolved_docs") or state.get("reranked_docs") or state.get("retrieved_docs") or [])
         limited = docs[:top_k]
         sources = [self._to_source(doc) for doc in limited]
-        status = "degraded" if state.get("degrade_reason") else "ok"
+        degrade_reason = state.get("degrade_reason")
+        if state.get("conflict_resolution_note") and degrade_reason == "conflicting_evidence":
+            degrade_reason = None
+        status = "degraded" if degrade_reason else "ok"
         return RagGraphResult(
             trace_id=str(state.get("trace_id", "")),
             status=status,
             context_blocks=list(state.get("final_context_blocks", [])),
             sources=sources,
-            degrade_reason=state.get("degrade_reason"),
+            degrade_reason=degrade_reason,
             latency_ms=dict(state.get("latency_breakdown_ms", {})),
         )
 
@@ -85,6 +88,7 @@ class RagGraphOrchestrator:
             graph.add_node("hybrid_retrieve", self._hybrid_retrieve)
             graph.add_node("dedupe_and_merge", self._dedupe_and_merge)
             graph.add_node("rerank_docs", self._rerank_docs)
+            graph.add_node("resolve_conflicts", self._resolve_conflicts)
             graph.add_node("quality_gate", self._quality_gate)
             graph.add_node("retry_retrieve", self._retry_retrieve)
             graph.add_node("citation_guard", self._citation_guard)
@@ -96,7 +100,8 @@ class RagGraphOrchestrator:
             graph.add_edge("rewrite_query", "hybrid_retrieve")
             graph.add_edge("hybrid_retrieve", "dedupe_and_merge")
             graph.add_edge("dedupe_and_merge", "rerank_docs")
-            graph.add_edge("rerank_docs", "quality_gate")
+            graph.add_edge("rerank_docs", "resolve_conflicts")
+            graph.add_edge("resolve_conflicts", "quality_gate")
             graph.add_edge("quality_gate", "retry_retrieve")
             graph.add_edge("retry_retrieve", "citation_guard")
             graph.add_edge("citation_guard", "build_context")
@@ -112,6 +117,7 @@ class RagGraphOrchestrator:
                     self._hybrid_retrieve,
                     self._dedupe_and_merge,
                     self._rerank_docs,
+                    self._resolve_conflicts,
                     self._quality_gate,
                     self._retry_retrieve,
                     self._citation_guard,
@@ -214,7 +220,7 @@ class RagGraphOrchestrator:
     def _citation_guard(self, state: RagGraphState) -> RagGraphState:
         """节点：验证来源充分性，失败时触发保守回答路径。"""
         def _run() -> RagGraphState:
-            docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
+            docs = list(state.get("resolved_docs") or state.get("reranked_docs") or state.get("retrieved_docs") or [])
             passed, reason = self.citation_guard.validate(docs)
             payload: RagGraphState = {"guard_passed": passed}
             if not passed and not state.get("degrade_reason"):
@@ -227,8 +233,15 @@ class RagGraphOrchestrator:
         """节点：对召回覆盖度、时效冲突做质量闸门控制。"""
         def _run() -> RagGraphState:
             docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
-            report = self.quality_gate.evaluate(query=str(state.get("normalized_query", "")), docs=docs)
+            query = str(state.get("normalized_query", ""))
+            resolution = self.quality_gate.resolve_conflicts(query=query, docs=docs)
+            active_docs = resolution.docs if resolution.resolved else list(state.get("resolved_docs") or docs)
+            report = self.quality_gate.evaluate(query=query, docs=active_docs)
+            if resolution.resolved and active_docs:
+                report = self._build_post_resolution_report(query=query, docs=active_docs, fallback=report)
             payload: RagGraphState = {
+                "resolved_docs": active_docs if resolution.resolved else list(state.get("resolved_docs") or []),
+                "conflict_resolution_note": resolution.note if resolution.resolved else state.get("conflict_resolution_note"),
                 "quality_passed": report.passed,
                 "quality_report": {
                     "passed": report.passed,
@@ -244,6 +257,21 @@ class RagGraphOrchestrator:
             return payload
 
         return self._timed(state, "quality_gate", _run)
+
+    def _resolve_conflicts(self, state: RagGraphState) -> RagGraphState:
+        """节点：对可裁决的时间冲突证据先做自动裁决。"""
+        def _run() -> RagGraphState:
+            docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
+            result = self.quality_gate.resolve_conflicts(query=str(state.get("normalized_query", "")), docs=docs)
+            if not result.resolved:
+                return {}
+            payload: RagGraphState = {
+                "conflict_resolution_note": result.note,
+                "resolved_docs": result.docs,
+            }
+            return payload
+
+        return self._timed(state, "resolve_conflicts", _run)
 
     def _retry_retrieve(self, state: RagGraphState) -> RagGraphState:
         """节点：低覆盖或空召回时执行一次更保守的二次检索。"""
@@ -298,7 +326,7 @@ class RagGraphOrchestrator:
     def _build_context(self, state: RagGraphState) -> RagGraphState:
         """节点：拼装最终给生成模型使用的上下文块。"""
         def _run() -> RagGraphState:
-            docs = list(state.get("reranked_docs") or state.get("retrieved_docs") or [])
+            docs = list(state.get("resolved_docs") or state.get("reranked_docs") or state.get("retrieved_docs") or [])
             return {"final_context_blocks": self._arrange_context_blocks(docs)}
 
         return self._timed(state, "build_context", _run)
@@ -400,6 +428,39 @@ class RagGraphOrchestrator:
         if len(ordered) <= 2:
             return ordered
         return [ordered[0], ordered[-1], *ordered[1:-1]][: self.final_top_k]
+
+    def _build_post_resolution_report(
+        self,
+        query: str,
+        docs: list[Document],
+        fallback: RetrievalQualityReport,
+    ) -> RetrievalQualityReport:
+        """冲突已裁决后，重新按裁决结果计算质量，避免旧冲突标记残留。"""
+        unique_sources = len(
+            {
+                str(doc.metadata.get("source_url") or doc.metadata.get("source_title") or doc.metadata.get("doc_id"))
+                for doc in docs
+                if doc.metadata.get("source_url") or doc.metadata.get("source_title") or doc.metadata.get("doc_id")
+            }
+        )
+        stale_count = self.quality_gate._count_stale_docs(docs)  # noqa: SLF001
+        coverage = self.quality_gate._coverage(query=query, docs=docs)  # noqa: SLF001
+        reason: str | None = None
+        passed = True
+        if coverage < self.quality_gate.min_coverage:
+            passed = False
+            reason = "low_coverage"
+        elif self.quality_gate._is_time_sensitive(query) and stale_count >= len(docs):  # noqa: SLF001
+            passed = False
+            reason = "stale_evidence"
+        return RetrievalQualityReport(
+            passed=passed,
+            reason=reason,
+            coverage=coverage,
+            unique_sources=unique_sources,
+            conflict_count=0,
+            stale_count=stale_count,
+        )
 
 
 class _LocalCompiledGraph:

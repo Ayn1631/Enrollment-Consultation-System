@@ -43,6 +43,13 @@ class RetrievalQualityReport:
     stale_count: int
 
 
+@dataclass(slots=True)
+class ConflictResolutionResult:
+    docs: list[Document]
+    resolved: bool
+    note: str | None
+
+
 class RetrievalQualityGate:
     """检索质量闸门，拦截低覆盖或冲突证据进入生成阶段。"""
 
@@ -92,6 +99,39 @@ class RetrievalQualityGate:
             stale_count=stale_count,
         )
 
+    def resolve_conflicts(self, query: str, docs: list[Document]) -> ConflictResolutionResult:
+        """按来源级别与时间优先级裁决冲突证据；裁不动则保留原结果。"""
+        if not docs or not self._is_time_sensitive(query):
+            return ConflictResolutionResult(docs=docs, resolved=False, note=None)
+
+        scored_docs = [
+            (
+                self._conflict_priority(doc),
+                idx,
+                doc,
+            )
+            for idx, doc in enumerate(docs)
+        ]
+        if len({priority for priority, _, _ in scored_docs[:4]}) <= 1:
+            return ConflictResolutionResult(docs=docs, resolved=False, note=None)
+
+        scored_docs.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+        best_priority, _, best_doc = scored_docs[0]
+        second_priority = scored_docs[1][0] if len(scored_docs) > 1 else None
+        if second_priority is not None and best_priority == second_priority:
+            return ConflictResolutionResult(docs=docs, resolved=False, note=None)
+
+        winner_year = self._doc_year(best_doc)
+        winner_source = str(best_doc.metadata.get("source_url") or best_doc.metadata.get("source_title") or "")
+        resolved_docs = [doc for _, _, doc in scored_docs if winner_year and self._doc_year(doc) == winner_year]
+        if not resolved_docs:
+            resolved_docs = [best_doc]
+        return ConflictResolutionResult(
+            docs=resolved_docs,
+            resolved=True,
+            note=f"resolved_conflict:{winner_year}:{winner_source}",
+        )
+
     def _coverage(self, query: str, docs: list[Document]) -> float:
         tokens = self._tokenize(query)
         if not tokens:
@@ -129,3 +169,32 @@ class RetrievalQualityGate:
 
     def _tokenize(self, text: str) -> list[str]:
         return [tok for tok in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z]+|\d+", text.lower()) if tok]
+
+    def _conflict_priority(self, doc: Document) -> tuple[int, str, str]:
+        """冲突裁决优先级：官方来源级别 > 生效时间 > 发布日期。"""
+        return (
+            self._source_authority(doc),
+            str(doc.metadata.get("effective_date") or doc.metadata.get("publish_date") or self._doc_year(doc)),
+            str(doc.metadata.get("publish_date") or self._doc_year(doc)),
+        )
+
+    def _source_authority(self, doc: Document) -> int:
+        source = str(doc.metadata.get("source_url") or "").lower()
+        if ".gov.cn" in source:
+            return 4
+        if "zut.edu.cn" in source or "zsc.zut.edu.cn" in source:
+            return 3
+        if ".edu.cn" in source:
+            return 2
+        if source:
+            return 1
+        return 0
+
+    def _doc_year(self, doc: Document) -> str:
+        for field in ("effective_date", "publish_date", "expire_date"):
+            value = str(doc.metadata.get(field, "")).strip()
+            if len(value) >= 4 and value[:4].isdigit():
+                return value[:4]
+        haystack = f"{doc.metadata.get('source_title', '')} {doc.metadata.get('topic', '')} {doc.page_content}"
+        matched = re.search(r"\b(20\d{2})\b", haystack)
+        return matched.group(1) if matched else ""

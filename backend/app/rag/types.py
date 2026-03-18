@@ -28,7 +28,9 @@ class RagGraphState(TypedDict, total=False):
     rewritten_queries: list[str]
     retrieved_docs: list[Document]
     reranked_docs: list[Document]
+    resolved_docs: list[Document]
     final_context_blocks: list[str]
+    conflict_resolution_note: str | None
     quality_passed: bool
     quality_report: dict[str, float | int | bool | str | None]
     retry_count: int
