@@ -37,6 +37,19 @@ def test_saved_skills_endpoint_returns_list():
     assert "id" in body[0]
 
 
+def test_mcp_tools_endpoint_returns_controlled_catalog():
+    client = TestClient(app)
+    res = client.get("/api/mcp/tools")
+    assert res.status_code == 200
+    body = res.json()
+    ids = {item["id"] for item in body}
+    assert "web_search" in ids
+    assert "web_read" in ids
+    web_search = next(item for item in body if item["id"] == "web_search")
+    assert web_search["requires_time_sensitive"] is True
+    assert "zsc.zut.edu.cn" in web_search["allowed_domains"]
+
+
 def test_create_chat_defaults_to_ok_or_degraded():
     client = TestClient(app)
     res = client.post("/api/chat", json=_base_payload())
@@ -229,6 +242,21 @@ def test_stream_done_event_contains_tool_audit():
     assert "tool_audit" in body
     assert "web_search:blocked:not_time_sensitive" in body
     assert "generation:mock:mock-generator:cache_" in body
+
+
+def test_time_sensitive_web_search_chain_contains_web_read_audit():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["messages"] = [{"role": "user", "content": "请给我最新招生公告"}]
+    post_res = client.post("/api/chat", json=payload)
+    assert post_res.status_code == 200
+    session_id = post_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "web_search:allowed:official_whitelist" in body
+    assert "web_read:allowed:official_whitelist" in body
 
 
 def test_generation_audit_reports_cache_hit_on_followup_request():

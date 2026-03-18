@@ -117,6 +117,19 @@ class FeatureMeta(BaseModel):
     dependencies: list[FeatureFlag] = Field(default_factory=list)
 
 
+class ToolMeta(BaseModel):
+    id: str
+    label: str
+    kind: Literal["local", "remote"]
+    timeout_seconds: float
+    retry_attempts: int = 0
+    circuit_breaker: bool = True
+    max_query_length: int = 0
+    requires_time_sensitive: bool = False
+    allowed_domains: list[str] = Field(default_factory=list)
+    audit_scope: str = ""
+
+
 class SavedSkill(BaseModel):
     id: str
     label: str

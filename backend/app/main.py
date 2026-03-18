@@ -18,8 +18,9 @@ from app.models import (
     HealthDependency,
     HealthResponse,
     SavedSkill,
+    ToolMeta,
 )
-from app.services.feature_registry import feature_catalog
+from app.services.feature_registry import feature_catalog, tool_catalog
 from app.services.gateway import GatewayDependencies, GatewayOrchestrator
 from app.services.service_client import ServiceClient
 from app.state import ServiceContainer
@@ -100,6 +101,11 @@ def get_saved_skills() -> list[SavedSkill]:
 def get_tools_compat() -> list[dict[str, str]]:
     # Compatibility endpoint kept for previous frontend version.
     return [{"id": item.id, "label": item.label} for item in feature_catalog()]
+
+
+@app.get("/api/mcp/tools", response_model=list[ToolMeta])
+def get_mcp_tools() -> list[ToolMeta]:
+    return tool_catalog()
 
 
 @app.post("/api/skills/save")

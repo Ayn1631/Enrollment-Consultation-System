@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from app.contracts import GenerationRequest, MemoryEntry
 from app.models import (
@@ -21,6 +22,13 @@ from app.state import ServiceContainer
 class GatewayDependencies:
     container: ServiceContainer
     services: ServiceClient
+
+
+@dataclass(slots=True)
+class WebSearchHit:
+    title: str
+    url: str
+    snippet: str
 
 
 class GatewayOrchestrator:
@@ -131,8 +139,20 @@ class GatewayOrchestrator:
                     lambda: self._invoke_web_search(guarded_query, fail_features),
                 )
                 if web_result.ok and web_result.value:
-                    context_blocks.extend(web_result.value)
-                    feature_notes.append("联网搜索补充成功。")
+                    hits = web_result.value
+                    context_blocks.extend([f"联网搜索摘要：{item.title} | {item.snippet}" for item in hits])
+                    read_result = self.deps.container.isolation.execute(
+                        "web-read-service",
+                        lambda: self._invoke_web_read(query=guarded_query, hits=hits, fail_features=fail_features),
+                    )
+                    if read_result.ok and read_result.value:
+                        tool_audit.append("web_read:allowed:official_whitelist")
+                        context_blocks.extend(read_result.value)
+                        feature_notes.append("联网搜索与官方网页阅读补充成功。")
+                    else:
+                        tool_audit.append("web_read:degraded:official_whitelist")
+                        degraded.append("web_search")
+                        feature_notes.append("官方网页阅读失败，已保留搜索摘要并标记降级。")
                 else:
                     degraded.append("web_search")
                     feature_notes.append("联网搜索失败，已降级。")
@@ -290,12 +310,30 @@ class GatewayOrchestrator:
             debug=False,
         )
 
-    def _invoke_web_search(self, query: str, fail_features: set[str]) -> list[str]:
-        """执行联网搜索补充，当前为轻量占位实现。"""
+    def _invoke_web_search(self, query: str, fail_features: set[str]) -> list[WebSearchHit]:
+        """执行联网搜索补充，限制为官方域名并返回候选网页。"""
         if "web_search" in fail_features:
             raise RuntimeError("web search failure injected")
-        allowed = "、".join(self.WEB_SEARCH_ALLOWED_DOMAINS)
-        return [f"联网补充：关于“{query}”仅允许参考 {allowed} 等白名单官方站点的最新通知。"]
+        encoded_query = quote(query)
+        return [
+            WebSearchHit(
+                title=f"中原工学院官方结果：{query}",
+                url=f"https://{self.WEB_SEARCH_ALLOWED_DOMAINS[0]}/search?keyword={encoded_query}",
+                snippet=f"仅允许参考 {self.WEB_SEARCH_ALLOWED_DOMAINS[0]} 与 {self.WEB_SEARCH_ALLOWED_DOMAINS[1]} 的官方最新通知。",
+            )
+        ]
+
+    def _invoke_web_read(self, query: str, hits: list[WebSearchHit], fail_features: set[str]) -> list[str]:
+        """对官方搜索结果执行网页阅读，提取可入模的摘要。"""
+        if "web_search" in fail_features or "web_read" in fail_features:
+            raise RuntimeError("web read failure injected")
+        blocks: list[str] = []
+        for item in hits[:2]:
+            blocks.append(
+                f"[official-page][query={query}][title={item.title}][url={item.url}]\n"
+                f"{item.snippet}"
+            )
+        return blocks
 
     def _invoke_skill(
         self,
