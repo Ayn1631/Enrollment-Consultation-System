@@ -42,8 +42,14 @@ class GenerationRequest(BaseModel):
     top_p: float | None = None
 
 
+GenerationRoute = Literal["light", "main", "requested", "mock"]
+
+
 class GenerationResponse(BaseModel):
     text: str
+    model: str = ""
+    route: GenerationRoute = "requested"
+    cache_hit: bool = False
 
 
 class MemoryEntry(BaseModel):

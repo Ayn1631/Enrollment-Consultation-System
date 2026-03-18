@@ -173,7 +173,7 @@ class ServiceClient:
                 self.settings.generation_service_timeout_seconds,
             )
             return GenerationResponse.model_validate(body)
-        text = self._generator.generate(
+        return self._generator.generate(
             user_query=request.user_query,
             context_blocks=request.context_blocks,
             feature_notes=request.feature_notes,
@@ -181,7 +181,6 @@ class ServiceClient:
             temperature=request.temperature,
             top_p=request.top_p,
         )
-        return GenerationResponse(text=text)
 
     def citation_guard(self, sources: list[ChatSource]) -> CitationGuardResponse:
         return CitationGuardResponse(ok=len(sources) > 0)

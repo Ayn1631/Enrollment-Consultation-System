@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.config import DOCS_DIR, Settings
-from app.contracts import MemoryEntry, RagQueryResponse
+from app.contracts import GenerationRequest, MemoryEntry, RagQueryResponse
 from app.services.service_client import ServiceClient
 
 
@@ -161,3 +161,61 @@ def test_memory_client_supports_long_and_special_memory():
     long_entries = client.read_memory("s-memory", kind="long").entries
     assert special_entries[0].value == "偏好简短回答"
     assert "用户关注学费和资助" in long_entries[0].value
+
+
+def test_generate_uses_light_route_and_prompt_cache_in_local_mode():
+    settings = _local_settings()
+    settings.generation_light_model = "light-model"
+    settings.generation_main_model = "main-model"
+    client = ServiceClient(settings=settings)
+    request = GenerationRequest(
+        user_query="请介绍招生政策",
+        context_blocks=["证据A"],
+        feature_notes=["RAG 已执行"],
+    )
+
+    first = client.generate(request)
+    second = client.generate(request)
+
+    assert first.route == "mock"
+    assert first.model == "mock-generator"
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert second.text == first.text
+
+
+def test_generate_honors_requested_model_even_in_remote_mode(monkeypatch):
+    settings = _http_settings()
+    settings.use_mock_generation = False
+    settings.api_key = "test-key"
+    captured_payloads: list[dict] = []
+
+    class _GenerationClient(_HttpModeFakeClient):
+        def post(self, url: str, json: dict | None = None):
+            if url.endswith("/generate"):
+                captured_payloads.append(json or {})
+                return _FakeResponse(
+                    200,
+                    {
+                        "text": "生成结果",
+                        "model": json.get("model", ""),
+                        "route": "requested",
+                        "cache_hit": False,
+                    },
+                )
+            return super().post(url, json=json)
+
+    monkeypatch.setattr("app.services.service_client.httpx.Client", _GenerationClient)
+    client = ServiceClient(settings=settings)
+    response = client.generate(
+        GenerationRequest(
+            user_query="请详细对比招生政策与报名流程",
+            context_blocks=["证据A", "证据B", "证据C"],
+            feature_notes=["RAG 已执行"],
+            model="custom-model",
+        )
+    )
+
+    assert response.model == "custom-model"
+    assert response.route == "requested"
+    assert captured_payloads[0]["model"] == "custom-model"

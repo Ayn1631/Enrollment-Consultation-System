@@ -228,3 +228,23 @@ def test_stream_done_event_contains_tool_audit():
     body = stream_res.text
     assert "tool_audit" in body
     assert "web_search:blocked:not_time_sensitive" in body
+    assert "generation:mock:mock-generator:cache_" in body
+
+
+def test_generation_audit_reports_cache_hit_on_followup_request():
+    client = TestClient(app)
+    first_payload = _base_payload()
+    first_payload["messages"] = [{"role": "user", "content": "请介绍招生章程重点"}]
+    second_payload = _base_payload()
+    second_payload["messages"] = [{"role": "user", "content": "请介绍招生章程重点"}]
+
+    first_res = client.post("/api/chat", json=first_payload)
+    second_res = client.post("/api/chat", json=second_payload)
+    assert first_res.status_code == 200
+    assert second_res.status_code == 200
+
+    session_id = second_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "generation:mock:mock-generator:cache_hit" in body

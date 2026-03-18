@@ -195,7 +195,14 @@ class GatewayOrchestrator:
                 degraded_features=session.degraded_features,
             )
 
-        final_text = generation_result.value
+        generation_output = generation_result.value
+        tool_audit.append(
+            "generation:"
+            f"{generation_output.route}:"
+            f"{generation_output.model or 'unknown'}:"
+            f"cache_{'hit' if generation_output.cache_hit else 'miss'}"
+        )
+        final_text = generation_output.text
         if "citation_guard" in request.features and (not sources or "citation_guard" in degraded):
             final_text = (
                 "当前证据链不完整，以下内容仅供参考。\n"
@@ -297,11 +304,11 @@ class GatewayOrchestrator:
         feature_notes: list[str],
         request: ChatRequest,
         fail_features: set[str],
-    ) -> str:
+    ):
         """执行最终生成，generation 失败属于硬失败。"""
         if "generation" in fail_features:
             raise RuntimeError("generation failure injected")
-        result = self.deps.services.generate(
+        return self.deps.services.generate(
             GenerationRequest(
                 user_query=user_query,
                 context_blocks=context_blocks,
@@ -311,7 +318,6 @@ class GatewayOrchestrator:
                 top_p=request.top_p,
             )
         )
-        return result.text
 
     def _append_optional_memory_context(
         self,

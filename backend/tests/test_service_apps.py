@@ -99,7 +99,10 @@ def test_generation_service_endpoint():
         },
     )
     assert res.status_code == 200
-    assert "text" in res.json()
+    body = res.json()
+    assert "text" in body
+    assert "route" in body
+    assert "model" in body
 
 
 def test_generation_service_sanitizes_external_injection_text():
@@ -117,3 +120,18 @@ def test_generation_service_sanitizes_external_injection_text():
     assert "ignore previous instructions" not in body.lower()
     assert "<script>" not in body.lower()
     assert "[已清洗潜在注入指令]" in body or "[已移除脚本片段]" in body
+
+
+def test_generation_service_endpoint_reports_cache_hit_on_repeat():
+    client = TestClient(generation_app)
+    payload = {
+        "user_query": "请介绍招生政策",
+        "context_blocks": ["章程第一条"],
+        "feature_notes": ["RAG 已执行"],
+    }
+    first = client.post("/generate", json=payload)
+    second = client.post("/generate", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["cache_hit"] is False
+    assert second.json()["cache_hit"] is True

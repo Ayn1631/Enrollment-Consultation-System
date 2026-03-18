@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     agent_stack: str = Field(default="langgraph", alias="AGENT_STACK")
     request_timeout_seconds: float = Field(default=6.0, alias="REQUEST_TIMEOUT_SECONDS")
     stream_chunk_size: int = Field(default=24, alias="STREAM_CHUNK_SIZE")
+    generation_light_model: str = Field(default="gpt-4o-mini", alias="GENERATION_LIGHT_MODEL")
+    generation_main_model: str = Field(default="gpt-4.1", alias="GENERATION_MAIN_MODEL")
+    generation_cache_enabled: bool = Field(default=True, alias="GENERATION_CACHE_ENABLED")
+    generation_cache_ttl_seconds: int = Field(default=300, alias="GENERATION_CACHE_TTL_SECONDS")
     docs_dir: Path = DOCS_DIR
 
     embedding_api_url: str = Field(default="", alias="EMBEDDING_API_URL")

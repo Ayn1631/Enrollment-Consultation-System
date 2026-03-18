@@ -19,7 +19,7 @@ def healthz() -> dict[str, str]:
 
 @app.post("/generate", response_model=GenerationResponse)
 def generate(request: GenerationRequest) -> GenerationResponse:
-    text = generator.generate(
+    return generator.generate(
         user_query=request.user_query,
         context_blocks=request.context_blocks,
         feature_notes=request.feature_notes,
@@ -27,5 +27,3 @@ def generate(request: GenerationRequest) -> GenerationResponse:
         temperature=request.temperature,
         top_p=request.top_p,
     )
-    return GenerationResponse(text=text)
-

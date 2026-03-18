@@ -1,17 +1,22 @@
 from __future__ import annotations
 
-import textwrap
-from typing import Any
+import hashlib
+import json
 import re
+import textwrap
+import time
+from typing import Any
 
 import httpx
 
 from app.config import Settings
+from app.contracts import GenerationResponse, GenerationRoute
 
 
 class GenerationService:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._prompt_cache: dict[str, tuple[float, str]] = {}
 
     def generate(
         self,
@@ -21,26 +26,108 @@ class GenerationService:
         model: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-    ) -> str:
+    ) -> GenerationResponse:
         """统一生成入口：优先真实模型，缺少密钥或显式配置时走 mock。"""
+        route, selected_model = self._select_model_route(
+            user_query=user_query,
+            context_blocks=context_blocks,
+            requested_model=model,
+        )
         if self.settings.use_mock_generation or not self.settings.api_key:
-            return self._mock_generate(user_query, context_blocks, feature_notes)
-        return self._remote_generate(
+            route = "mock"
+            selected_model = "mock-generator"
+
+        cache_key = self._build_cache_key(
             user_query=user_query,
             context_blocks=context_blocks,
             feature_notes=feature_notes,
-            model=model,
+            model=selected_model,
             temperature=temperature,
             top_p=top_p,
         )
+        cached_text = self._read_cache(cache_key)
+        if cached_text is not None:
+            return GenerationResponse(text=cached_text, model=selected_model, route=route, cache_hit=True)
+
+        if route == "mock":
+            text = self._mock_generate(user_query, context_blocks, feature_notes)
+        else:
+            text = self._remote_generate(
+                user_query=user_query,
+                context_blocks=context_blocks,
+                feature_notes=feature_notes,
+                model=selected_model,
+                temperature=temperature,
+                top_p=top_p,
+            )
+        self._write_cache(cache_key, text)
+        return GenerationResponse(text=text, model=selected_model, route=route, cache_hit=False)
+
+    def _select_model_route(
+        self,
+        *,
+        user_query: str,
+        context_blocks: list[str],
+        requested_model: str | None,
+    ) -> tuple[GenerationRoute, str]:
+        if requested_model:
+            return "requested", requested_model
+        normalized_query = user_query.strip()
+        complexity = 0
+        if len(normalized_query) >= 48:
+            complexity += 1
+        if len(context_blocks) >= 3:
+            complexity += 1
+        complex_keywords = ("对比", "比较", "区别", "同时", "以及", "步骤", "流程", "为什么", "如何", "条件")
+        if any(keyword in normalized_query for keyword in complex_keywords):
+            complexity += 1
+        if complexity >= 2:
+            return "main", self.settings.generation_main_model
+        return "light", self.settings.generation_light_model
+
+    def _build_cache_key(
+        self,
+        *,
+        user_query: str,
+        context_blocks: list[str],
+        feature_notes: list[str],
+        model: str,
+        temperature: float | None,
+        top_p: float | None,
+    ) -> str:
+        payload = {
+            "model": model,
+            "user_query": self._sanitize_external_text(user_query),
+            "context_blocks": self._sanitize_context_blocks(context_blocks)[:6],
+            "feature_notes": [self._sanitize_external_text(item) for item in feature_notes[:8]],
+            "temperature": 0.4 if temperature is None else temperature,
+            "top_p": 0.9 if top_p is None else top_p,
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _read_cache(self, cache_key: str) -> str | None:
+        if not self.settings.generation_cache_enabled:
+            return None
+        item = self._prompt_cache.get(cache_key)
+        if item is None:
+            return None
+        cached_at, text = item
+        if time.time() - cached_at > self.settings.generation_cache_ttl_seconds:
+            self._prompt_cache.pop(cache_key, None)
+            return None
+        return text
+
+    def _write_cache(self, cache_key: str, text: str) -> None:
+        if not self.settings.generation_cache_enabled:
+            return
+        self._prompt_cache[cache_key] = (time.time(), text)
 
     def _mock_generate(self, user_query: str, context_blocks: list[str], feature_notes: list[str]) -> str:
         """本地降级生成，用于离线开发和外部模型不可用时兜底。"""
         safe_query = self._sanitize_external_text(user_query)
         safe_context_blocks = self._sanitize_context_blocks(context_blocks)
-        # 关键变量：excerpt 限制上下文摘要长度，避免 mock 返回过长文本。
         excerpt = "\n".join(f"- {line[:110]}" for line in safe_context_blocks[:4]) if safe_context_blocks else "- 未命中可靠证据。"
-        # 关键变量：notes 聚合本轮能力执行情况，便于前端可解释展示。
         notes = "\n".join(f"- {note}" for note in feature_notes) if feature_notes else "- 未启用额外增强功能。"
         return textwrap.dedent(
             f"""
@@ -56,10 +143,11 @@ class GenerationService:
 
     def _remote_generate(
         self,
+        *,
         user_query: str,
         context_blocks: list[str],
         feature_notes: list[str],
-        model: str | None,
+        model: str,
         temperature: float | None,
         top_p: float | None,
     ) -> str:
@@ -69,7 +157,6 @@ class GenerationService:
         context_text = "\n".join(f"- {item}" for item in safe_context_blocks[:6]) or "- 无可靠检索证据"
         note_text = "\n".join(f"- {item}" for item in feature_notes) or "- 无"
 
-        # 关键变量：messages 是最终送入模型的系统+用户双消息结构。
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
@@ -86,9 +173,8 @@ class GenerationService:
                 ),
             },
         ]
-        # 关键变量：payload 保持与 OpenAI Chat Completions 协议兼容。
         payload: dict[str, Any] = {
-            "model": model or "gpt-4o-mini",
+            "model": model,
             "messages": messages,
             "temperature": 0.4 if temperature is None else temperature,
             "top_p": 0.9 if top_p is None else top_p,
