@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from app.config import Settings
 from app.rag.citation_guard import CitationGuard, RetrievalQualityGate
 from app.rag.ingest import RagIngestor
+from app.rag.index import RagIndexManager
 from app.rag.graph import RagGraphOrchestrator
 from app.rag.rerank import ListwiseReranker
 from app.rag.retrievers import HybridRetriever, RetrievedItem
@@ -333,6 +334,9 @@ def test_ingestor_extracts_metadata_and_parent_context(tmp_path):
     assert first.metadata["parent_id"].startswith("01-招生政策-parent-")
     assert "标题：2025 招生政策" in first.page_content
     assert first.metadata["chunk_text_hash"]
+    small_docs = [doc for doc in docs if doc.metadata.get("chunk_level") == "small"]
+    assert small_docs
+    assert len(small_docs[0].metadata.get("query_expansions", [])) >= 2
 
 
 def test_ingestor_builds_summary_layer_and_locator_hits_parent(tmp_path):
@@ -362,3 +366,37 @@ def test_ingestor_builds_summary_layer_and_locator_hits_parent(tmp_path):
     parents = retriever.locate_summary_parents("助学贷款 20000 元", top_n=2)
     assert parents
     assert parents[0].startswith("01-招生政策-parent-")
+
+
+def test_bm25_uses_query_expansions_without_leaking_auxiliary_text(tmp_path):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    sample = docs_dir / "01-招生政策.md"
+    sample.write_text(
+        "# 原文（来源：https://example.com/policy）\n"
+        "网页标题：2025 招生政策\n"
+        "抓取时间：2026-02-13\n"
+        "发布时间：2025-05-15\n\n"
+        "第一章 收费说明\n"
+        "第一条 学费 5000 元，住宿费 800 元。\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        api_key="",
+        api_url="https://example.com/v1/chat/completions",
+        service_call_mode="local",
+        use_mock_generation=True,
+        docs_dir=docs_dir,
+        rag_faiss_dir=tmp_path / "faiss",
+        rag_chunk_size=80,
+        rag_chunk_overlap=10,
+    )
+    index = RagIndexManager(settings)
+    index.reindex()
+
+    rows = index.get_bm25_retriever(top_k=3).invoke("收费标准 5000元")
+    assert rows
+    matched = next((row for row in rows if row.metadata.get("chunk_level") == "small"), None)
+    assert matched is not None
+    assert "收费标准" in " ".join(matched.metadata.get("query_expansions", []))
+    assert "辅助查询：" not in matched.page_content

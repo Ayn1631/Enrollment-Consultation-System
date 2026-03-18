@@ -72,6 +72,11 @@ class RagIngestor:
                         doc_meta=metadata,
                         section_hint=section_hint,
                     )
+                    query_expansions = self._build_query_expansions(
+                        chunk=normalized,
+                        doc_meta=metadata,
+                        section_hint=section_hint,
+                    )
                     rows.append(
                         Document(
                             page_content=contextualized,
@@ -84,6 +89,7 @@ class RagIngestor:
                                 "section_hint": section_hint,
                                 "chunk_text": normalized,
                                 "chunk_text_hash": content_hash,
+                                "query_expansions": query_expansions,
                             },
                         )
                     )
@@ -263,3 +269,94 @@ class RagIngestor:
         if any(keyword in title_text for keyword in ("章程", "政策", "招生", "录取", "资助")):
             return f"{year}-01-01", f"{year}-12-31"
         return "", ""
+
+    def _build_query_expansions(
+        self,
+        chunk: str,
+        doc_meta: dict[str, str],
+        section_hint: str | None,
+    ) -> list[str]:
+        """为 small chunk 生成 2-3 条辅助查询语句，仅用于增强召回索引。"""
+        keywords = self._extract_query_keywords(chunk)
+        title = str(doc_meta.get("source_title", "")).strip()
+        topic = str(doc_meta.get("topic", "")).strip()
+        year = self._extract_primary_year(f"{title} {chunk}")
+        anchor = section_hint.strip() if section_hint else topic or title
+        candidates: list[str] = []
+
+        primary = " ".join(part for part in [topic, anchor, keywords[0] if keywords else "政策"] if part)
+        if primary:
+            candidates.append(primary)
+
+        if keywords:
+            detail = " ".join(part for part in [title or topic, " ".join(keywords[:2])] if part)
+            if detail:
+                candidates.append(detail)
+
+        constraints = self._extract_query_constraints(chunk)
+        if constraints:
+            constraint_query = " ".join(part for part in [year, keywords[0] if keywords else topic, " ".join(constraints[:2])] if part)
+            if constraint_query:
+                candidates.append(constraint_query)
+
+        if len(candidates) < 3 and year:
+            fallback = " ".join(part for part in [year, topic or title, "官方规定"] if part)
+            if fallback:
+                candidates.append(fallback)
+
+        return self._filter_query_expansions(candidates, chunk=chunk)
+
+    def _extract_query_keywords(self, chunk: str) -> list[str]:
+        keyword_rules = [
+            ("学费", ("学费标准", "收费标准")),
+            ("住宿费", ("住宿费标准",)),
+            ("住宿", ("住宿安排",)),
+            ("助学贷款", ("助学贷款", "贷款额度")),
+            ("贷款", ("助学贷款",)),
+            ("奖学金", ("奖学金政策",)),
+            ("资助", ("资助政策",)),
+            ("录取", ("录取规则", "录取条件")),
+            ("分数", ("分数要求",)),
+            ("报到", ("报到流程",)),
+            ("注册", ("注册流程",)),
+            ("专业", ("专业要求",)),
+            ("选科", ("选科要求",)),
+            ("电话", ("咨询电话",)),
+            ("地址", ("联系地址",)),
+        ]
+        collected: list[str] = []
+        for token, aliases in keyword_rules:
+            if token in chunk:
+                collected.extend(aliases)
+        if not collected:
+            first_sentence = next((part.strip() for part in re.split(r"[。；\n]", chunk) if part.strip()), "")
+            if first_sentence:
+                collected.append(first_sentence[:18])
+        return list(dict.fromkeys(collected))[:3]
+
+    def _extract_query_constraints(self, chunk: str) -> list[str]:
+        matches = re.findall(r"20\d{2}|\d+元|\d+分|本科|专科|理工类|艺术类|国家助学贷款", chunk)
+        return list(dict.fromkeys(matches))[:3]
+
+    def _extract_primary_year(self, text: str) -> str:
+        matched = YEAR_PATTERN.search(text)
+        return matched.group(1) if matched else ""
+
+    def _filter_query_expansions(self, candidates: list[str], chunk: str) -> list[str]:
+        normalized_chunk = re.sub(r"\s+", " ", chunk).strip().lower()
+        filtered: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            line = re.sub(r"\s+", " ", candidate).strip()
+            if not line or len(line) < 4 or len(line) > 40:
+                continue
+            lowered = line.lower()
+            if lowered == normalized_chunk or lowered in seen:
+                continue
+            if not re.search(r"[\u4e00-\u9fff0-9]", line):
+                continue
+            seen.add(lowered)
+            filtered.append(line)
+            if len(filtered) >= 3:
+                break
+        return filtered[:3]

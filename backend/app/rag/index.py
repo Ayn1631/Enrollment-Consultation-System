@@ -81,10 +81,12 @@ class RagIndexManager:
         self.settings = settings
         self.faiss_dir: Path = settings.rag_faiss_dir
         self._documents: list[Document] = []
+        self._sparse_documents: list[Document] = []
         self._vectorstore = None
         self._bm25 = None
         self._local_dense_vectors: list[list[float]] = []
         self._indexed_at: datetime | None = None
+        self._doc_by_chunk_id: dict[str, Document] = {}
         self._embeddings = OpenAICompatibleEmbeddings(
             endpoint=settings.resolve_embedding_api_url(),
             api_key=settings.api_key,
@@ -140,7 +142,18 @@ class RagIndexManager:
         if self._bm25 is None:
             raise RuntimeError("bm25 retriever is not initialized")
         self._bm25.k = top_k
-        return self._bm25
+        manager = self
+
+        class _MappedRetriever:
+            def __init__(self):
+                self.k = top_k
+
+            def invoke(self, query: str):
+                manager._bm25.k = self.k
+                rows = manager._bm25.invoke(query)
+                return [manager._map_sparse_doc(doc) for doc in rows]
+
+        return _MappedRetriever()
 
     def get_dense_retriever(self, top_k: int):
         """返回稠密检索器；无 FAISS 时自动降级本地检索。"""
@@ -185,15 +198,19 @@ class RagIndexManager:
                 allow_dangerous_deserialization=True,
             )
             self._documents = self._extract_documents_from_vectorstore()
+            self._sync_document_views()
             self._indexed_at = datetime.utcnow()
             return True
         except Exception:
             self._vectorstore = None
             self._documents = []
+            self._sparse_documents = []
+            self._doc_by_chunk_id = {}
             return False
 
     def _build_vectorstore(self) -> None:
         """构建 FAISS；若失败则构建本地降级向量缓存。"""
+        self._sync_document_views()
         try:
             from langchain_community.vectorstores import FAISS
             self._vectorstore = FAISS.from_documents(self._documents, self._embeddings)
@@ -211,12 +228,12 @@ class RagIndexManager:
         try:
             from langchain_community.retrievers import BM25Retriever
 
-            if not self._documents:
+            if not self._sparse_documents:
                 self._bm25 = BM25Retriever.from_documents(
                     [Document(page_content="空语料", metadata={"chunk_id": "empty", "source_title": "empty", "source_url": ""})]
                 )
                 return
-            self._bm25 = BM25Retriever.from_documents(self._documents)
+            self._bm25 = BM25Retriever.from_documents(self._sparse_documents)
             return
         except Exception:
             manager = self
@@ -268,13 +285,13 @@ class RagIndexManager:
         """本地稀疏降级检索：以词覆盖率近似 BM25。"""
         query_tokens = self._tokenize(query)
         scored: list[tuple[Document, float]] = []
-        for doc in self._documents:
+        for doc in self._sparse_documents:
             text_tokens = self._tokenize(doc.page_content)
             overlap = 0.0
             for token in query_tokens:
                 overlap += min(text_tokens.count(token), 4)
             score = overlap / max(1.0, len(text_tokens))
-            cloned = Document(page_content=doc.page_content, metadata=dict(doc.metadata))
+            cloned = self._map_sparse_doc(doc)
             cloned.metadata["score"] = score
             scored.append((cloned, score))
         scored.sort(key=lambda row: row[1], reverse=True)
@@ -283,3 +300,27 @@ class RagIndexManager:
     def _tokenize(self, text: str) -> list[str]:
         """中英混合分词，供本地降级检索复用。"""
         return [tok for tok in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z]+|\d+", text.lower()) if tok]
+
+    def _sync_document_views(self) -> None:
+        self._doc_by_chunk_id = {
+            str(doc.metadata.get("chunk_id", "")): doc
+            for doc in self._documents
+            if str(doc.metadata.get("chunk_id", ""))
+        }
+        self._sparse_documents = [self._build_sparse_document(doc) for doc in self._documents]
+
+    def _build_sparse_document(self, doc: Document) -> Document:
+        metadata = dict(doc.metadata)
+        expansions = metadata.get("query_expansions", [])
+        if not isinstance(expansions, list) or not expansions:
+            return Document(page_content=doc.page_content, metadata=metadata)
+        expansion_block = "\n".join(f"辅助查询：{item}" for item in expansions if str(item).strip())
+        page_content = f"{doc.page_content}\n{expansion_block}".strip()
+        return Document(page_content=page_content, metadata=metadata)
+
+    def _map_sparse_doc(self, doc: Document) -> Document:
+        chunk_id = str(doc.metadata.get("chunk_id", ""))
+        original = self._doc_by_chunk_id.get(chunk_id)
+        if original is None:
+            return Document(page_content=doc.page_content, metadata=dict(doc.metadata))
+        return Document(page_content=original.page_content, metadata=dict(original.metadata))

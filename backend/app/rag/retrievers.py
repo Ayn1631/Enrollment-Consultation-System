@@ -177,11 +177,14 @@ class HybridRetriever:
         scored: list[tuple[float, Document]] = []
         normalized_query = query.strip().lower()
         for doc in self.index.all_documents():
+            query_expansions = doc.metadata.get("query_expansions", [])
+            expansion_text = " ".join(str(item) for item in query_expansions) if isinstance(query_expansions, list) else ""
             raw_text = " ".join(
                 [
                     str(doc.metadata.get("chunk_text") or ""),
                     str(doc.metadata.get("source_title") or ""),
                     str(doc.metadata.get("topic") or ""),
+                    expansion_text,
                     str(doc.page_content),
                 ]
             )
