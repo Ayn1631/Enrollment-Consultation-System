@@ -25,14 +25,15 @@ class EvalCase:
     features: list[str]
     fail_features: str
     should_fail: bool
+    hard_case: bool = False
 
 
 CASES = [
-    EvalCase("default_rag", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "", False),
-    EvalCase("web_search_degrade", "时效公告", "请给我最新招生公告", ["rag", "web_search", "citation_guard"], "web_search", False),
-    EvalCase("skill_degrade", "费用资助", "请解释学费和资助政策", ["rag", "skill_exec", "citation_guard"], "skill_exec", False),
-    EvalCase("saved_skill_missing", "流程咨询", "请说明报到流程", ["rag", "use_saved_skill", "citation_guard"], "", True),
-    EvalCase("generation_fail", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "generation", True),
+    EvalCase("default_rag", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "", False, False),
+    EvalCase("web_search_degrade", "时效公告", "请给我最新招生公告", ["rag", "web_search", "citation_guard"], "web_search", False, True),
+    EvalCase("skill_degrade", "费用资助", "请解释学费和资助政策", ["rag", "skill_exec", "citation_guard"], "skill_exec", False, False),
+    EvalCase("saved_skill_missing", "流程咨询", "请说明报到流程", ["rag", "use_saved_skill", "citation_guard"], "", True, True),
+    EvalCase("generation_fail", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "generation", True, True),
 ]
 
 
@@ -55,6 +56,7 @@ def run_case(client: TestClient, case: EvalCase) -> dict:
     return {
         "name": case.name,
         "category": case.category,
+        "hard_case": case.hard_case,
         "http_status": response.status_code,
         "ok": ok,
         "status": body.get("status"),
@@ -104,6 +106,26 @@ def build_bucket_summary(rows: list[dict], cases: list[EvalCase]) -> dict[str, d
     return buckets
 
 
+def build_hard_case_summary(rows: list[dict], cases: list[EvalCase]) -> dict[str, float | int]:
+    hard_cases = [case for case in cases if case.hard_case]
+    if not hard_cases:
+        return {"total": 0, "passed": 0, "pass_rate": 0.0}
+    hard_case_by_name = {case.name: case for case in hard_cases}
+    passed = 0
+    for row in rows:
+        case = hard_case_by_name.get(str(row["name"]))
+        if case is None:
+            continue
+        if is_case_passed(row=row, case=case):
+            passed += 1
+    total = len(hard_cases)
+    return {
+        "total": total,
+        "passed": passed,
+        "pass_rate": round(passed / total, 4) if total else 0.0,
+    }
+
+
 def main() -> int:
     client = TestClient(app)
     rows = [run_case(client, case) for case in CASES]
@@ -116,6 +138,7 @@ def main() -> int:
         "citation_hit_rate": build_citation_hit_rate(rows),
         "p95_latency_ms": build_p95_latency(rows),
         "bucket_summary": build_bucket_summary(rows=rows, cases=CASES),
+        "hard_case_summary": build_hard_case_summary(rows=rows, cases=CASES),
         "rows": rows,
     }
     out_dir = Path("reports")

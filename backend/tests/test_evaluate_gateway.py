@@ -4,6 +4,7 @@ from scripts.evaluate_gateway import (
     EvalCase,
     build_bucket_summary,
     build_citation_hit_rate,
+    build_hard_case_summary,
     build_p95_latency,
     is_case_passed,
 )
@@ -44,3 +45,20 @@ def test_case_pass_and_quality_helpers():
     ]
     assert build_citation_hit_rate(rows) == 0.75
     assert build_p95_latency(rows) == 220.0
+
+
+def test_build_hard_case_summary_tracks_subset_pass_rate():
+    cases = [
+        EvalCase("easy_ok", "招生政策", "请总结招生政策", ["rag"], "", False, False),
+        EvalCase("hard_ok", "时效公告", "请给我最新公告", ["rag"], "", False, True),
+        EvalCase("hard_fail", "流程咨询", "请说明报到流程", ["rag"], "", True, True),
+    ]
+    rows = [
+        {"name": "easy_ok", "ok": True, "status": "ok"},
+        {"name": "hard_ok", "ok": True, "status": "degraded"},
+        {"name": "hard_fail", "ok": True, "status": "failed"},
+    ]
+    summary = build_hard_case_summary(rows=rows, cases=cases)
+    assert summary["total"] == 2
+    assert summary["passed"] == 2
+    assert summary["pass_rate"] == 1.0
