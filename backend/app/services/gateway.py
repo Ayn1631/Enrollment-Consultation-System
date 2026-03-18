@@ -44,6 +44,26 @@ class GatewayOrchestrator:
         last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
         if not last_user:
             last_user = "请介绍中原工学院招生政策要点。"
+        input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)
+        if input_blocked:
+            tool_audit.append(f"safety_audit:input_blocked:{input_reason}")
+            session = SessionResult(
+                session_id=request.session_id,
+                trace_id=trace_id,
+                text=safe_reply,
+                status="degraded",
+                degraded_features=[],
+                sources=[],
+                tool_audit=tool_audit,
+                finish_reason="stop",
+            )
+            self.deps.container.session_store.set(request.session_id, session)
+            return ChatCreateResponse(
+                session_id=request.session_id,
+                trace_id=trace_id,
+                status="degraded",
+                degraded_features=[],
+            )
         ordered_features = self.deps.services.plan_features(request.features)
 
         # 记忆读取：短期 / 长期 / 特殊分层接入。
@@ -211,6 +231,12 @@ class GatewayOrchestrator:
             )
             if "citation_guard" not in degraded:
                 degraded.append("citation_guard")
+
+        output_flagged, output_reason, audited_text = self._audit_generated_output(final_text)
+        if output_flagged:
+            tool_audit.append(f"safety_audit:output_sanitized:{output_reason}")
+            final_text = audited_text
+            status = "degraded"
 
         if degraded:
             status = "degraded"
@@ -392,3 +418,49 @@ class GatewayOrchestrator:
     def _is_time_sensitive_query(self, query: str) -> bool:
         keywords = ("最新", "当前", "现在", "今年", "最近", "近期", "公告", "通知", "今日", "今天")
         return any(keyword in query for keyword in keywords) or bool(re.search(r"\b20\d{2}\b", query))
+
+    def _audit_user_input(self, query: str) -> tuple[bool, str, str]:
+        normalized = " ".join(query.split()).strip()
+        if not normalized:
+            return False, "ok", ""
+        rules = [
+            (
+                r"(?i)(输出|展示|泄露).*(系统提示词|提示词|内部指令|developer message|system prompt)",
+                "prompt_leak_request",
+            ),
+            (
+                r"(?i)(忽略|绕过).*(系统|规则|限制|审计|校验)",
+                "policy_bypass_request",
+            ),
+        ]
+        for pattern, reason in rules:
+            if re.search(pattern, normalized):
+                return (
+                    True,
+                    reason,
+                    "该请求涉及系统提示词、内部策略或安全边界，不能直接提供。\n"
+                    "如果你是想了解招生政策、流程、学费或资助，我可以继续基于公开资料帮你整理。",
+                )
+        return False, "ok", ""
+
+    def _audit_generated_output(self, text: str) -> tuple[bool, str, str]:
+        normalized = text or ""
+        rules = [
+            (
+                r"(?i)(系统提示词|system prompt|developer message|内部指令)",
+                "prompt_leak_output",
+            ),
+            (
+                r"(?i)(api[_\s-]?key|access[_\s-]?token|sk-[a-z0-9]{10,})",
+                "secret_like_output",
+            ),
+        ]
+        for pattern, reason in rules:
+            if re.search(pattern, normalized):
+                return (
+                    True,
+                    reason,
+                    "当前回答触发了输出安全审查，已拦截潜在的内部提示词或敏感信息。\n"
+                    "如需继续咨询招生政策、流程、费用或资助问题，请换一个业务相关问题继续提问。",
+                )
+        return False, "ok", normalized
