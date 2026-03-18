@@ -132,3 +132,34 @@ def test_evaluate_variant_rerank_on_expands_candidates_and_reorders():
     assert retriever.calls == [{"queries": ["住宿费"], "top_n": 12}]
     assert reranker.calls == [{"query": "住宿费", "top_k": 2, "chunk_ids": ["c1", "c2", "c3"]}]
     assert summary["mrr@2"] == 1.0
+
+
+def test_evaluate_variant_small2big_switch_changes_relevance_scope():
+    case = RetrievalEvalCase(
+        name="c2-1",
+        category="招生政策",
+        query="助学贷款",
+        relevant_chunk_ids=["c2", "summary-1"],
+    )
+    retriever = _FakeRetriever(chunk_ids=["summary-1", "c2"])
+    reranker = _FakeReranker()
+
+    small2big_off = evaluate_variant(
+        retriever=retriever,
+        rewriter=_FakeRewriter(),
+        reranker=reranker,
+        cases=[case],
+        variant="rrf_hybrid_small2big_off",
+        k=2,
+    )
+    small2big_on = evaluate_variant(
+        retriever=retriever,
+        rewriter=_FakeRewriter(),
+        reranker=reranker,
+        cases=[case],
+        variant="rrf_hybrid_small2big_on",
+        k=2,
+    )
+
+    assert small2big_off["mrr@2"] == 0.5
+    assert small2big_on["mrr@2"] == 1.0

@@ -16,28 +16,33 @@ from app.rag.index import RagIndexManager
 from app.rag.rerank import ListwiseReranker
 from app.rag.retrievers import HybridRetriever
 from app.rag.rewrite import QueryRewriter
-from scripts.evaluate_retrieval import (
-    RetrievalEvalCase,
-    build_retrieval_cases,
-    compute_mrr_at_k,
-    compute_ndcg_at_k,
-    compute_recall_at_k,
-)
+from scripts.evaluate_retrieval import RetrievalEvalCase, build_retrieval_cases, compute_mrr_at_k, compute_ndcg_at_k, compute_recall_at_k
 
 
-def _variant_flag_enabled(variant: str, name: str) -> bool:
-    return f"_{name}_on" in variant
+def _variant_flag_enabled(variant: str, name: str, default: bool = False) -> bool:
+    if f"_{name}_on" in variant:
+        return True
+    if f"_{name}_off" in variant:
+        return False
+    return default
 
 
 def _base_variant_name(variant: str) -> str:
     base = variant
-    for suffix in ("_rewrite_on", "_rewrite_off", "_rerank_on", "_rerank_off"):
+    for suffix in (
+        "_rewrite_on",
+        "_rewrite_off",
+        "_rerank_on",
+        "_rerank_off",
+        "_small2big_on",
+        "_small2big_off",
+    ):
         base = base.replace(suffix, "")
     return base
 
 
 def build_variant_queries(case: RetrievalEvalCase, variant: str, rewriter: QueryRewriter) -> list[str]:
-    if not _variant_flag_enabled(variant, "rewrite"):
+    if not _variant_flag_enabled(variant, "rewrite", default=False):
         return [case.query]
     rewritten = rewriter.rewrite(case.query)
     if case.query not in rewritten:
@@ -81,6 +86,13 @@ def _predict_chunk_ids(docs: list[Document]) -> list[str]:
     return [str(doc.metadata.get("chunk_id", "")) for doc in docs if str(doc.metadata.get("chunk_id", ""))]
 
 
+def _relevant_chunk_ids(case: RetrievalEvalCase, variant: str) -> set[str]:
+    relevant = [str(chunk_id).strip() for chunk_id in case.relevant_chunk_ids if str(chunk_id).strip()]
+    if _variant_flag_enabled(variant, "small2big", default=True):
+        return set(relevant)
+    return {relevant[0]} if relevant else set()
+
+
 def evaluate_variant(
     retriever: HybridRetriever,
     rewriter: QueryRewriter,
@@ -91,12 +103,12 @@ def evaluate_variant(
 ) -> dict:
     rows: list[dict] = []
     for case in cases:
-        relevant_ids = set(case.relevant_chunk_ids)
+        relevant_ids = _relevant_chunk_ids(case=case, variant=variant)
         queries = build_variant_queries(case=case, variant=variant, rewriter=rewriter)
         start = time.perf_counter()
-        top_n = max(k * 3, 12) if _variant_flag_enabled(variant, "rerank") else k
+        top_n = max(k * 3, 12) if _variant_flag_enabled(variant, "rerank", default=False) else k
         docs = _predict_documents(retriever=retriever, variant=variant, queries=queries, k=top_n)
-        if _variant_flag_enabled(variant, "rerank"):
+        if _variant_flag_enabled(variant, "rerank", default=False):
             docs, _ = reranker.rerank(query=queries[0] if queries else case.query, docs=docs, top_k=k)
         predicted_ids = _predict_chunk_ids(docs)
         latency_ms = round((time.perf_counter() - start) * 1000, 4)
@@ -147,6 +159,8 @@ def main() -> int:
     variants = [
         "rrf_hybrid_rewrite_off",
         "rrf_hybrid_rewrite_on",
+        "rrf_hybrid_small2big_off",
+        "rrf_hybrid_small2big_on",
         "rrf_hybrid_rerank_off",
         "rrf_hybrid_rerank_on",
         "bm25_only",
