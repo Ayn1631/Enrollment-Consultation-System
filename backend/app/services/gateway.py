@@ -31,6 +31,15 @@ class WebSearchHit:
     snippet: str
 
 
+@dataclass(slots=True)
+class QueryRouteDecision:
+    route_label: str
+    reason: str
+    features: list[FeatureFlag]
+    notes: list[str]
+    audit: list[str]
+
+
 class GatewayOrchestrator:
     WEB_SEARCH_ALLOWED_DOMAINS: tuple[str, ...] = ("zsc.zut.edu.cn", "zut.edu.cn")
 
@@ -72,7 +81,11 @@ class GatewayOrchestrator:
                 status="degraded",
                 degraded_features=[],
             )
-        ordered_features = self.deps.services.plan_features(request.features)
+        route_decision = self._route_features(query=last_user, request=request)
+        tool_audit.extend(route_decision.audit)
+        feature_notes.extend(route_decision.notes)
+        effective_features = route_decision.features
+        ordered_features = self.deps.services.plan_features(effective_features)
 
         # 记忆读取：短期 / 长期 / 特殊分层接入。
         memory_result = self.deps.container.isolation.execute(
@@ -243,7 +256,7 @@ class GatewayOrchestrator:
             f"cache_{'hit' if generation_output.cache_hit else 'miss'}"
         )
         final_text = generation_output.text
-        if "citation_guard" in request.features and (not sources or "citation_guard" in degraded):
+        if "citation_guard" in effective_features and (not sources or "citation_guard" in degraded):
             final_text = (
                 "当前证据链不完整，以下内容仅供参考。\n"
                 "建议联系招生办电话 0371-67698700 / 67698712 / 67698674 进一步确认。\n\n"
@@ -297,6 +310,43 @@ class GatewayOrchestrator:
             trace_id=trace_id,
             status=status,
             degraded_features=session.degraded_features,
+        )
+
+    def _route_features(self, query: str, request: ChatRequest) -> QueryRouteDecision:
+        """按问题类型动态裁剪工具链，避免每个请求都一把梭全开。"""
+        route_label, reason = self._classify_query_intent(query)
+        routed = list(dict.fromkeys(request.features))
+        notes: list[str] = []
+        audit = [f"query_router:label:{route_label}:{reason}"]
+
+        if route_label == "time_sensitive" and "rag" in routed and "web_search" not in routed:
+            routed.append("web_search")
+            notes.append("Query Router 识别为时效问题，已自动开启联网搜索增强。")
+            audit.append("query_router:auto_enable:web_search")
+
+        if route_label == "process" and "use_saved_skill" not in routed and "skill_exec" not in routed:
+            routed.append("skill_exec")
+            notes.append("Query Router 识别为流程咨询，已自动开启技能执行链路。")
+            audit.append("query_router:auto_enable:skill_exec")
+
+        if route_label == "follow_up" and "web_search" in routed:
+            routed = [feature for feature in routed if feature != "web_search"]
+            notes.append("Query Router 识别为追问，已关闭联网搜索并优先复用记忆与本地检索。")
+            audit.append("query_router:auto_disable:web_search")
+
+        if route_label == "smalltalk":
+            removable = [feature for feature in routed if feature in {"web_search", "skill_exec", "use_saved_skill"}]
+            if removable:
+                routed = [feature for feature in routed if feature not in {"web_search", "skill_exec", "use_saved_skill"}]
+                notes.append("Query Router 识别为闲聊，已关闭外部工具链路。")
+                audit.append(f"query_router:auto_disable:{'+'.join(removable)}")
+
+        return QueryRouteDecision(
+            route_label=route_label,
+            reason=reason,
+            features=routed,
+            notes=notes,
+            audit=audit,
         )
 
     def _invoke_rag(self, session_id: str, query: str, fail_features: set[str]):
@@ -456,6 +506,23 @@ class GatewayOrchestrator:
     def _is_time_sensitive_query(self, query: str) -> bool:
         keywords = ("最新", "当前", "现在", "今年", "最近", "近期", "公告", "通知", "今日", "今天")
         return any(keyword in query for keyword in keywords) or bool(re.search(r"\b20\d{2}\b", query))
+
+    def _classify_query_intent(self, query: str) -> tuple[str, str]:
+        """识别问题类型，供网关级 Query Router 选择工具链。"""
+        normalized = " ".join(query.split()).strip()
+        if not normalized:
+            return "policy", "empty_query"
+        if self._is_time_sensitive_query(normalized):
+            return "time_sensitive", "time_sensitive_keyword"
+        if len(normalized) <= 14 and any(keyword in normalized for keyword in ("那", "还", "这个", "那个", "呢", "吗", "再说")):
+            return "follow_up", "short_follow_up"
+        if any(keyword in normalized for keyword in ("你好", "在吗", "谢谢", "哈哈", "hi", "hello")):
+            return "smalltalk", "smalltalk_keyword"
+        if any(keyword in normalized for keyword in ("流程", "步骤", "怎么", "如何", "办理", "报到", "报名", "申请", "提交材料")):
+            return "process", "process_keyword"
+        if any(keyword in normalized for keyword in ("电话", "地址", "学费", "住宿", "资助", "奖学金", "贷款", "收费")):
+            return "faq", "faq_keyword"
+        return "policy", "default_policy"
 
     def _audit_user_input(self, query: str) -> tuple[bool, str, str]:
         normalized = " ".join(query.split()).strip()

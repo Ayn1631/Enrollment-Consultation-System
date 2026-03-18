@@ -91,6 +91,21 @@ def test_web_search_should_be_blocked_for_non_time_sensitive_query():
     assert "web_search" in data["degraded_features"]
 
 
+def test_time_sensitive_query_auto_enables_web_search():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["rag", "citation_guard"]
+    payload["messages"] = [{"role": "user", "content": "请给我最新招生公告"}]
+    post_res = client.post("/api/chat", json=payload)
+    assert post_res.status_code == 200
+    session_id = post_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "query_router:auto_enable:web_search" in body
+    assert "web_search:allowed:official_whitelist" in body
+
+
 def test_skill_exec_failure_should_degrade_not_fail():
     client = TestClient(app)
     payload = _base_payload()
@@ -100,6 +115,21 @@ def test_skill_exec_failure_should_degrade_not_fail():
     data = res.json()
     assert data["status"] == "degraded"
     assert "skill_exec" in data["degraded_features"]
+
+
+def test_process_query_auto_enables_skill_exec():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["rag", "citation_guard"]
+    payload["messages"] = [{"role": "user", "content": "请分步骤说明新生报到流程"}]
+    post_res = client.post("/api/chat", json=payload)
+    assert post_res.status_code == 200
+    session_id = post_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "query_router:auto_enable:skill_exec" in body
+    assert "skill_exec:allowed:generic_skill_allowed" in body
 
 
 def test_generation_failure_should_fail_request():
@@ -242,6 +272,22 @@ def test_stream_done_event_contains_tool_audit():
     assert "tool_audit" in body
     assert "web_search:blocked:not_time_sensitive" in body
     assert "generation:mock:mock-generator:cache_" in body
+
+
+def test_followup_query_auto_disables_web_search():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["messages"] = [{"role": "user", "content": "那还需要准备什么"}]
+    post_res = client.post("/api/chat", json=payload)
+    assert post_res.status_code == 200
+    session_id = post_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "query_router:auto_disable:web_search" in body
+    assert "web_search:allowed:official_whitelist" not in body
+    assert "web_search:blocked:not_time_sensitive" not in body
 
 
 def test_time_sensitive_web_search_chain_contains_web_read_audit():
