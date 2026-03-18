@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -58,8 +59,32 @@ def run_case(client: TestClient, case: EvalCase) -> dict:
         "ok": ok,
         "status": body.get("status"),
         "degraded_features": body.get("degraded_features", []),
+        "citation_ok": ok and "citation_guard" not in body.get("degraded_features", []),
         "latency_ms": round(elapsed, 2),
     }
+
+
+def is_case_passed(row: dict, case: EvalCase) -> bool:
+    if not row.get("ok"):
+        return False
+    if case.should_fail:
+        return row.get("status") in {"failed", "degraded"}
+    return row.get("status") in {"ok", "degraded"}
+
+
+def build_citation_hit_rate(rows: list[dict]) -> float:
+    if not rows:
+        return 0.0
+    hits = sum(1 for row in rows if row.get("citation_ok"))
+    return round(hits / len(rows), 4)
+
+
+def build_p95_latency(rows: list[dict]) -> float:
+    if not rows:
+        return 0.0
+    ordered = sorted(float(row["latency_ms"]) for row in rows)
+    index = max(math.ceil(len(ordered) * 0.95) - 1, 0)
+    return ordered[index]
 
 
 def build_bucket_summary(rows: list[dict], cases: list[EvalCase]) -> dict[str, dict[str, float | int]]:
@@ -70,13 +95,7 @@ def build_bucket_summary(rows: list[dict], cases: list[EvalCase]) -> dict[str, d
         case = case_by_name[row["name"]]
         bucket = buckets.setdefault(case.category, {"total": 0, "passed": 0})
         bucket["total"] += 1
-        row_passed = False
-        if row.get("ok"):
-            if case.should_fail:
-                row_passed = row.get("status") in {"failed", "degraded"}
-            else:
-                row_passed = row.get("status") in {"ok", "degraded"}
-        if row_passed:
+        if is_case_passed(row=row, case=case):
             bucket["passed"] += 1
     for bucket in buckets.values():
         total = int(bucket["total"])
@@ -88,23 +107,14 @@ def build_bucket_summary(rows: list[dict], cases: list[EvalCase]) -> dict[str, d
 def main() -> int:
     client = TestClient(app)
     rows = [run_case(client, case) for case in CASES]
-    passed = 0
-    for case, row in zip(CASES, rows):
-        if not row["ok"]:
-            continue
-        if case.should_fail:
-            # fail means API still returns 200 but status should be failed/degraded by design
-            if row["status"] in {"failed", "degraded"}:
-                passed += 1
-        else:
-            if row["status"] in {"ok", "degraded"}:
-                passed += 1
+    passed = sum(1 for case, row in zip(CASES, rows) if is_case_passed(row=row, case=case))
 
     summary = {
         "total": len(CASES),
         "passed": passed,
         "pass_rate": round(passed / len(CASES), 4),
-        "p95_latency_ms": sorted(row["latency_ms"] for row in rows)[int(len(rows) * 0.95) - 1],
+        "citation_hit_rate": build_citation_hit_rate(rows),
+        "p95_latency_ms": build_p95_latency(rows),
         "bucket_summary": build_bucket_summary(rows=rows, cases=CASES),
         "rows": rows,
     }

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from scripts.evaluate_gateway import EvalCase, build_bucket_summary
+from scripts.evaluate_gateway import (
+    EvalCase,
+    build_bucket_summary,
+    build_citation_hit_rate,
+    build_p95_latency,
+    is_case_passed,
+)
 
 
 def test_build_bucket_summary_groups_cases_by_category():
@@ -20,3 +26,21 @@ def test_build_bucket_summary_groups_cases_by_category():
     assert bucket_summary["招生政策"]["pass_rate"] == 1.0
     assert bucket_summary["时效公告"]["total"] == 1
     assert bucket_summary["时效公告"]["pass_rate"] == 1.0
+
+
+def test_case_pass_and_quality_helpers():
+    success_case = EvalCase("ok_case", "招生政策", "请总结招生政策", ["rag"], "", False)
+    expected_fail_case = EvalCase("fail_case", "流程咨询", "请说明报到流程", ["rag"], "", True)
+
+    assert is_case_passed({"ok": True, "status": "ok"}, success_case) is True
+    assert is_case_passed({"ok": True, "status": "failed"}, expected_fail_case) is True
+    assert is_case_passed({"ok": False, "status": "ok"}, success_case) is False
+
+    rows = [
+        {"latency_ms": 110, "citation_ok": True},
+        {"latency_ms": 130, "citation_ok": False},
+        {"latency_ms": 160, "citation_ok": True},
+        {"latency_ms": 220, "citation_ok": True},
+    ]
+    assert build_citation_hit_rate(rows) == 0.75
+    assert build_p95_latency(rows) == 220.0
