@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from scripts.ablate_retrieval import summarize_variant
+from scripts.ablate_retrieval import build_variant_queries, summarize_variant
+from scripts.evaluate_retrieval import RetrievalEvalCase
+
+
+class _FakeRewriter:
+    def rewrite(self, query: str) -> list[str]:
+        return [query, f"{query} 招生章程", f"{query} 官方政策"]
 
 
 def test_summarize_variant_averages_metrics():
@@ -17,3 +23,20 @@ def test_summarize_variant_averages_metrics():
     assert summary["mrr@5"] == 0.375
     assert summary["ndcg@5"] == 0.55
     assert summary["avg_latency_ms"] == 20.0
+
+
+def test_build_variant_queries_respects_rewrite_switch():
+    case = RetrievalEvalCase(
+        name="c1-1",
+        category="招生政策",
+        query="学费 5000 元",
+        relevant_chunk_ids=["c1"],
+    )
+    rewriter = _FakeRewriter()
+
+    rewrite_off = build_variant_queries(case=case, variant="rrf_hybrid_rewrite_off", rewriter=rewriter)
+    rewrite_on = build_variant_queries(case=case, variant="rrf_hybrid_rewrite_on", rewriter=rewriter)
+
+    assert rewrite_off == ["学费 5000 元"]
+    assert rewrite_on[0] == "学费 5000 元"
+    assert len(rewrite_on) == 3
