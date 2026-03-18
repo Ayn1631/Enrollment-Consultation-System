@@ -19,24 +19,26 @@ from app.main import app
 @dataclass
 class EvalCase:
     name: str
+    category: str
+    user_query: str
     features: list[str]
     fail_features: str
     should_fail: bool
 
 
 CASES = [
-    EvalCase("default_rag", ["rag", "citation_guard"], "", False),
-    EvalCase("web_search_degrade", ["rag", "web_search", "citation_guard"], "web_search", False),
-    EvalCase("skill_degrade", ["rag", "skill_exec", "citation_guard"], "skill_exec", False),
-    EvalCase("saved_skill_missing", ["rag", "use_saved_skill", "citation_guard"], "", True),
-    EvalCase("generation_fail", ["rag", "citation_guard"], "generation", True),
+    EvalCase("default_rag", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "", False),
+    EvalCase("web_search_degrade", "时效公告", "请给我最新招生公告", ["rag", "web_search", "citation_guard"], "web_search", False),
+    EvalCase("skill_degrade", "费用资助", "请解释学费和资助政策", ["rag", "skill_exec", "citation_guard"], "skill_exec", False),
+    EvalCase("saved_skill_missing", "流程咨询", "请说明报到流程", ["rag", "use_saved_skill", "citation_guard"], "", True),
+    EvalCase("generation_fail", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "generation", True),
 ]
 
 
 def run_case(client: TestClient, case: EvalCase) -> dict:
     payload = {
         "session_id": uuid.uuid4().hex,
-        "messages": [{"role": "user", "content": "请总结招生政策重点"}],
+        "messages": [{"role": "user", "content": case.user_query}],
         "mode": "chat",
         "stream": True,
         "features": case.features,
@@ -51,12 +53,36 @@ def run_case(client: TestClient, case: EvalCase) -> dict:
     body = response.json() if ok else {}
     return {
         "name": case.name,
+        "category": case.category,
         "http_status": response.status_code,
         "ok": ok,
         "status": body.get("status"),
         "degraded_features": body.get("degraded_features", []),
         "latency_ms": round(elapsed, 2),
     }
+
+
+def build_bucket_summary(rows: list[dict], cases: list[EvalCase]) -> dict[str, dict[str, float | int]]:
+    """按场景分桶统计通过率，便于 hard case 回归观察。"""
+    case_by_name = {case.name: case for case in cases}
+    buckets: dict[str, dict[str, float | int]] = {}
+    for row in rows:
+        case = case_by_name[row["name"]]
+        bucket = buckets.setdefault(case.category, {"total": 0, "passed": 0})
+        bucket["total"] += 1
+        row_passed = False
+        if row.get("ok"):
+            if case.should_fail:
+                row_passed = row.get("status") in {"failed", "degraded"}
+            else:
+                row_passed = row.get("status") in {"ok", "degraded"}
+        if row_passed:
+            bucket["passed"] += 1
+    for bucket in buckets.values():
+        total = int(bucket["total"])
+        passed = int(bucket["passed"])
+        bucket["pass_rate"] = round(passed / total, 4) if total else 0.0
+    return buckets
 
 
 def main() -> int:
@@ -79,6 +105,7 @@ def main() -> int:
         "passed": passed,
         "pass_rate": round(passed / len(CASES), 4),
         "p95_latency_ms": sorted(row["latency_ms"] for row in rows)[int(len(rows) * 0.95) - 1],
+        "bucket_summary": build_bucket_summary(rows=rows, cases=CASES),
         "rows": rows,
     }
     out_dir = Path("reports")
