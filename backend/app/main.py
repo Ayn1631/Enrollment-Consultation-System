@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Iterator
@@ -29,6 +31,7 @@ from app.state import ServiceContainer
 settings = get_settings()
 container = ServiceContainer()
 service_client = ServiceClient(settings)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -119,8 +122,21 @@ def save_skill(name: str, workflow: str):
 @app.post("/api/chat", response_model=ChatCreateResponse)
 def create_chat(request: ChatRequest, x_fail_features: str | None = Header(default=None)) -> ChatCreateResponse:
     fail_features = {item.strip() for item in (x_fail_features or "").split(",") if item.strip()}
-    response = gateway.create_chat(request, fail_features=fail_features)
-    return response
+    try:
+        response = gateway.create_chat(request, fail_features=fail_features)
+        return response
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        trace_id = uuid.uuid4().hex
+        logger.exception("create_chat unexpected failure trace_id=%s session_id=%s", trace_id, request.session_id)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "后端处理聊天请求时发生异常，请查看后端日志。",
+                "trace_id": trace_id,
+            },
+        ) from None
 
 
 def _sse_stream(text: str, chunk_size: int) -> Iterator[str]:
@@ -133,7 +149,15 @@ def _sse_stream(text: str, chunk_size: int) -> Iterator[str]:
 def stream_chat(session_id: str):
     session = container.session_store.get(session_id)
     if not session:
+        logger.warning("stream_chat session not found session_id=%s", session_id)
         raise HTTPException(status_code=404, detail="session not found")
+    if session.status == "failed":
+        logger.error(
+            "stream_chat serving failed session session_id=%s trace_id=%s error=%s",
+            session_id,
+            session.trace_id,
+            session.error_message,
+        )
 
     def event_iter() -> Iterator[str]:
         yield from _sse_stream(session.text, settings.stream_chunk_size)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ class QueryRouteDecision:
 
 class GatewayOrchestrator:
     WEB_SEARCH_ALLOWED_DOMAINS: tuple[str, ...] = ("zsc.zut.edu.cn", "zut.edu.cn")
+    logger = logging.getLogger(__name__)
 
     def __init__(self, deps: GatewayDependencies):
         self.deps = deps
@@ -229,6 +231,13 @@ class GatewayOrchestrator:
             ),
         )
         if not generation_result.ok or generation_result.value is None:
+            self.logger.error(
+                "generation failed trace_id=%s session_id=%s error=%s features=%s",
+                trace_id,
+                request.session_id,
+                generation_result.error or "generation failed",
+                effective_features,
+            )
             session = SessionResult(
                 session_id=request.session_id,
                 trace_id=trace_id,

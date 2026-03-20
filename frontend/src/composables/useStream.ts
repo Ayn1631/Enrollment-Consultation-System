@@ -2,14 +2,14 @@ import { openChatStream, postChat } from '../services/api'
 import type { ChatRequest, ChatStreamEvent } from '../types'
 
 export function useStream() {
-  const useMock = import.meta.env.VITE_USE_MOCK !== 'false'
+  const useMock = import.meta.env.VITE_USE_MOCK === 'true'
 
   const startStream = async (
     request: ChatRequest,
     handlers: {
       onDelta: (delta: string) => void
       onDone: (event: ChatStreamEvent) => void
-      onError: (err: Event) => void
+      onError: (err: Error) => void
     }
   ): Promise<() => void> => {
     if (useMock) {

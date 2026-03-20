@@ -49,4 +49,28 @@ describe('api.postReindex', () => {
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(options.headers).toEqual({})
   })
+
+  test('后端返回结构化错误时保留详细提示和 trace_id', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({
+          detail: {
+            message: '后端处理聊天请求时发生异常，请查看后端日志。',
+            trace_id: 'trace-123'
+          }
+        })
+      } as FetchResponse)
+    )
+
+    const api = await loadApiModule('')
+    await expect(api.postReindex()).rejects.toMatchObject({
+      name: 'ApiRequestError',
+      message: '后端处理聊天请求时发生异常，请查看后端日志。（trace_id: trace-123）',
+      status: 500,
+      traceId: 'trace-123'
+    })
+  })
 })

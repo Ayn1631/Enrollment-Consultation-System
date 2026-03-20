@@ -50,6 +50,7 @@ const healthApp = ref('')
 const healthOverall = ref(true)
 const healthDependencies = ref<HealthDependency[]>([])
 const reindexInfo = ref('')
+const pageNotice = ref<{ type: 'info' | 'warning' | 'error'; message: string } | null>(null)
 
 const streamingText = ref('')
 const streaming = ref(false)
@@ -73,6 +74,17 @@ const blockedReason = computed(() => {
 
 const canSend = computed(() => !blockedReason.value)
 
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+  return fallback
+}
+
+const showNotice = (message: string, type: 'info' | 'warning' | 'error' = 'error') => {
+  pageNotice.value = { message, type }
+}
+
 const loadMeta = async () => {
   try {
     const [features, skills] = await Promise.all([getFeatures(), getSavedSkills()])
@@ -93,6 +105,7 @@ const loadMeta = async () => {
     savedSkills.value = [
       { id: 'admission_faq_v1', label: '招生FAQ助手', description: '聚焦招生政策与时间节点问答' }
     ]
+    showNotice('获取后端功能配置失败，当前已切换为前端内置兜底配置。', 'warning')
   }
 }
 
@@ -109,6 +122,7 @@ const refreshHealth = async () => {
     healthDependencies.value = [
       { name: 'api-gateway', healthy: false, circuit_open: false, last_error: '无法连接后端' }
     ]
+    showNotice('后端健康检查失败，请确认后端服务已经启动并且接口地址配置正确。', 'error')
   } finally {
     healthLoading.value = false
   }
@@ -120,8 +134,9 @@ const triggerReindex = async () => {
     const result = await postReindex()
     reindexInfo.value = `重建完成，当前索引块数：${result.result.chunks}`
     await refreshHealth()
-  } catch {
+  } catch (error) {
     reindexInfo.value = '重建索引失败，请检查后端服务状态。'
+    showNotice(getErrorMessage(error, '重建索引失败，请检查后端服务状态。'), 'error')
   } finally {
     reindexLoading.value = false
   }
@@ -220,6 +235,7 @@ const handleSend = async () => {
   }
 
   try {
+    pageNotice.value = null
     cancelStream = await startStream(request, {
       onDelta: (delta) => {
         queueStreamingDelta(delta)
@@ -227,25 +243,29 @@ const handleSend = async () => {
       onDone: (done) => {
         finalize(done)
       },
-      onError: () => {
+      onError: (error) => {
         latestDegradedFeatures.value = []
+        const message = getErrorMessage(error, '系统连接异常，请稍后重试。')
         messages.value.push({
           id: newId(),
           role: 'system',
-          content: '系统连接异常，请稍后重试。',
+          content: message,
           createdAt: new Date().toISOString()
         })
+        showNotice(message, 'error')
         finalize()
       }
     })
   } catch (error) {
+    const message = getErrorMessage(error, '无法连接后端服务，请检查接口配置。')
     messages.value.push({
       id: newId(),
       role: 'system',
-      content: '无法连接后端服务，请检查接口配置。',
+      content: message,
       createdAt: new Date().toISOString()
     })
     latestDegradedFeatures.value = []
+    showNotice(message, 'error')
     finalize()
   }
 }
@@ -275,6 +295,10 @@ const toggleRightPanel = () => {
       />
 
       <main class="chat-area">
+        <div v-if="pageNotice" class="page-notice" :class="pageNotice.type">
+          <span>{{ pageNotice.message }}</span>
+          <button type="button" class="notice-close" @click="pageNotice = null">知道了</button>
+        </div>
         <ChatMain
           :messages="messages"
           :streaming-text="streamingText"
@@ -345,6 +369,44 @@ const toggleRightPanel = () => {
   backdrop-filter: blur(14px);
   min-height: 0;
   overflow: hidden;
+}
+
+.page-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.page-notice.info {
+  background: rgba(31, 86, 166, 0.1);
+  border: 1px solid rgba(31, 86, 166, 0.16);
+  color: #17427d;
+}
+
+.page-notice.warning {
+  background: rgba(166, 30, 36, 0.08);
+  border: 1px solid rgba(166, 30, 36, 0.16);
+  color: var(--accent-cool);
+}
+
+.page-notice.error {
+  background: rgba(183, 28, 28, 0.1);
+  border: 1px solid rgba(183, 28, 28, 0.18);
+  color: #8b1d1d;
+}
+
+.notice-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .layout.compact {

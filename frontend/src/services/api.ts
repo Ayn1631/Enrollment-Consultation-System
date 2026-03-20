@@ -9,11 +9,52 @@ import type {
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_API_TOKEN ?? ''
 
+export class ApiRequestError extends Error {
+  status?: number
+  traceId?: string
+
+  constructor(message: string, options?: { status?: number; traceId?: string }) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = options?.status
+    this.traceId = options?.traceId
+  }
+}
+
 function adminHeaders(): Record<string, string> {
   if (!ADMIN_TOKEN) {
     return {}
   }
   return { 'x-admin-token': ADMIN_TOKEN }
+}
+
+async function readJsonSafely(res: Response): Promise<Record<string, unknown> | null> {
+  try {
+    const payload = (await res.json()) as unknown
+    if (payload && typeof payload === 'object') {
+      return payload as Record<string, unknown>
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+async function ensureOk(res: Response, fallbackMessage: string): Promise<void> {
+  if (res.ok) return
+  const payload = await readJsonSafely(res)
+  const detail = payload?.detail
+  const detailObject = detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : null
+  const traceId =
+    (typeof payload?.trace_id === 'string' ? payload.trace_id : undefined) ??
+    (typeof detailObject?.trace_id === 'string' ? detailObject.trace_id : undefined)
+  const errorMessage =
+    (typeof detail === 'string' ? detail : undefined) ??
+    (typeof detailObject?.message === 'string' ? detailObject.message : undefined) ??
+    (typeof payload?.message === 'string' ? payload.message : undefined) ??
+    `${fallbackMessage}（HTTP ${res.status}）`
+  const finalMessage = traceId ? `${errorMessage}（trace_id: ${traceId}）` : errorMessage
+  throw new ApiRequestError(finalMessage, { status: res.status, traceId })
 }
 
 export async function postChat(request: ChatRequest): Promise<{
@@ -30,10 +71,7 @@ export async function postChat(request: ChatRequest): Promise<{
     body: JSON.stringify(request)
   })
 
-  if (!res.ok) {
-    throw new Error(`POST /api/chat failed: ${res.status}`)
-  }
-
+  await ensureOk(res, '提交聊天请求失败')
   return res.json()
 }
 
@@ -42,7 +80,7 @@ export function openChatStream(
   handlers: {
     onDelta: (delta: string) => void
     onDone: (event: ChatStreamEvent) => void
-    onError: (err: Event) => void
+    onError: (err: Error) => void
   }
 ): () => void {
   const url = `${API_BASE}/api/chat/stream?session_id=${encodeURIComponent(sessionId)}`
@@ -62,48 +100,47 @@ export function openChatStream(
   const handleDone = (ev: MessageEvent) => {
     try {
       const data = JSON.parse(ev.data) as ChatStreamEvent
+      source.close()
       handlers.onDone(data)
     } catch {
+      source.close()
       handlers.onDone({ finish_reason: 'stop' })
     }
   }
 
+  const handleError = () => {
+    source.close()
+    handlers.onError(new ApiRequestError('与后端流式连接中断，请检查后端服务或接口地址配置。'))
+  }
+
   source.addEventListener('message', handleMessage)
   source.addEventListener('done', handleDone)
-  source.addEventListener('error', handlers.onError)
+  source.addEventListener('error', handleError)
 
   return () => source.close()
 }
 
 export async function getTools(): Promise<Array<{ id: string; label: string }>> {
   const res = await fetch(`${API_BASE}/api/tools`)
-  if (!res.ok) {
-    throw new Error(`GET /api/tools failed: ${res.status}`)
-  }
+  await ensureOk(res, '获取工具列表失败')
   return res.json()
 }
 
 export async function getFeatures(): Promise<FeatureMeta[]> {
   const res = await fetch(`${API_BASE}/api/features`)
-  if (!res.ok) {
-    throw new Error(`GET /api/features failed: ${res.status}`)
-  }
+  await ensureOk(res, '获取功能列表失败')
   return res.json()
 }
 
 export async function getSavedSkills(): Promise<SavedSkill[]> {
   const res = await fetch(`${API_BASE}/api/skills/saved`)
-  if (!res.ok) {
-    throw new Error(`GET /api/skills/saved failed: ${res.status}`)
-  }
+  await ensureOk(res, '获取历史技能失败')
   return res.json()
 }
 
 export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/healthz/dependencies`)
-  if (!res.ok) {
-    throw new Error(`GET /healthz/dependencies failed: ${res.status}`)
-  }
+  await ensureOk(res, '获取后端健康状态失败')
   return res.json()
 }
 
@@ -112,8 +149,6 @@ export async function postReindex(): Promise<{ status: string; result: { chunks:
     method: 'POST',
     headers: adminHeaders()
   })
-  if (!res.ok) {
-    throw new Error(`POST /api/admin/reindex failed: ${res.status}`)
-  }
+  await ensureOk(res, '重建索引失败')
   return res.json()
 }
