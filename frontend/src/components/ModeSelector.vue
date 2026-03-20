@@ -43,7 +43,7 @@ const options: Array<{ value: ChatMode; label: string }> = [
 
 .mode.active {
   color: var(--accent);
-  border-color: rgba(183, 139, 58, 0.6);
-  background: rgba(183, 139, 58, 0.16);
+  border-color: rgba(166, 30, 36, 0.45);
+  background: rgba(166, 30, 36, 0.12);
 }
 </style>

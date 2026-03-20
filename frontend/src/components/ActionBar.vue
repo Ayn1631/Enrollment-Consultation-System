@@ -82,9 +82,9 @@ const handleKeydown = (event: KeyboardEvent) => {
 .send {
   padding: 9px 16px;
   border-radius: 12px;
-  background: linear-gradient(135deg, rgba(214, 168, 91, 0.9), rgba(47, 143, 138, 0.75));
+  background: linear-gradient(135deg, rgba(198, 40, 50, 0.96), rgba(127, 21, 27, 0.9));
   border: none;
-  color: #1a211f;
+  color: #fff7f7;
   font-weight: 600;
   cursor: pointer;
 }
@@ -92,8 +92,8 @@ const handleKeydown = (event: KeyboardEvent) => {
 .stop {
   padding: 9px 13px;
   border-radius: 12px;
-  border: 1px solid rgba(192, 75, 75, 0.4);
-  background: rgba(192, 75, 75, 0.1);
+  border: 1px solid rgba(166, 30, 36, 0.4);
+  background: rgba(166, 30, 36, 0.12);
   color: var(--ink-0);
   cursor: pointer;
 }
@@ -105,7 +105,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 
 .blocked-tip {
   font-size: 12px;
-  color: #875700;
+  color: var(--accent-cool);
   padding-top: 2px;
 }
 </style>

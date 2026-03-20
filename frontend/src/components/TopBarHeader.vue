@@ -46,8 +46,8 @@ defineProps<{ mode: string }>()
   font-family: var(--font-display);
   font-size: 18px;
   color: var(--ink-0);
-  background: radial-gradient(circle at 30% 30%, rgba(214, 168, 91, 0.9), rgba(241, 232, 216, 0.9));
-  border: 1px solid rgba(183, 139, 58, 0.4);
+  background: radial-gradient(circle at 30% 30%, rgba(198, 40, 50, 0.9), rgba(246, 224, 224, 0.96));
+  border: 1px solid rgba(166, 30, 36, 0.34);
   letter-spacing: 0.06em;
 }
 
@@ -70,8 +70,8 @@ defineProps<{ mode: string }>()
   gap: 8px;
   padding: 8px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(183, 139, 58, 0.35);
-  background: rgba(183, 139, 58, 0.12);
+  border: 1px solid rgba(166, 30, 36, 0.28);
+  background: rgba(166, 30, 36, 0.1);
   color: var(--accent);
   font-size: 13px;
 }
@@ -81,6 +81,6 @@ defineProps<{ mode: string }>()
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 10px rgba(183, 139, 58, 0.6);
+  box-shadow: 0 0 10px rgba(166, 30, 36, 0.45);
 }
 </style>

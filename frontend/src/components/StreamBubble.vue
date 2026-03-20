@@ -16,8 +16,8 @@ defineProps<{ content: string }>()
 .bubble {
   padding: 14px 16px;
   border-radius: 16px;
-  background: rgba(183, 139, 58, 0.1);
-  border: 1px solid rgba(183, 139, 58, 0.35);
+  background: rgba(166, 30, 36, 0.1);
+  border: 1px solid rgba(166, 30, 36, 0.26);
   animation: bubble-in 0.4s ease both;
 }
 

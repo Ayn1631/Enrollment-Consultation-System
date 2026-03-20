@@ -5,9 +5,9 @@
   --font-display: 'Cormorant Garamond', 'Noto Serif SC', serif;
   --font-body: 'IBM Plex Sans', 'Noto Sans SC', sans-serif;
 
-  --bg-0: #fbf7f7;
-  --bg-1: #f6eeee;
-  --bg-2: #f2e6e6;
+  --bg-0: #fff7f7;
+  --bg-1: #f9eded;
+  --bg-2: #f3dfdf;
   --panel: rgba(255, 255, 255, 0.94);
   --line-soft: rgba(52, 20, 20, 0.12);
 
@@ -15,10 +15,10 @@
   --ink-1: #2c1a1a;
   --ink-2: #6b5858;
 
-  --accent: #8b1d1d;
-  --accent-strong: #b02b2b;
-  --accent-cool: #6f2020;
-  --danger: #b32626;
+  --accent: #a61e24;
+  --accent-strong: #c62832;
+  --accent-cool: #7f151b;
+  --danger: #b71c1c;
 
   --shadow-soft: 0 12px 24px rgba(45, 16, 16, 0.12);
   --shadow-strong: 0 24px 40px rgba(45, 16, 16, 0.18);

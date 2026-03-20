@@ -99,15 +99,15 @@ const emit = defineEmits<{
 }
 
 .sessions .session:hover {
-  border-color: rgba(183, 139, 58, 0.4);
-  background: rgba(183, 139, 58, 0.12);
+  border-color: rgba(166, 30, 36, 0.34);
+  background: rgba(166, 30, 36, 0.1);
 }
 
 .new-session {
   width: 100%;
   padding: 9px;
   border-radius: 12px;
-  border: 1px dashed rgba(183, 139, 58, 0.5);
+  border: 1px dashed rgba(166, 30, 36, 0.45);
   background: transparent;
   color: var(--accent);
   cursor: pointer;

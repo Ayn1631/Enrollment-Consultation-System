@@ -42,8 +42,8 @@ const props = defineProps<{
 .status {
   padding: 10px 14px;
   border-radius: 14px;
-  background: rgba(183, 139, 58, 0.12);
-  border: 1px solid rgba(183, 139, 58, 0.25);
+  background: rgba(166, 30, 36, 0.1);
+  border: 1px solid rgba(166, 30, 36, 0.2);
   font-size: 13px;
 }
 
@@ -59,7 +59,7 @@ const props = defineProps<{
 
 .status-degraded {
   margin-top: 6px;
-  color: #9b5b00;
+  color: var(--accent-cool);
   font-weight: 600;
 }
 

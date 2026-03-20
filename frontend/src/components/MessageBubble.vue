@@ -36,20 +36,20 @@ const props = defineProps<{ message: ChatMessage }>()
 
 .bubble.user {
   align-self: flex-end;
-  background: rgba(47, 143, 138, 0.12);
-  border-color: rgba(47, 143, 138, 0.3);
+  background: rgba(166, 30, 36, 0.12);
+  border-color: rgba(166, 30, 36, 0.28);
 }
 
 .bubble.assistant {
   align-self: flex-start;
-  background: rgba(183, 139, 58, 0.12);
-  border-color: rgba(183, 139, 58, 0.3);
+  background: rgba(198, 40, 50, 0.08);
+  border-color: rgba(198, 40, 50, 0.24);
 }
 
 .bubble.system {
   align-self: center;
-  background: rgba(192, 75, 75, 0.12);
-  border-color: rgba(192, 75, 75, 0.3);
+  background: rgba(127, 21, 27, 0.1);
+  border-color: rgba(127, 21, 27, 0.24);
 }
 
 .meta {
@@ -70,8 +70,8 @@ const props = defineProps<{ message: ChatMessage }>()
   margin-bottom: 8px;
   padding: 6px 8px;
   border-radius: 8px;
-  background: rgba(255, 196, 0, 0.2);
-  color: #7b5000;
+  background: rgba(166, 30, 36, 0.14);
+  color: var(--accent-cool);
   font-size: 12px;
 }
 

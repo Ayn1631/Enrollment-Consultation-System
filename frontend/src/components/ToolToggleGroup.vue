@@ -151,13 +151,13 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 }
 
 .dropdown-item:hover {
-  background: rgba(183, 139, 58, 0.1);
-  border-color: rgba(183, 139, 58, 0.2);
+  background: rgba(166, 30, 36, 0.08);
+  border-color: rgba(166, 30, 36, 0.18);
 }
 
 .dropdown-item.active {
-  background: rgba(47, 143, 138, 0.12);
-  border-color: rgba(47, 143, 138, 0.3);
+  background: rgba(166, 30, 36, 0.12);
+  border-color: rgba(166, 30, 36, 0.28);
 }
 
 .check {
