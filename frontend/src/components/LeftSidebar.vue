@@ -67,11 +67,14 @@ const emit = defineEmits<{
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .panel {
-  padding: 16px;
+  padding: 14px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid var(--line-soft);
@@ -81,15 +84,15 @@ const emit = defineEmits<{
 .panel-title {
   font-size: 12px;
   color: var(--ink-2);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   text-transform: uppercase;
   letter-spacing: 0.18em;
 }
 
 .sessions .session {
-  padding: 10px 12px;
+  padding: 9px 11px;
   border-radius: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   background: rgba(255, 255, 255, 0.7);
   border: 1px solid transparent;
   transition: 0.2s ease;
@@ -102,7 +105,7 @@ const emit = defineEmits<{
 
 .new-session {
   width: 100%;
-  padding: 10px;
+  padding: 9px;
   border-radius: 12px;
   border: 1px dashed rgba(183, 139, 58, 0.5);
   background: transparent;
@@ -111,13 +114,13 @@ const emit = defineEmits<{
 }
 
 .notice p {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   color: var(--ink-1);
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .saved-skill {
-  margin-top: 12px;
+  margin-top: 10px;
   display: grid;
   gap: 6px;
 }

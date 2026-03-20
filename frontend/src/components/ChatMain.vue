@@ -34,12 +34,13 @@ const props = defineProps<{
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   overflow: hidden;
+  min-height: 0;
 }
 
 .status {
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-radius: 14px;
   background: rgba(183, 139, 58, 0.12);
   border: 1px solid rgba(183, 139, 58, 0.25);
@@ -66,8 +67,9 @@ const props = defineProps<{
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   overflow-y: auto;
   padding-right: 4px;
+  min-height: 0;
 }
 </style>

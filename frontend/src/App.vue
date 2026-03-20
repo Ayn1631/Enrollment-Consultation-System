@@ -289,51 +289,61 @@ const toggleRightPanel = () => {
 
 <style scoped>
 .app-shell {
-  min-height: 100vh;
-  padding: 18px 20px 26px;
+  height: 100vh;
+  padding: 14px 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   animation: rise-in 0.8s ease both;
+  overflow: hidden;
 }
 
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 320px;
-  gap: 16px;
+  grid-template-columns: 248px minmax(0, 1fr) 296px;
+  gap: 14px;
   align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chat-area {
   background: var(--panel);
   border: 1px solid var(--line-soft);
   border-radius: 22px;
-  padding: 18px 18px 16px;
+  padding: 16px 16px 14px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(14px);
+  min-height: 0;
+  overflow: hidden;
 }
 
-
 .layout.compact {
-  grid-template-columns: 260px minmax(0, 1fr) 80px;
+  grid-template-columns: 248px minmax(0, 1fr) 76px;
 }
 
 @media (max-width: 1280px) {
   .layout {
-    grid-template-columns: 220px minmax(0, 1fr) 280px;
+    grid-template-columns: 216px minmax(0, 1fr) 264px;
   }
 }
 
 @media (max-width: 1080px) {
+  .app-shell {
+    padding: 12px;
+    gap: 12px;
+  }
+
   .layout {
     grid-template-columns: 1fr;
   }
+
   .chat-area {
-    min-height: 70vh;
+    min-height: 0;
   }
 }
 </style>

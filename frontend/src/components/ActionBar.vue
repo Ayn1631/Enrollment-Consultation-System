@@ -41,11 +41,12 @@ const handleKeydown = (event: KeyboardEvent) => {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid var(--line-soft);
   border-radius: 18px;
-  padding: 14px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   box-shadow: var(--shadow-soft);
+  flex: 0 0 auto;
 }
 
 .input {
@@ -55,19 +56,22 @@ const handleKeydown = (event: KeyboardEvent) => {
   background: transparent;
   color: var(--ink-0);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.55;
   outline: none;
+  min-height: 52px;
+  max-height: 120px;
 }
 
 .actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .ghost {
-  padding: 8px 12px;
+  padding: 7px 11px;
   border-radius: 10px;
   background: rgba(27, 35, 32, 0.05);
   border: 1px solid rgba(27, 35, 32, 0.08);
@@ -76,7 +80,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 }
 
 .send {
-  padding: 10px 18px;
+  padding: 9px 16px;
   border-radius: 12px;
   background: linear-gradient(135deg, rgba(214, 168, 91, 0.9), rgba(47, 143, 138, 0.75));
   border: none;
@@ -86,7 +90,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 }
 
 .stop {
-  padding: 10px 14px;
+  padding: 9px 13px;
   border-radius: 12px;
   border: 1px solid rgba(192, 75, 75, 0.4);
   background: rgba(192, 75, 75, 0.1);

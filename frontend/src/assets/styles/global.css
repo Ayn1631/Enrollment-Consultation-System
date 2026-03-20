@@ -2,6 +2,13 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -31,10 +38,6 @@ body::after {
   background: radial-gradient(circle at 18% 70%, rgba(139, 29, 29, 0.16), transparent 55%),
     radial-gradient(circle at 80% 60%, rgba(176, 43, 43, 0.12), transparent 50%);
   animation: glow-drift 18s ease-in-out infinite;
-}
-
-#app {
-  min-height: 100vh;
 }
 
 a {

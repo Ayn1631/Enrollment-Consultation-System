@@ -113,14 +113,16 @@ const emit = defineEmits<{
 
 <style scoped>
 .right {
-  padding: 16px;
+  padding: 14px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--line-soft);
   box-shadow: var(--shadow-soft);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .right.closed {
@@ -143,13 +145,19 @@ const emit = defineEmits<{
   color: var(--ink-2);
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+
+.content {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .control {
   display: grid;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   color: var(--ink-1);
 }
 
@@ -197,7 +205,7 @@ const emit = defineEmits<{
 .dep-list {
   display: grid;
   gap: 6px;
-  max-height: 180px;
+  max-height: 160px;
   overflow: auto;
 }
 
