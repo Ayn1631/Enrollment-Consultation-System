@@ -34,7 +34,10 @@ service_client = ServiceClient(settings)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     service_client.startup()
-    yield
+    try:
+        yield
+    finally:
+        service_client.shutdown()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -124,7 +127,6 @@ def _sse_stream(text: str, chunk_size: int) -> Iterator[str]:
     for idx in range(0, len(text), chunk_size):
         delta = text[idx : idx + chunk_size]
         yield f"event: message\ndata: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
-        time.sleep(0.01)
 
 
 @app.get("/api/chat/stream")

@@ -1,5 +1,4 @@
 import { openChatStream, postChat } from '../services/api'
-import { startMockStream } from '../services/mockApi'
 import type { ChatRequest, ChatStreamEvent } from '../types'
 
 export function useStream() {
@@ -14,6 +13,7 @@ export function useStream() {
     }
   ): Promise<() => void> => {
     if (useMock) {
+      const { startMockStream } = await import('../services/mockApi')
       return startMockStream(request, {
         onDelta: handlers.onDelta,
         onDone: handlers.onDone

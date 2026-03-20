@@ -55,6 +55,8 @@ const streamingText = ref('')
 const streaming = ref(false)
 const latestDegradedFeatures = ref<FeatureFlag[]>([])
 let cancelStream: (() => void) | null = null
+let pendingStreamText = ''
+let streamFlushHandle: number | null = null
 
 const modeLabel = computed(() => {
   if (mode.value === 'plan') return '规划执行'
@@ -126,9 +128,31 @@ const triggerReindex = async () => {
 }
 
 onMounted(() => {
-  loadMeta()
-  refreshHealth()
+  void Promise.all([loadMeta(), refreshHealth()])
 })
+
+const flushStreamingText = () => {
+  streamFlushHandle = null
+  if (!pendingStreamText) return
+  streamingText.value += pendingStreamText
+  pendingStreamText = ''
+}
+
+const queueStreamingDelta = (delta: string) => {
+  pendingStreamText += delta
+  if (streamFlushHandle !== null) return
+  streamFlushHandle = requestAnimationFrame(flushStreamingText)
+}
+
+const drainStreamingBuffer = () => {
+  if (streamFlushHandle !== null) {
+    cancelAnimationFrame(streamFlushHandle)
+    streamFlushHandle = null
+  }
+  if (!pendingStreamText) return
+  streamingText.value += pendingStreamText
+  pendingStreamText = ''
+}
 
 const handleSend = async () => {
   const content = input.value.trim()
@@ -175,6 +199,7 @@ const handleSend = async () => {
     sources?: Array<{ title: string; url: string }>
     trace_id?: string
   }) => {
+    drainStreamingBuffer()
     if (streamingText.value.trim()) {
       latestDegradedFeatures.value = done?.degraded_features ?? []
       messages.value.push({
@@ -197,7 +222,7 @@ const handleSend = async () => {
   try {
     cancelStream = await startStream(request, {
       onDelta: (delta) => {
-        streamingText.value += delta
+        queueStreamingDelta(delta)
       },
       onDone: (done) => {
         finalize(done)

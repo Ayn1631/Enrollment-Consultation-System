@@ -17,6 +17,10 @@ class GenerationService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._prompt_cache: dict[str, tuple[float, str]] = {}
+        self._http_client = httpx.Client(timeout=self.settings.request_timeout_seconds)
+
+    def close(self) -> None:
+        self._http_client.close()
 
     def generate(
         self,
@@ -184,10 +188,13 @@ class GenerationService:
             "Authorization": f"Bearer {self.settings.api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=self.settings.request_timeout_seconds) as client:
-            response = client.post(self.settings.api_url, headers=headers, json=payload)
-            response.raise_for_status()
-            body = response.json()
+        response = self._http_client.post(
+            self.settings.api_url,
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        body = response.json()
         choices = body.get("choices", [])
         if not choices:
             raise RuntimeError("generation response has no choices")

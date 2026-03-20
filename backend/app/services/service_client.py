@@ -43,24 +43,40 @@ class ServiceClient:
             timeout_seconds=settings.langchain4j_timeout_seconds,
         )
         self._rag_service = RagGraphService(settings)
+        self._http_clients: dict[float, httpx.Client] = {}
 
     def startup(self) -> None:
         """启动本地依赖；HTTP 模式由独立服务负责初始化。"""
+        if self.settings.service_call_mode == "http":
+            self._get_http_client(self.settings.request_timeout_seconds)
         if self.settings.service_call_mode != "http":
             self._rag_service.startup()
 
+    def shutdown(self) -> None:
+        for client in self._http_clients.values():
+            client.close()
+        self._http_clients.clear()
+        self._generator.close()
+
+    def _get_http_client(self, timeout: float) -> httpx.Client:
+        client = self._http_clients.get(timeout)
+        if client is None:
+            client = httpx.Client(timeout=timeout)
+            self._http_clients[timeout] = client
+        return client
+
     def _post(self, url: str, payload: dict, timeout: float) -> dict:
         last_error: Exception | None = None
+        client = self._get_http_client(timeout)
         for attempt in range(2):
             try:
-                with httpx.Client(timeout=timeout) as client:
-                    response = client.post(url, json=payload)
-                    response.raise_for_status()
-                    return response.json()
+                response = client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if attempt == 0:
-                    time.sleep(0.08)
+                    time.sleep(0.02)
         if last_error is not None:
             raise last_error
         raise RuntimeError("post request failed with unknown reason")
@@ -147,10 +163,11 @@ class ServiceClient:
 
     def list_saved_skills(self) -> SkillListResponse:
         if self.settings.service_call_mode == "http":
-            with httpx.Client(timeout=self.settings.saved_skill_service_timeout_seconds) as client:
-                response = client.get(f"{self.settings.skill_service_url}/skills/saved?active_only=true")
-                response.raise_for_status()
-                body = response.json()
+            response = self._get_http_client(self.settings.saved_skill_service_timeout_seconds).get(
+                f"{self.settings.skill_service_url}/skills/saved?active_only=true",
+            )
+            response.raise_for_status()
+            body = response.json()
             return SkillListResponse.model_validate(body)
         return SkillListResponse(skills=self._skills.list_active())
 
@@ -203,9 +220,8 @@ class ServiceClient:
         health: dict[str, dict[str, str | bool]] = {}
         for name, url in targets.items():
             try:
-                with httpx.Client(timeout=0.8) as client:
-                    res = client.get(url)
-                    res.raise_for_status()
+                res = self._get_http_client(0.8).get(url)
+                res.raise_for_status()
                 health[name] = {"healthy": True, "detail": "ok"}
             except Exception as exc:  # noqa: BLE001
                 health[name] = {"healthy": False, "detail": str(exc)}
@@ -213,16 +229,18 @@ class ServiceClient:
 
     def reindex(self) -> dict:
         if self.settings.service_call_mode == "http":
-            with httpx.Client(timeout=15) as client:
-                response = client.post(f"{self.settings.rag_agent_service_url}/rag/reindex")
-                response.raise_for_status()
-                return response.json()
+            response = self._get_http_client(15).post(
+                f"{self.settings.rag_agent_service_url}/rag/reindex",
+            )
+            response.raise_for_status()
+            return response.json()
         return self._rag_service.reindex()
 
     def rag_stats(self) -> dict:
         if self.settings.service_call_mode == "http":
-            with httpx.Client(timeout=5) as client:
-                response = client.get(f"{self.settings.rag_agent_service_url}/rag/stats")
-                response.raise_for_status()
-                return response.json()
+            response = self._get_http_client(5).get(
+                f"{self.settings.rag_agent_service_url}/rag/stats",
+            )
+            response.raise_for_status()
+            return response.json()
         return self._rag_service.stats()
