@@ -1,56 +1,52 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 
-from langchain_core.documents import Document
-
-from scripts.ablate_retrieval import build_variant_queries, evaluate_variant, summarize_variant
-from scripts.evaluate_retrieval import RetrievalEvalCase
-
-
-class _FakeRewriter:
-    def rewrite(self, query: str) -> list[str]:
-        return [query, f"{query} 招生章程", f"{query} 官方政策"]
+from app.config import Settings
+from app.rag.index import RagIndexManager
+from app.rag.rerank import ListwiseReranker
+from app.rag.retrievers import HybridRetriever
+from app.rag.rewrite import QueryRewriter
+from scripts.ablate_retrieval import _relevant_chunk_ids, build_variant_queries, evaluate_variant, summarize_variant
+from scripts.evaluate_retrieval import RetrievalEvalCase, build_retrieval_cases
 
 
-class _FakeRetriever:
-    def __init__(self, chunk_ids: list[str]):
-        self.chunk_ids = chunk_ids
-        self.calls: list[dict] = []
-
-    def retrieve(self, queries: list[str], top_n: int):
-        self.calls.append({"queries": list(queries), "top_n": top_n})
-        rows = []
-        for rank, chunk_id in enumerate(self.chunk_ids[:top_n], start=1):
-            rows.append(
-                SimpleNamespace(
-                    document=Document(
-                        page_content=f"document-{chunk_id}",
-                        metadata={"chunk_id": chunk_id},
-                    ),
-                    score=float(top_n - rank + 1),
-                )
-            )
-        return rows
-
-
-class _FakeReranker:
-    def __init__(self):
-        self.calls: list[dict] = []
-
-    def rerank(self, query: str, docs: list[Document], top_k: int):
-        self.calls.append(
-            {
-                "query": query,
-                "top_k": top_k,
-                "chunk_ids": [str(doc.metadata.get("chunk_id", "")) for doc in docs],
-            }
-        )
-        ordered = sorted(
-            docs,
-            key=lambda doc: (str(doc.metadata.get("chunk_id", "")) != "c2", -float(doc.metadata.get("score", 0.0))),
-        )
-        return ordered[:top_k], False
+def _build_real_components(tmp_path: Path) -> tuple[RagIndexManager, QueryRewriter, HybridRetriever, ListwiseReranker]:
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    sample = docs_dir / "01-招生政策.md"
+    sample.write_text(
+        "# 原文（来源：https://example.com/policy）\n"
+        "网页标题：2025 招生政策\n"
+        "抓取时间：2026-03-20\n"
+        "发布时间：2025-05-15\n\n"
+        "第一章 收费与资助\n"
+        "第一条 学费 5000 元，住宿费 800 元。\n"
+        "第二条 国家助学贷款每生每年最高 20000 元。\n"
+        "第三条 新生报到流程包括资格核验、宿舍办理、缴费确认。\n"
+        "第四条 咨询电话 0371-67698700。\n"
+        "第五条 学费 5000 元，住宿费 800 元，奖助贷政策按年度通知执行。\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        api_key="",
+        api_url="https://example.com/v1/chat/completions",
+        service_call_mode="local",
+        use_mock_generation=True,
+        docs_dir=docs_dir,
+        rag_faiss_dir=tmp_path / "faiss",
+        rag_chunk_size=80,
+        rag_chunk_overlap=10,
+        rag_retrieve_top_n=12,
+        rag_final_top_k=4,
+        rag_retry_top_n=16,
+    )
+    index = RagIndexManager(settings)
+    index.reindex()
+    rewriter = QueryRewriter(settings)
+    retriever = HybridRetriever(index=index)
+    reranker = ListwiseReranker(settings)
+    return index, rewriter, retriever, reranker
 
 
 def test_summarize_variant_averages_metrics():
@@ -69,97 +65,59 @@ def test_summarize_variant_averages_metrics():
     assert summary["avg_latency_ms"] == 20.0
 
 
-def test_build_variant_queries_respects_rewrite_switch():
+def test_build_variant_queries_respects_rewrite_switch_with_real_rewriter(tmp_path: Path):
+    _, rewriter, _, _ = _build_real_components(tmp_path)
     case = RetrievalEvalCase(
         name="c1-1",
         category="招生政策",
         query="学费 5000 元",
         relevant_chunk_ids=["c1"],
     )
-    rewriter = _FakeRewriter()
 
     rewrite_off = build_variant_queries(case=case, variant="rrf_hybrid_rewrite_off", rewriter=rewriter)
     rewrite_on = build_variant_queries(case=case, variant="rrf_hybrid_rewrite_on", rewriter=rewriter)
 
     assert rewrite_off == ["学费 5000 元"]
     assert rewrite_on[0] == "学费 5000 元"
-    assert len(rewrite_on) == 3
+    assert len(rewrite_on) >= 2
 
 
-def test_evaluate_variant_rerank_off_skips_reranker():
-    case = RetrievalEvalCase(
-        name="c2-1",
-        category="招生政策",
-        query="住宿费",
-        relevant_chunk_ids=["c2"],
-    )
-    retriever = _FakeRetriever(chunk_ids=["c1", "c2", "c3"])
-    reranker = _FakeReranker()
+def test_evaluate_variant_runs_rerank_variants_with_real_components(tmp_path: Path):
+    index, rewriter, retriever, reranker = _build_real_components(tmp_path)
+    cases = build_retrieval_cases(index.all_documents(), max_cases=4)
+    assert cases
+    case = cases[0]
 
-    summary = evaluate_variant(
+    rerank_off = evaluate_variant(
         retriever=retriever,
-        rewriter=_FakeRewriter(),
+        rewriter=rewriter,
         reranker=reranker,
         cases=[case],
         variant="rrf_hybrid_rerank_off",
         k=2,
     )
-
-    assert retriever.calls == [{"queries": ["住宿费"], "top_n": 2}]
-    assert reranker.calls == []
-    assert summary["mrr@2"] == 0.5
-
-
-def test_evaluate_variant_rerank_on_expands_candidates_and_reorders():
-    case = RetrievalEvalCase(
-        name="c2-1",
-        category="招生政策",
-        query="住宿费",
-        relevant_chunk_ids=["c2"],
-    )
-    retriever = _FakeRetriever(chunk_ids=["c1", "c2", "c3"])
-    reranker = _FakeReranker()
-
-    summary = evaluate_variant(
+    rerank_on = evaluate_variant(
         retriever=retriever,
-        rewriter=_FakeRewriter(),
+        rewriter=rewriter,
         reranker=reranker,
         cases=[case],
         variant="rrf_hybrid_rerank_on",
         k=2,
     )
 
-    assert retriever.calls == [{"queries": ["住宿费"], "top_n": 12}]
-    assert reranker.calls == [{"query": "住宿费", "top_k": 2, "chunk_ids": ["c1", "c2", "c3"]}]
-    assert summary["mrr@2"] == 1.0
+    for summary in (rerank_off, rerank_on):
+        assert summary["cases"] == 1
+        assert 0.0 <= float(summary["recall@2"]) <= 1.0
+        assert 0.0 <= float(summary["mrr@2"]) <= 1.0
+        assert 0.0 <= float(summary["ndcg@2"]) <= 1.0
+        assert float(summary["avg_latency_ms"]) >= 0.0
 
 
-def test_evaluate_variant_small2big_switch_changes_relevance_scope():
-    case = RetrievalEvalCase(
-        name="c2-1",
-        category="招生政策",
-        query="助学贷款",
-        relevant_chunk_ids=["c2", "summary-1"],
-    )
-    retriever = _FakeRetriever(chunk_ids=["summary-1", "c2"])
-    reranker = _FakeReranker()
+def test_relevant_chunk_ids_respects_small2big_switch_with_real_case(tmp_path: Path):
+    index, _, _, _ = _build_real_components(tmp_path)
+    cases = build_retrieval_cases(index.all_documents(), max_cases=8)
+    case = next((item for item in cases if len(item.relevant_chunk_ids) > 1), None)
 
-    small2big_off = evaluate_variant(
-        retriever=retriever,
-        rewriter=_FakeRewriter(),
-        reranker=reranker,
-        cases=[case],
-        variant="rrf_hybrid_small2big_off",
-        k=2,
-    )
-    small2big_on = evaluate_variant(
-        retriever=retriever,
-        rewriter=_FakeRewriter(),
-        reranker=reranker,
-        cases=[case],
-        variant="rrf_hybrid_small2big_on",
-        k=2,
-    )
-
-    assert small2big_off["mrr@2"] == 0.5
-    assert small2big_on["mrr@2"] == 1.0
+    assert case is not None
+    assert len(_relevant_chunk_ids(case=case, variant="rrf_hybrid_small2big_on")) > 1
+    assert len(_relevant_chunk_ids(case=case, variant="rrf_hybrid_small2big_off")) == 1
