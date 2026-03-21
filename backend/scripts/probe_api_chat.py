@@ -10,25 +10,32 @@ from typing import Any
 import uuid
 
 import httpx
+from dotenv import load_dotenv
 
 
-DEFAULT_PROMPTS = [
-    "请简短介绍招生政策重点",
-    "再说一下学费和招生咨询电话",
-]
+SCRIPT_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = SCRIPT_DIR.parent
+DEFAULT_OUTPUT_PATH = BACKEND_DIR / "reports" / "frontend_api_chat_probe.json"
+DEFAULT_PROMPTS = ["理工科的学费是多少?"]
+
+
+def bootstrap_env() -> Path:
+    env_path = BACKEND_DIR / ".env"
+    load_dotenv(env_path, override=False)
+    return env_path
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="模拟前端通过真实 HTTP 调用 /api/chat 与 /api/chat/stream。")
     parser.add_argument("--base-url", default=os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:8000"))
-    parser.add_argument("--output", default="reports/frontend_api_chat_probe.json")
-    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--output", default=os.getenv("PROBE_OUTPUT_PATH", str(DEFAULT_OUTPUT_PATH)))
+    parser.add_argument("--timeout", type=float, default=float(os.getenv("PROBE_TIMEOUT_SECONDS", "30.0")))
     parser.add_argument("--session-id", default=uuid.uuid4().hex)
     parser.add_argument("--feature", action="append", dest="features", help="可重复传入 feature，默认 rag + citation_guard。")
     parser.add_argument("--prompt", action="append", dest="prompts", help="可重复传入多轮用户问题。")
-    parser.add_argument("--model", default="zyit-pro")
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--top-p", type=float, default=0.85)
+    parser.add_argument("--model", default=os.getenv("PROBE_MODEL", "zyit-pro"))
+    parser.add_argument("--temperature", type=float, default=float(os.getenv("PROBE_TEMPERATURE", "0.2")))
+    parser.add_argument("--top-p", type=float, default=float(os.getenv("PROBE_TOP_P", "0.85")))
     parser.add_argument("--strict-citation", action="store_true", default=True)
     return parser
 
@@ -155,6 +162,7 @@ def run_round(
 
 
 def main() -> int:
+    env_path = bootstrap_env()
     args = build_parser().parse_args()
     base_url = str(args.base_url).rstrip("/")
     features = args.features or ["rag", "citation_guard"]
@@ -173,6 +181,7 @@ def main() -> int:
         "notes": [
             "如果 healthcheck 或请求失败，优先确认后端是否已通过 python 启动并监听 8000 端口。",
             "推荐先在另一个终端运行: cd backend && python main.py",
+            f"dotenv 已加载: {env_path}",
         ],
     }
 
