@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     generation_main_model: str = Field(default="gpt-4.1", alias="GENERATION_MAIN_MODEL")
     generation_cache_enabled: bool = Field(default=True, alias="GENERATION_CACHE_ENABLED")
     generation_cache_ttl_seconds: int = Field(default=300, alias="GENERATION_CACHE_TTL_SECONDS")
+    cors_allow_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+        alias="CORS_ALLOW_ORIGINS",
+    )
     docs_dir: Path = DOCS_DIR
 
     embedding_api_url: str = Field(default="", alias="EMBEDDING_API_URL")
@@ -78,6 +82,9 @@ class Settings(BaseSettings):
         if base.endswith("/chat/completions"):
             return f"{base[:-len('/chat/completions')]}/embeddings"
         return f"{base.rstrip('/')}/embeddings"
+
+    def resolve_cors_allow_origins(self) -> list[str]:
+        return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
 
 
 @lru_cache(maxsize=1)
