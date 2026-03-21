@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import uuid
+from typing import Any
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.main import app
 
@@ -16,6 +19,55 @@ def _base_payload() -> dict:
         "features": ["rag", "citation_guard"],
         "strict_citation": True,
     }
+
+
+def _parse_sse_body(body: str) -> dict[str, Any]:
+    messages: list[str] = []
+    done_payload: dict[str, Any] = {}
+    current_event = ""
+    for block in body.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        for line in lines:
+            if line.startswith("event: "):
+                current_event = line.removeprefix("event: ").strip()
+            if not line.startswith("data: "):
+                continue
+            payload = json.loads(line.removeprefix("data: ").strip())
+            if current_event == "message":
+                messages.append(str(payload.get("delta", "")))
+            elif current_event == "done":
+                done_payload = payload
+    return {
+        "text": "".join(messages),
+        "done": done_payload,
+    }
+
+
+def _record_frontend_dialogue_case(
+    test_run_reporter,
+    case_name: str,
+    *,
+    rounds: list[dict[str, Any]],
+    caplog: pytest.LogCaptureFixture,
+    notes: list[str],
+) -> None:
+    test_run_reporter(
+        "frontend_gateway_dialogue",
+        case=case_name,
+        rounds=rounds,
+        logs=[
+            {
+                "logger": record.name,
+                "level": record.levelname,
+                "message": record.getMessage(),
+            }
+            for record in caplog.records
+        ],
+        notes=notes,
+    )
 
 
 def test_features_endpoint_returns_defaults():
@@ -234,6 +286,67 @@ def test_citation_guard_dependency_auto_enables_rag():
     data = res.json()
     assert data["status"] == "degraded"
     assert "rag" in data["degraded_features"]
+
+
+def test_frontend_simulated_dialogue_records_api_io(test_run_reporter, caplog: pytest.LogCaptureFixture):
+    client = TestClient(app)
+    session_id = uuid.uuid4().hex
+    rounds: list[dict[str, Any]] = []
+    prompts = [
+        "请简短介绍招生政策重点",
+        "再说一下学费和招生咨询电话",
+    ]
+
+    for idx, prompt in enumerate(prompts, start=1):
+        payload = {
+            "session_id": session_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "mode": "chat",
+            "stream": True,
+            "features": ["rag", "citation_guard"],
+            "strict_citation": True,
+            "temperature": 0.2,
+            "top_p": 0.85,
+            "model": "zyit-pro",
+        }
+        post_res = client.post("/api/chat", json=payload)
+        assert post_res.status_code == 200
+        create_body = post_res.json()
+
+        stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+        assert stream_res.status_code == 200
+        stream_body = stream_res.text
+        parsed_stream = _parse_sse_body(stream_body)
+
+        rounds.append(
+            {
+                "round": idx,
+                "request": payload,
+                "create_response": create_body,
+                "stream_text_preview": parsed_stream["text"][:500],
+                "stream_done": parsed_stream["done"],
+                "raw_stream_preview": stream_body[:800],
+            }
+        )
+
+        assert create_body["status"] in {"ok", "degraded", "failed"}
+        assert create_body["trace_id"]
+        assert parsed_stream["text"].strip()
+        assert parsed_stream["done"].get("trace_id")
+        assert parsed_stream["done"].get("status") in {"ok", "degraded", "failed"}
+
+    _record_frontend_dialogue_case(
+        test_run_reporter,
+        "frontend_simulated_chat_roundtrip",
+        rounds=rounds,
+        caplog=caplog,
+        notes=[
+            "按前端 requestBuilder 的字段形状组装请求，并通过 TestClient 真实调用后端接口。",
+            "每轮同时记录 create_chat 首包、stream done 包、拼接后的流式文本预览。",
+            "第二轮沿用同一 session_id，模拟前端连续对话。",
+            "若外部生成模型配置异常，测试仍会保留 failed 结果与后端日志，便于排障。",
+        ],
+    )
 
 
 def test_gateway_persists_special_and_long_memory_into_followup_context():
