@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session-id", default=uuid.uuid4().hex)
     parser.add_argument("--feature", action="append", dest="features", help="可重复传入 feature，默认 rag + citation_guard。")
     parser.add_argument("--prompt", action="append", dest="prompts", help="可重复传入多轮用户问题。")
-    parser.add_argument("--model", default=os.getenv("PROBE_MODEL", "zyit-pro"))
+    parser.add_argument("--model", default=os.getenv("PROBE_MODEL", "").strip(), help="可选：显式指定模型；默认留空，让后端自行路由。")
     parser.add_argument("--temperature", type=float, default=float(os.getenv("PROBE_TEMPERATURE", "0.2")))
     parser.add_argument("--top-p", type=float, default=float(os.getenv("PROBE_TOP_P", "0.85")))
     parser.add_argument("--strict-citation", action="store_true", default=True)
@@ -107,8 +107,9 @@ def run_round(
         "strict_citation": strict_citation,
         "temperature": temperature,
         "top_p": top_p,
-        "model": model,
     }
+    if model.strip():
+        request_payload["model"] = model.strip()
     client_logs: list[dict[str, Any]] = []
 
     create_started = time.perf_counter()
@@ -186,7 +187,7 @@ def main() -> int:
     }
 
     try:
-        with httpx.Client(timeout=args.timeout) as client:
+        with httpx.Client(timeout=args.timeout, trust_env=False) as client:
             report["healthcheck"] = healthcheck(client, base_url)
             for prompt in prompts:
                 report["rounds"].append(
