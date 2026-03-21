@@ -4,6 +4,7 @@ import httpx
 from langchain_core.documents import Document
 import pytest
 import re
+from typing import Any
 
 from app.config import Settings
 from app.rag.citation_guard import CitationGuard, RetrievalQualityGate
@@ -30,21 +31,108 @@ def _build_real_index(settings: Settings) -> RagIndexManager:
     return index
 
 
-def test_query_rewriter_fallback_returns_multi_queries(isolated_runtime_settings: Settings):
+def _preview(text: str, limit: int = 160) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    return compact[:limit]
+
+
+def _doc_snapshot(doc: Document) -> dict[str, Any]:
+    return {
+        "chunk_id": str(doc.metadata.get("chunk_id", "")),
+        "source_title": str(doc.metadata.get("source_title", "")),
+        "source_url": str(doc.metadata.get("source_url", "")),
+        "score": float(doc.metadata.get("score", 0.0)),
+        "publish_date": str(doc.metadata.get("publish_date", "")),
+        "effective_date": str(doc.metadata.get("effective_date", "")),
+        "expire_date": str(doc.metadata.get("expire_date", "")),
+        "chunk_preview": _preview(str(doc.metadata.get("chunk_text") or doc.page_content)),
+    }
+
+
+def _source_snapshot(source: Any) -> dict[str, Any]:
+    return {
+        "chunk_id": str(getattr(source, "chunk_id", "")),
+        "title": str(getattr(source, "title", "")),
+        "url": str(getattr(source, "url", "")),
+        "score": float(getattr(source, "score", 0.0)),
+        "text_preview": _preview(str(getattr(source, "text", ""))),
+    }
+
+
+def _log_snapshot(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    return [
+        {
+            "logger": record.name,
+            "level": record.levelname,
+            "message": record.getMessage(),
+        }
+        for record in caplog.records
+    ]
+
+
+def _latency_logs(latency_ms: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        {
+            "logger": "rag.pipeline",
+            "level": "INFO",
+            "message": f"node={node} latency_ms={value}",
+        }
+        for node, value in latency_ms.items()
+    ]
+
+
+def _record_case(
+    test_run_reporter,
+    case_name: str,
+    *,
+    input_payload: dict[str, Any],
+    output_payload: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    notes: list[str],
+    extra_logs: list[dict[str, str]] | None = None,
+) -> None:
+    test_run_reporter(
+        "rag_pipeline",
+        case=case_name,
+        input=input_payload,
+        output=output_payload,
+        logs=[*_log_snapshot(caplog), *(extra_logs or [])],
+        notes=notes,
+    )
+
+
+def test_query_rewriter_fallback_returns_multi_queries(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings)
     rewriter = QueryRewriter(settings)
     rewriter._llm = None
     rows = rewriter.rewrite("招生章程")
+    _record_case(
+        test_run_reporter,
+        "query_rewriter_fallback",
+        input_payload={"query": "招生章程"},
+        output_payload={"rewritten_queries": rows},
+        caplog=caplog,
+        notes=["本地回退改写，不依赖远程 LLM。"],
+    )
     assert len(rows) >= 2
     assert rows[0] == "招生章程"
 
 
-def test_hybrid_retriever_returns_dedup_ranked_docs(isolated_runtime_settings: Settings):
+def test_hybrid_retriever_returns_dedup_ranked_docs(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings)
     index = _build_real_index(settings)
     retriever = HybridRetriever(index=index)
 
-    rows = retriever.retrieve(queries=["国家助学贷款每生每年最高不超过20000元"], top_n=6)
+    query = "国家助学贷款每生每年最高不超过20000元"
+    rows = retriever.retrieve(queries=[query], top_n=6)
+    _record_case(
+        test_run_reporter,
+        "hybrid_retriever_dedup_ranked_docs",
+        input_payload={"queries": [query], "top_n": 6},
+        output_payload={"results": [_doc_snapshot(row.document) | {"retrieval_score": row.score} for row in rows[:6]]},
+        caplog=caplog,
+        notes=["真实 docs + 真实索引。", "验证去重后仍优先返回招生章程中的资助条款。"],
+    )
 
     assert rows
     chunk_ids = [str(row.document.metadata.get("chunk_id", "")) for row in rows]
@@ -54,12 +142,21 @@ def test_hybrid_retriever_returns_dedup_ranked_docs(isolated_runtime_settings: S
     assert any("20000" in str(row.document.metadata.get("chunk_text", "")) for row in rows[:3])
 
 
-def test_hybrid_retriever_prefers_active_notice_for_latest_query(isolated_runtime_settings: Settings):
+def test_hybrid_retriever_prefers_active_notice_for_latest_query(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings)
     index = _build_real_index(settings)
     retriever = HybridRetriever(index=index)
 
-    rows = retriever.retrieve(queries=["最新 联系方式"], top_n=5)
+    query = "最新 联系方式"
+    rows = retriever.retrieve(queries=[query], top_n=5)
+    _record_case(
+        test_run_reporter,
+        "hybrid_retriever_active_notice",
+        input_payload={"queries": [query], "top_n": 5},
+        output_payload={"results": [_doc_snapshot(row.document) | {"retrieval_score": row.score} for row in rows[:5]]},
+        caplog=caplog,
+        notes=["检查时效查询是否把当前有效的联系方式置顶。"],
+    )
 
     assert rows
     assert rows[0].document.metadata.get("source_title") == "联系方式"
@@ -68,7 +165,7 @@ def test_hybrid_retriever_prefers_active_notice_for_latest_query(isolated_runtim
     assert any(row.document.metadata.get("source_title") == "联系方式" for row in rows[:3])
 
 
-def test_listwise_reranker_fallback(isolated_runtime_settings: Settings):
+def test_listwise_reranker_fallback(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(
         isolated_runtime_settings,
         use_mock_generation=False,
@@ -81,6 +178,14 @@ def test_listwise_reranker_fallback(isolated_runtime_settings: Settings):
     docs = [doc for doc in index.all_documents() if doc.metadata.get("chunk_level") == "small"][:2]
 
     ranked, degraded = reranker.rerank(query="学费政策", docs=docs, top_k=2)
+    _record_case(
+        test_run_reporter,
+        "listwise_reranker_fallback",
+        input_payload={"query": "学费政策", "docs": [_doc_snapshot(doc) for doc in docs]},
+        output_payload={"degraded": degraded, "ranked_docs": [_doc_snapshot(doc) for doc in ranked]},
+        caplog=caplog,
+        notes=["显式清空 key，验证 rerank 走本地启发式回退。"],
+    )
 
     assert degraded is True
     assert len(ranked) == 2
@@ -189,12 +294,28 @@ def test_citation_guard_thresholds():
     assert reason in {"low_top_score", "insufficient_sources"}
 
 
-def test_rag_graph_runs_with_degrade_path(isolated_runtime_settings: Settings):
+def test_rag_graph_runs_with_degrade_path(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings, rag_node_timeout_ms=5000)
     service = RagGraphService(settings)
     service.index.reindex()
 
-    result = service.run(session_id="s1", query="最新招生章程", top_k=3, debug=True)
+    query = "最新招生章程"
+    result = service.run(session_id="s1", query=query, top_k=3, debug=True)
+    _record_case(
+        test_run_reporter,
+        "rag_graph_degrade_path",
+        input_payload={"session_id": "s1", "query": query, "top_k": 3},
+        output_payload={
+            "status": result.status,
+            "degrade_reason": result.degrade_reason,
+            "context_blocks": [_preview(block, limit=220) for block in result.context_blocks],
+            "sources": [_source_snapshot(source) for source in result.sources],
+            "latency_ms": result.latency_ms,
+        },
+        caplog=caplog,
+        notes=["真实 RAG 流水线。", "该查询应触发冲突证据降级。"],
+        extra_logs=_latency_logs(result.latency_ms),
+    )
 
     assert result.trace_id
     assert result.status == "degraded"
@@ -232,7 +353,7 @@ def test_retrieval_quality_gate_resolves_conflict_by_publish_date():
     assert result.docs[0].metadata["publish_date"] == "2025-05-15"
 
 
-def test_rag_graph_retry_retrieve_recovers_low_coverage(isolated_runtime_settings: Settings):
+def test_rag_graph_retry_retrieve_recovers_low_coverage(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings, rag_node_timeout_ms=5000)
     service = RagGraphService(settings)
     service.index.reindex()
@@ -259,6 +380,20 @@ def test_rag_graph_retry_retrieve_recovers_low_coverage(isolated_runtime_setting
     }
 
     patched = service.orchestrator._retry_retrieve(state)  # noqa: SLF001
+    _record_case(
+        test_run_reporter,
+        "rag_graph_retry_retrieve",
+        input_payload={"query": query, "pre_retry_state": state},
+        output_payload={
+            "retry_count": patched.get("retry_count"),
+            "quality_passed": patched.get("quality_passed"),
+            "degrade_reason": patched.get("degrade_reason"),
+            "reranked_docs": [_doc_snapshot(doc) for doc in patched.get("reranked_docs", [])],
+        },
+        caplog=caplog,
+        notes=["直接记录 retry 节点输入输出，方便看二次检索是否把低覆盖救回来。"],
+        extra_logs=_latency_logs(dict(patched.get("latency_breakdown_ms", {}))),
+    )
 
     assert patched["retry_count"] == 1
     assert patched["quality_passed"] is True
@@ -267,12 +402,28 @@ def test_rag_graph_retry_retrieve_recovers_low_coverage(isolated_runtime_setting
     assert any("助学贷款" in str(doc.metadata.get("chunk_text", "")) for doc in patched["reranked_docs"])
 
 
-def test_rag_graph_precise_year_query_stays_usable(isolated_runtime_settings: Settings):
+def test_rag_graph_precise_year_query_stays_usable(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings, rag_node_timeout_ms=5000)
     service = RagGraphService(settings)
     service.index.reindex()
 
-    result = service.run(session_id="s3", query="国家助学贷款20000", top_k=2, debug=True)
+    query = "国家助学贷款20000"
+    result = service.run(session_id="s3", query=query, top_k=2, debug=True)
+    _record_case(
+        test_run_reporter,
+        "rag_graph_precise_query",
+        input_payload={"session_id": "s3", "query": query, "top_k": 2},
+        output_payload={
+            "status": result.status,
+            "degrade_reason": result.degrade_reason,
+            "context_blocks": [_preview(block, limit=220) for block in result.context_blocks],
+            "sources": [_source_snapshot(source) for source in result.sources],
+            "latency_ms": result.latency_ms,
+        },
+        caplog=caplog,
+        notes=["检查明确金额查询是否能稳定落到招生章程资助条款。"],
+        extra_logs=_latency_logs(result.latency_ms),
+    )
 
     assert result.status == "ok"
     assert result.degrade_reason is None
@@ -280,7 +431,7 @@ def test_rag_graph_precise_year_query_stays_usable(isolated_runtime_settings: Se
     assert any("助学贷款" in block for block in result.context_blocks)
 
 
-def test_ingestor_extracts_metadata_and_parent_context(runtime_docs_dir, runtime_settings: Settings):
+def test_ingestor_extracts_metadata_and_parent_context(runtime_docs_dir, runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     ingestor = RagIngestor(
         docs_dir=runtime_docs_dir,
         chunk_size=runtime_settings.rag_chunk_size,
@@ -295,11 +446,23 @@ def test_ingestor_extracts_metadata_and_parent_context(runtime_docs_dir, runtime
     assert "标题：" in first.page_content
     assert first.metadata["chunk_text_hash"]
     small_docs = [doc for doc in docs if doc.metadata.get("chunk_level") == "small"]
+    _record_case(
+        test_run_reporter,
+        "ingestor_metadata_parent_context",
+        input_payload={"docs_dir": str(runtime_docs_dir)},
+        output_payload={
+            "loaded_doc_count": len(docs),
+            "first_small_doc": _doc_snapshot(first),
+            "query_expansions": list(first.metadata.get("query_expansions", []))[:5],
+        },
+        caplog=caplog,
+        notes=["记录切分后的 parent_id、chunk hash、query expansions。"],
+    )
     assert small_docs
     assert len(small_docs[0].metadata.get("query_expansions", [])) >= 2
 
 
-def test_ingestor_builds_summary_layer_and_locator_hits_parent(runtime_docs_dir, runtime_settings: Settings):
+def test_ingestor_builds_summary_layer_and_locator_hits_parent(runtime_docs_dir, runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     ingestor = RagIngestor(
         docs_dir=runtime_docs_dir,
         chunk_size=runtime_settings.rag_chunk_size,
@@ -312,11 +475,19 @@ def test_ingestor_builds_summary_layer_and_locator_hits_parent(runtime_docs_dir,
     retriever = HybridRetriever(index=index)
     query = str(summary_docs[0].metadata.get("chunk_text", "")).split("；")[0].strip() or str(summary_docs[0].page_content)[:20]
     parents = retriever.locate_summary_parents(query, top_n=2)
+    _record_case(
+        test_run_reporter,
+        "summary_locator_parent_hits",
+        input_payload={"query": query, "summary_doc_count": len(summary_docs)},
+        output_payload={"parent_ids": parents[:5], "summary_preview": _preview(str(summary_docs[0].page_content), limit=220)},
+        caplog=caplog,
+        notes=["验证摘要层命中后能回指 parent chunk。"],
+    )
     assert parents
     assert "parent-" in parents[0]
 
 
-def test_bm25_uses_query_expansions_without_leaking_auxiliary_text(isolated_runtime_settings: Settings):
+def test_bm25_uses_query_expansions_without_leaking_auxiliary_text(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings, use_mock_generation=True)
     index = RagIndexManager(settings)
     index.reindex()
@@ -333,6 +504,17 @@ def test_bm25_uses_query_expansions_without_leaking_auxiliary_text(isolated_runt
     )
     assert sample is not None
     rows = index.get_bm25_retriever(top_k=3).invoke(str(sample.metadata.get("query_expansions", [""])[0]))
+    _record_case(
+        test_run_reporter,
+        "bm25_query_expansions",
+        input_payload={
+            "query": str(sample.metadata.get("query_expansions", [""])[0]),
+            "sample_doc": _doc_snapshot(sample),
+        },
+        output_payload={"bm25_rows": [_doc_snapshot(doc) for doc in rows[:3]]},
+        caplog=caplog,
+        notes=["BM25 检索可利用 query expansions，但返回正文不应泄漏“辅助查询”拼接文本。"],
+    )
     assert rows
     matched = next((row for row in rows if row.metadata.get("chunk_level") == "small"), None)
     assert matched is not None
@@ -340,9 +522,7 @@ def test_bm25_uses_query_expansions_without_leaking_auxiliary_text(isolated_runt
     assert "辅助查询：" not in matched.page_content
 
 
-def test_rag_result_for_real_docs_returns_matching_context_and_sources(isolated_runtime_settings: Settings):
-    from app.rag.service import RagGraphService
-
+def test_rag_result_for_real_docs_returns_matching_context_and_sources(isolated_runtime_settings: Settings, test_run_reporter, caplog: pytest.LogCaptureFixture):
     settings = _runtime_local_settings(isolated_runtime_settings)
     service = RagGraphService(settings)
     service.index.reindex()
@@ -365,6 +545,26 @@ def test_rag_result_for_real_docs_returns_matching_context_and_sources(isolated_
     probe_text = matched.group(0) if matched else re.sub(r"\s+", " ", chunk_text).strip()[:12]
 
     result = service.run(session_id="rag-real-docs-case", query=query, top_k=3, debug=True)
+    _record_case(
+        test_run_reporter,
+        "rag_result_real_docs",
+        input_payload={
+            "session_id": "rag-real-docs-case",
+            "query": query,
+            "expected_title": expected_title,
+            "probe_text": probe_text,
+        },
+        output_payload={
+            "status": result.status,
+            "degrade_reason": result.degrade_reason,
+            "context_blocks": [_preview(block, limit=220) for block in result.context_blocks],
+            "sources": [_source_snapshot(source) for source in result.sources],
+            "latency_ms": result.latency_ms,
+        },
+        caplog=caplog,
+        notes=["使用真实 docs 中抽取的 query_expansion 作为输入，记录完整 RAG 输出。"],
+        extra_logs=_latency_logs(result.latency_ms),
+    )
 
     assert result.trace_id
     assert result.context_blocks
