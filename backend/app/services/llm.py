@@ -7,7 +7,7 @@ import textwrap
 import time
 from typing import Any
 
-import httpx
+from openai import OpenAI
 
 from app.config import Settings
 from app.contracts import GenerationResponse, GenerationRoute
@@ -17,10 +17,15 @@ class GenerationService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._prompt_cache: dict[str, tuple[float, str]] = {}
-        self._http_client = httpx.Client(timeout=self.settings.request_timeout_seconds)
+        self._client = OpenAI(
+            api_key=self.settings.resolve_llm_api_key() or "missing-api-key",
+            base_url=self._resolve_openai_base_url(),
+            timeout=self.settings.request_timeout_seconds,
+            max_retries=0,
+        )
 
     def close(self) -> None:
-        self._http_client.close()
+        self._client.close()
 
     def generate(
         self,
@@ -32,12 +37,13 @@ class GenerationService:
         top_p: float | None = None,
     ) -> GenerationResponse:
         """统一生成入口：优先真实模型，缺少密钥或显式配置时走 mock。"""
+        llm_api_key = self.settings.resolve_llm_api_key()
         route, selected_model = self._select_model_route(
             user_query=user_query,
             context_blocks=context_blocks,
             requested_model=model,
         )
-        if self.settings.use_mock_generation or not self.settings.api_key:
+        if self.settings.use_mock_generation or not llm_api_key:
             route = "mock"
             selected_model = "mock-generator"
 
@@ -155,7 +161,7 @@ class GenerationService:
         temperature: float | None,
         top_p: float | None,
     ) -> str:
-        """调用远程 OpenAI 兼容接口生成答案。"""
+        """调用 OpenAI 官方 SDK 访问兼容 LLM 接口生成答案。"""
         safe_query = self._sanitize_external_text(user_query)
         safe_context_blocks = self._sanitize_context_blocks(context_blocks)
         context_text = "\n".join(f"- {item}" for item in safe_context_blocks[:6]) or "- 无可靠检索证据"
@@ -177,32 +183,27 @@ class GenerationService:
                 ),
             },
         ]
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.4 if temperature is None else temperature,
-            "top_p": 0.9 if top_p is None else top_p,
-            "stream": False,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.settings.api_key}",
-            "Content-Type": "application/json",
-        }
-        response = self._http_client.post(
-            self.settings.api_url,
-            headers=headers,
-            json=payload,
+        response = self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.4 if temperature is None else temperature,
+            top_p=0.9 if top_p is None else top_p,
+            stream=False,
         )
-        response.raise_for_status()
-        body = response.json()
-        choices = body.get("choices", [])
+        choices = list(response.choices or [])
         if not choices:
             raise RuntimeError("generation response has no choices")
-        message = choices[0].get("message", {})
-        content = message.get("content", "")
+        content = choices[0].message.content or ""
         if not content:
             raise RuntimeError("generation response content is empty")
         return str(content)
+
+    def _resolve_openai_base_url(self) -> str:
+        endpoint = self.settings.resolve_llm_api_url().strip()
+        for suffix in ("/chat/completions", "/responses", "/completions"):
+            if endpoint.endswith(suffix):
+                return endpoint[: -len(suffix)]
+        return endpoint.rstrip("/")
 
     def _sanitize_context_blocks(self, context_blocks: list[str]) -> list[str]:
         """入模前清洗外部证据，降低注入内容误导模型的风险。"""
