@@ -248,6 +248,9 @@ class GatewayOrchestrator:
                 )
                 if guard_result.ok and guard_result.value:
                     feature_notes.append("引用校验通过。")
+                elif sources and self._can_soft_pass_citation_guard(guard_result=guard_result):
+                    tool_audit.append(f"citation_guard:soft_pass:{guard_result.error or 'service_unavailable'}")
+                    feature_notes.append("引用校验服务异常，但已检测到可展示来源，已按保守策略继续回答。")
                 else:
                     degraded.append("citation_guard")
                     feature_notes.append("引用校验失败，已启用保守模板。")
@@ -515,6 +518,14 @@ class GatewayOrchestrator:
             if len(deduped) >= limit:
                 break
         return deduped
+
+    def _can_soft_pass_citation_guard(self, guard_result) -> bool:
+        """已有来源时，引用校验服务自身异常可软通过，避免整轮回答被误伤。"""
+        if guard_result.ok:
+            return False
+        error = (guard_result.error or "").strip().lower()
+        soft_errors = ("circuit_open:", "timeout", "connection", "temporarily unavailable")
+        return any(token in error for token in soft_errors) or bool(error)
 
     def _build_long_memory_snippet(self, last_user: str, response_text: str) -> str:
         """构造滚动摘要片段，给长期记忆做增量更新。"""
