@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
 import re
+from threading import Lock
 
 from langchain_core.documents import Document
 
@@ -33,17 +35,38 @@ class HybridRetriever:
         self.dense_weight = dense_weight
         self.exact_weight = exact_weight
         self.rrf_k = rrf_k
+        self._sparse_lock = Lock()
 
     def retrieve(self, queries: list[str], top_n: int, focus_parent_ids: list[str] | None = None) -> list[RetrievedItem]:
         """执行多查询召回并融合分数后返回 top_n。"""
         merged_scores: dict[str, float] = {}
         merged_docs: dict[str, Document] = {}
         focus_parent_ids = focus_parent_ids or []
+        normalized_queries = list(dict.fromkeys(query.strip() for query in queries if query.strip()))
 
-        for query in queries:
-            if not query.strip():
-                continue
-            rows = self._retrieve_single_query(query=query, top_n=top_n, focus_parent_ids=focus_parent_ids)
+        if len(normalized_queries) <= 1:
+            query_batches = [
+                self._retrieve_single_query(
+                    query=normalized_queries[0],
+                    top_n=top_n,
+                    focus_parent_ids=focus_parent_ids,
+                )
+            ] if normalized_queries else []
+        else:
+            max_workers = min(len(normalized_queries), 4)
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="rag-query") as executor:
+                futures = [
+                    executor.submit(
+                        self._retrieve_single_query,
+                        query=query,
+                        top_n=top_n,
+                        focus_parent_ids=focus_parent_ids,
+                    )
+                    for query in normalized_queries
+                ]
+                query_batches = [future.result() for future in futures]
+
+        for rows in query_batches:
             for item in rows:
                 chunk_id = str(item.document.metadata.get("chunk_id", ""))
                 if not chunk_id:
@@ -60,11 +83,10 @@ class HybridRetriever:
 
     def _retrieve_single_query(self, query: str, top_n: int, focus_parent_ids: list[str]) -> list[RetrievedItem]:
         """执行单查询召回，并使用 RRF 融合三路排序。"""
-        bm25 = self.index.get_bm25_retriever(top_k=top_n)
-        sparse_docs = bm25.invoke(query)
         dense_rows = self.index.dense_similarity_scores(query=query, top_k=top_n)
         dense_docs = [item[0] for item in dense_rows]
         exact_docs = self._exact_match_search(query=query, top_n=top_n)
+        sparse_docs = self._retrieve_sparse_docs(query=query, top_n=top_n)
 
         scores = self._build_rank_score_map(
             sparse_docs=sparse_docs,
@@ -83,6 +105,12 @@ class HybridRetriever:
             score = scores.get(chunk_id, 0.0) + self._temporal_bonus(query=query, doc=doc) + self._parent_focus_bonus(doc, focus_parent_ids)
             ranked_items.append(RetrievedItem(document=doc, score=score))
         return ranked_items
+
+    def _retrieve_sparse_docs(self, query: str, top_n: int) -> list[Document]:
+        """BM25 共享实例带状态，查询并发时用锁保护。"""
+        with self._sparse_lock:
+            bm25 = self.index.get_bm25_retriever(top_k=top_n)
+            return bm25.invoke(query)
 
     def locate_summary_parents(self, query: str, top_n: int = 3) -> list[str]:
         """先检索摘要层，返回应重点关注的 parent_id。"""
