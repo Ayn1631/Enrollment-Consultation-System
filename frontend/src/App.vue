@@ -207,6 +207,14 @@ const handleSend = async () => {
     topP: topP.value,
     model: model.value
   })
+  console.log('[App.handleSend] request built', {
+    session_id: request.session_id,
+    features: request.features,
+    mode: request.mode,
+    strict_citation: request.strict_citation,
+    model: request.model,
+    selectedFeatures: selectedFeatures.value
+  })
 
   const finalize = (done?: {
     status?: 'ok' | 'degraded' | 'failed'
@@ -215,6 +223,11 @@ const handleSend = async () => {
     trace_id?: string
   }) => {
     drainStreamingBuffer()
+    console.log('[App.handleSend] finalize', {
+      done,
+      buffered_length: streamingText.value.length,
+      degraded_features: done?.degraded_features ?? []
+    })
     if (streamingText.value.trim()) {
       latestDegradedFeatures.value = done?.degraded_features ?? []
       messages.value.push({
@@ -238,12 +251,15 @@ const handleSend = async () => {
     pageNotice.value = null
     cancelStream = await startStream(request, {
       onDelta: (delta) => {
+        console.log('[App.handleSend] delta', delta)
         queueStreamingDelta(delta)
       },
       onDone: (done) => {
+        console.log('[App.handleSend] stream done', done)
         finalize(done)
       },
       onError: (error) => {
+        console.error('[App.handleSend] stream error', error)
         latestDegradedFeatures.value = []
         const message = getErrorMessage(error, '系统连接异常，请稍后重试。')
         messages.value.push({
@@ -257,6 +273,7 @@ const handleSend = async () => {
       }
     })
   } catch (error) {
+    console.error('[App.handleSend] request error', error)
     const message = getErrorMessage(error, '无法连接后端服务，请检查接口配置。')
     messages.value.push({
       id: newId(),

@@ -63,6 +63,15 @@ export async function postChat(request: ChatRequest): Promise<{
   status?: 'ok' | 'degraded' | 'failed'
   degraded_features?: string[]
 }> {
+  console.log('[api.postChat] request', {
+    apiBase: API_BASE,
+    session_id: request.session_id,
+    features: request.features,
+    mode: request.mode,
+    strict_citation: request.strict_citation,
+    model: request.model,
+    message_count: request.messages.length
+  })
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: {
@@ -72,7 +81,9 @@ export async function postChat(request: ChatRequest): Promise<{
   })
 
   await ensureOk(res, '提交聊天请求失败')
-  return res.json()
+  const payload = await res.json()
+  console.log('[api.postChat] response', payload)
+  return payload
 }
 
 export function openChatStream(
@@ -84,15 +95,18 @@ export function openChatStream(
   }
 ): () => void {
   const url = `${API_BASE}/api/chat/stream?session_id=${encodeURIComponent(sessionId)}`
+  console.log('[api.openChatStream] connect', { url, sessionId })
   const source = new EventSource(url)
 
   const handleMessage = (ev: MessageEvent) => {
     try {
       const data = JSON.parse(ev.data) as ChatStreamEvent
+      console.log('[api.openChatStream] message', data)
       if (data.delta) {
         handlers.onDelta(data.delta)
       }
     } catch {
+      console.log('[api.openChatStream] message(raw)', ev.data)
       handlers.onDelta(String(ev.data))
     }
   }
@@ -100,15 +114,18 @@ export function openChatStream(
   const handleDone = (ev: MessageEvent) => {
     try {
       const data = JSON.parse(ev.data) as ChatStreamEvent
+      console.log('[api.openChatStream] done', data)
       source.close()
       handlers.onDone(data)
     } catch {
+      console.log('[api.openChatStream] done(raw)', ev.data)
       source.close()
       handlers.onDone({ finish_reason: 'stop' })
     }
   }
 
   const handleError = () => {
+    console.error('[api.openChatStream] error', { url, sessionId })
     source.close()
     handlers.onError(new ApiRequestError('与后端流式连接中断，请检查后端服务或接口地址配置。'))
   }
