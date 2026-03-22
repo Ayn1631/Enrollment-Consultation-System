@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
-from typing import Callable, Generic, TypeVar
+from typing import Callable, Generic, Iterator, TypeVar
 
 
 T = TypeVar("T")
@@ -77,6 +77,61 @@ class IsolationExecutor:
             state.updated_at = datetime.utcnow()
         logger.info("[IsolationExecutor] execute ok name=%s", name)
         return IsolationResult(ok=True, value=value)
+
+    def execute_stream(self, name: str, func: Callable[[], Iterator[T]]) -> Iterator[IsolationResult[T]]:
+        """执行受保护的流式调用，逐项输出结果，并在迭代结束后更新熔断状态。"""
+        with self._lock:
+            state = self._states.setdefault(name, CircuitState())
+            now = time.time()
+            if state.open_until > now:
+                message = (
+                    f"[IsolationExecutor] stream circuit open name={name} "
+                    f"open_until={state.open_until:.3f} failures={state.failures} last_error={state.last_error}"
+                )
+                print(message)
+                logger.warning(message)
+                yield IsolationResult(ok=False, error=f"circuit_open:{name}", degraded=True)
+                return
+
+        try:
+            iterator = iter(func())
+        except Exception as exc:  # noqa: BLE001
+            yield self._mark_failure(name=name, action="stream_init", exc=exc)
+            return
+
+        try:
+            for value in iterator:
+                yield IsolationResult(ok=True, value=value)
+        except Exception as exc:  # noqa: BLE001
+            yield self._mark_failure(name=name, action="stream_iter", exc=exc)
+            return
+
+        self._mark_success(name)
+
+    def _mark_failure(self, name: str, action: str, exc: Exception) -> IsolationResult[T]:
+        with self._lock:
+            state = self._states.setdefault(name, CircuitState())
+            state.failures += 1
+            state.last_error = str(exc)
+            state.updated_at = datetime.utcnow()
+            if state.failures >= self.failure_threshold:
+                state.open_until = time.time() + self.open_seconds
+            message = (
+                f"[IsolationExecutor] {action} failed name={name} failures={state.failures} "
+                f"threshold={self.failure_threshold} error={exc}"
+            )
+            print(message)
+            logger.exception(message)
+        return IsolationResult(ok=False, error=str(exc), degraded=True)
+
+    def _mark_success(self, name: str) -> None:
+        with self._lock:
+            state = self._states.setdefault(name, CircuitState())
+            state.failures = 0
+            state.last_error = None
+            state.open_until = 0.0
+            state.updated_at = datetime.utcnow()
+        logger.info("[IsolationExecutor] execute ok name=%s", name)
 
     def snapshot(self) -> dict[str, CircuitState]:
         """返回当前隔离状态快照，用于健康检查和运维面板展示。"""

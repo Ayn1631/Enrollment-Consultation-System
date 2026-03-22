@@ -147,6 +147,31 @@ def create_chat(request: ChatRequest, x_fail_features: str | None = Header(defau
         ) from None
 
 
+@app.post("/api/chat/stream")
+def create_chat_stream(request: ChatRequest, x_fail_features: str | None = Header(default=None)):
+    fail_features = {item.strip() for item in (x_fail_features or "").split(",") if item.strip()}
+
+    def event_iter() -> Iterator[str]:
+        try:
+            for event in gateway.stream_chat(request, fail_features=fail_features):
+                yield (
+                    f"event: {event.event}\n"
+                    f"data: {json.dumps(event.data, ensure_ascii=False)}\n\n"
+                )
+        except Exception:  # noqa: BLE001
+            trace_id = uuid.uuid4().hex
+            logger.exception(
+                "create_chat_stream unexpected failure trace_id=%s session_id=%s",
+                trace_id,
+                request.session_id,
+            )
+            yield f"event: message\ndata: {json.dumps({'delta': '当前流式生成异常，请稍后重试。'}, ensure_ascii=False)}\n\n"
+            done = ChatStreamDone(finish_reason="error", status="failed", trace_id=trace_id)
+            yield f"event: done\ndata: {done.model_dump_json()}\n\n"
+
+    return StreamingResponse(event_iter(), media_type="text/event-stream")
+
+
 def _sse_stream(text: str, chunk_size: int) -> Iterator[str]:
     for idx in range(0, len(text), chunk_size):
         delta = text[idx : idx + chunk_size]
@@ -218,5 +243,4 @@ def admin_reindex() -> dict[str, object]:
 @app.get("/api/admin/retrieval/stats", dependencies=[Depends(_require_admin_token)])
 def admin_retrieval_stats() -> dict[str, object]:
     return {"status": "ok", "result": service_client.rag_stats()}
-
 

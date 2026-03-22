@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
+from typing import Any, Iterator
 from urllib.parse import quote
 
 from app.contracts import GenerationRequest, MemoryEntry
@@ -41,6 +42,26 @@ class QueryRouteDecision:
     audit: list[str]
 
 
+@dataclass(slots=True)
+class PreparedChatContext:
+    trace_id: str
+    session_id: str
+    last_user: str
+    effective_features: list[FeatureFlag]
+    degraded: list[FeatureFlag]
+    feature_notes: list[str]
+    sources: list[ChatSource]
+    context_blocks: list[str]
+    tool_audit: list[str]
+    blocked_reply: str | None = None
+
+
+@dataclass(slots=True)
+class GatewayStreamEvent:
+    event: str
+    data: dict[str, Any]
+
+
 class GatewayOrchestrator:
     WEB_SEARCH_ALLOWED_DOMAINS: tuple[str, ...] = ("zsc.zut.edu.cn", "zut.edu.cn")
     logger = logging.getLogger(__name__)
@@ -51,326 +72,121 @@ class GatewayOrchestrator:
     def create_chat(self, request: ChatRequest, fail_features: set[str] | None = None) -> ChatCreateResponse:
         """网关主流程：按 Agent 规划顺序执行功能并统一处理降级。"""
         fail_features = fail_features or set()
-        # 关键变量：trace_id 用于串联网关日志、SSE 和前端故障排查。
-        trace_id = uuid.uuid4().hex
-        degraded: list[FeatureFlag] = []
-        feature_notes: list[str] = []
-        sources: list[ChatSource] = []
-        context_blocks: list[str] = []
-        tool_audit: list[str] = []
-        status: ChatStatus = "ok"
-
-        last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
-        if not last_user:
-            last_user = "请介绍中原工学院招生政策要点。"
-        print(
-            f"[Gateway] create_chat start trace_id={trace_id} session_id={request.session_id} "
-            f"features={request.features} strict_citation={request.strict_citation} user={last_user[:120]}"
-        )
-        input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)  # 违禁词判断
-        if input_blocked:
-            tool_audit.append(f"safety_audit:input_blocked:{input_reason}")
-            session = SessionResult(
-                session_id=request.session_id,
-                trace_id=trace_id,
-                text=safe_reply,
-                status="degraded",
-                degraded_features=[],
-                sources=[],
-                tool_audit=tool_audit,
-                finish_reason="stop",
-            )
+        prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
+        if prepared.blocked_reply is not None:
+            session = self._build_blocked_session(prepared)
             self.deps.container.session_store.set(request.session_id, session)
-            return ChatCreateResponse(
-                session_id=request.session_id,
-                trace_id=trace_id,
-                status="degraded",
-                degraded_features=[],
-            )
-            
-        route_decision = self._route_features(query=last_user, request=request)
-        print(
-            f"[Gateway] route_decision trace_id={trace_id} label={route_decision.route_label} "
-            f"reason={route_decision.reason} features={route_decision.features}"
-        )
-        tool_audit.extend(route_decision.audit)
-        feature_notes.extend(route_decision.notes)
-        effective_features = route_decision.features
-        ordered_features = self.deps.services.plan_features(effective_features)
-
-        # 记忆读取：短期 / 长期 / 特殊分层接入。
-        memory_result = self.deps.container.isolation.execute(
-            "memory-service",
-            lambda: self.deps.services.read_short_memory(request.session_id),
-        )
-        if memory_result.ok and memory_result.value and memory_result.value.entries:
-            context_blocks.extend([f"[memory] {item.value}" for item in memory_result.value.entries[:3]])
-            feature_notes.append("短期记忆已接入上下文。")
-        elif memory_result.ok:
-            feature_notes.append("当前会话暂无短期记忆，已跳过。")
-        else:
-            degraded.append("skill_exec") if False else None
-            feature_notes.append("短期记忆服务不可用，已忽略。")
-        self._append_optional_memory_context(
-            context_blocks=context_blocks,
-            feature_notes=feature_notes,
-            session_id=request.session_id,
-            kind="long",
-            label="长期记忆",
-            prefix="[long-memory]",
-        )
-        self._append_optional_memory_context(
-            context_blocks=context_blocks,
-            feature_notes=feature_notes,
-            session_id=request.session_id,
-            kind="special",
-            label="特殊记忆",
-            prefix="[special-memory]",
-        )
-        rag_memory_context_blocks = list(context_blocks)
-
-        for feature in ordered_features:
-            if feature == "rag":
-                rag_result = self.deps.container.isolation.execute(
-                    "rag-agent-service",
-                    lambda: self._invoke_rag(
-                        request.session_id,
-                        last_user,
-                        fail_features,
-                        rag_memory_context_blocks,
-                    ),
-                )
-                print(
-                    f"[Gateway] rag_result trace_id={trace_id} ok={rag_result.ok} "
-                    f"error={rag_result.error} degraded={rag_result.degraded}"
-                )
-                if rag_result.ok and rag_result.value is not None:
-                    rag_output = rag_result.value
-                    context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
-                    sources = self._dedupe_chat_sources(
-                        [
-                            ChatSource(title=item.title, url=item.url)
-                            for item in rag_output.sources
-                        ],
-                        limit=5,
-                    )
-                    if rag_output.status == "degraded":
-                        print(
-                            f"[Gateway] rag_output degraded trace_id={trace_id} "
-                            f"reason={rag_output.degrade_reason} sources={len(rag_output.sources)}"
-                        )
-                        if rag_output.degrade_reason and rag_output.degrade_reason.startswith("node_timeout:") and rag_output.sources:
-                            feature_notes.append(f"RAG 节点耗时偏高：{rag_output.degrade_reason}，已保留有效检索证据。")
-                        else:
-                            degraded.append("rag")
-                            if rag_output.degrade_reason:
-                                feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
-                    else:
-                        print(
-                            f"[Gateway] rag_output ok trace_id={trace_id} "
-                            f"context_blocks={len(rag_output.context_blocks)} sources={len(sources)}"
-                        )
-                        feature_notes.append("RAG LangGraph 工作流执行成功。")
-                else:
-                    degraded.append("rag")
-                    feature_notes.append("RAG 检索失败，降级为无检索回答。")
-                continue
-
-            if feature == "web_search":
-                allowed, guarded_query, reason = self._guard_web_search(last_user)
-                tool_audit.append(f"web_search:{'allowed' if allowed else 'blocked'}:{reason}")
-                if not allowed:
-                    degraded.append("web_search")
-                    feature_notes.append(f"联网搜索已拦截：{reason}")
-                    continue
-                web_result = self.deps.container.isolation.execute(
-                    "web-search-service",
-                    lambda: self._invoke_web_search(guarded_query, fail_features),
-                )
-                if web_result.ok and web_result.value:
-                    hits = web_result.value
-                    context_blocks.extend([f"联网搜索摘要：{item.title} | {item.snippet}" for item in hits])
-                    read_result = self.deps.container.isolation.execute(
-                        "web-read-service",
-                        lambda: self._invoke_web_read(query=guarded_query, hits=hits, fail_features=fail_features),
-                    )
-                    if read_result.ok and read_result.value:
-                        tool_audit.append("web_read:allowed:official_whitelist")
-                        context_blocks.extend(read_result.value)
-                        feature_notes.append("联网搜索与官方网页阅读补充成功。")
-                    else:
-                        tool_audit.append("web_read:degraded:official_whitelist")
-                        degraded.append("web_search")
-                        feature_notes.append("官方网页阅读失败，已保留搜索摘要并标记降级。")
-                else:
-                    degraded.append("web_search")
-                    feature_notes.append("联网搜索失败，已降级。")
-                continue
-
-            if feature == "skill_exec":
-                allowed, reason = self._guard_skill_request(query=last_user, saved_skill_id=None)
-                tool_audit.append(f"skill_exec:{'allowed' if allowed else 'blocked'}:{reason}")
-                if not allowed:
-                    degraded.append("skill_exec")
-                    feature_notes.append(f"技能执行已拦截：{reason}")
-                    continue
-                skill_result = self.deps.container.isolation.execute(
-                    "skill-service",
-                    lambda: self._invoke_skill(last_user, request.session_id, None, fail_features),
-                )
-                if skill_result.ok and skill_result.value:
-                    feature_notes.append(skill_result.value)
-                else:
-                    degraded.append("skill_exec")
-                    feature_notes.append("技能执行失败，已跳过。")
-                continue
-
-            if feature == "use_saved_skill":
-                allowed, reason = self._guard_skill_request(query=last_user, saved_skill_id=request.saved_skill_id)
-                tool_audit.append(f"use_saved_skill:{'allowed' if allowed else 'blocked'}:{reason}")
-                if not allowed:
-                    degraded.append("use_saved_skill")
-                    feature_notes.append(f"历史技能调用已拦截：{reason}")
-                    continue
-                saved_skill_result = self.deps.container.isolation.execute(
-                    "saved-skill-service",
-                    lambda: self._invoke_skill(last_user, request.session_id, request.saved_skill_id, fail_features),
-                )
-                if saved_skill_result.ok and saved_skill_result.value:
-                    feature_notes.append(saved_skill_result.value)
-                else:
-                    degraded.append("use_saved_skill")
-                    feature_notes.append("历史技能不可用，已回退通用流程。")
-                continue
-
-            if feature == "citation_guard":
-                guard_result = self.deps.container.isolation.execute(
-                    "citation-guard",
-                    lambda: self._invoke_citation_guard(sources=sources, fail_features=fail_features),
-                )
-                print(
-                    f"[Gateway] citation_guard trace_id={trace_id} ok={guard_result.ok} "
-                    f"value={guard_result.value} error={guard_result.error} sources={len(sources)}"
-                )
-                if guard_result.ok and guard_result.value:
-                    feature_notes.append("引用校验通过。")
-                elif sources and self._can_soft_pass_citation_guard(guard_result=guard_result):
-                    tool_audit.append(f"citation_guard:soft_pass:{guard_result.error or 'service_unavailable'}")
-                    feature_notes.append("引用校验服务异常，但已检测到可展示来源，已按保守策略继续回答。")
-                else:
-                    degraded.append("citation_guard")
-                    feature_notes.append("引用校验失败，已启用保守模板。")
+            return self._to_create_response(session)
 
         generation_result = self.deps.container.isolation.execute(
             "generation-service",
             lambda: self._invoke_generation(
-                user_query=last_user,
-                context_blocks=context_blocks,
-                feature_notes=feature_notes,
-                # feature_notes=[],
+                user_query=prepared.last_user,
+                context_blocks=prepared.context_blocks,
+                feature_notes=prepared.feature_notes,
                 request=request,
                 fail_features=fail_features,
             ),
         )
         print(
-            f"[Gateway] generation_result trace_id={trace_id} ok={generation_result.ok} "
+            f"[Gateway] generation_result trace_id={prepared.trace_id} ok={generation_result.ok} "
             f"error={generation_result.error} degraded={generation_result.degraded} "
-            f"context_blocks={len(context_blocks)} sources={len(sources)}"
+            f"context_blocks={len(prepared.context_blocks)} sources={len(prepared.sources)}"
         )
         if not generation_result.ok or generation_result.value is None:
             self.logger.error(
                 "generation failed trace_id=%s session_id=%s error=%s features=%s",
-                trace_id,
+                prepared.trace_id,
                 request.session_id,
                 generation_result.error or "generation failed",
-                effective_features,
+                prepared.effective_features,
             )
-            session = SessionResult(
-                session_id=request.session_id,
-                trace_id=trace_id,
-                text="当前生成服务异常，请稍后重试。",
-                status="failed",
-                degraded_features=list(dict.fromkeys(degraded)),
-                sources=sources,
-                tool_audit=tool_audit,
-                finish_reason="error",
+            session = self._build_failed_generation_session(
+                prepared=prepared,
                 error_message=generation_result.error or "generation failed",
             )
             self.deps.container.session_store.set(request.session_id, session)
-            return ChatCreateResponse(
-                session_id=request.session_id,
-                trace_id=trace_id,
-                status="failed",
-                degraded_features=session.degraded_features,
-            )
+            return self._to_create_response(session)
 
-        generation_output = generation_result.value
-        tool_audit.append(
-            "generation:"
-            f"{generation_output.route}:"
-            f"{generation_output.model or 'unknown'}:"
-            f"cache_{'hit' if generation_output.cache_hit else 'miss'}"
-        )
-        final_text = generation_output.text
-        if "citation_guard" in effective_features and (not sources or "citation_guard" in degraded):
-            final_text = (
-                "当前证据链不完整，以下内容仅供参考。\n"
-                "建议联系招生办电话 0371-67698700 / 67698712 / 67698674 进一步确认。\n\n"
-                f"{final_text}"
-            )
-            if "citation_guard" not in degraded:
-                degraded.append("citation_guard")
-
-        output_flagged, output_reason, audited_text = self._audit_generated_output(final_text)
-        if output_flagged:
-            tool_audit.append(f"safety_audit:output_sanitized:{output_reason}")
-            final_text = audited_text
-            status = "degraded"
-
-        if degraded:
-            status = "degraded"
-        print(
-            f"[Gateway] create_chat done trace_id={trace_id} status={status} "
-            f"degraded={list(dict.fromkeys(degraded))} sources={len(sources)} tool_audit={tool_audit}"
-        )
-
-        self.deps.container.isolation.execute(
-            "memory-service",
-            lambda: self.deps.services.write_short_memory(request.session_id, "last_user_query", last_user),
-        )
-        self.deps.container.isolation.execute(
-            "memory-service",
-            lambda: self.deps.services.append_long_memory_summary(
-                request.session_id,
-                self._build_long_memory_snippet(last_user=last_user, response_text=final_text),
-            ),
-        )
-        special_preference = self._infer_special_memory(last_user)
-        if special_preference is not None:
-            self.deps.container.isolation.execute(
-                "memory-service",
-                lambda: self.deps.services.write_memory(
-                    request.session_id,
-                    special_preference,
-                ),
-            )
-
-        session = SessionResult(
-            session_id=request.session_id,
-            trace_id=trace_id,
-            text=final_text,
-            status=status,
-            degraded_features=list(dict.fromkeys(degraded)),
-            sources=sources,
-            tool_audit=tool_audit,
+        session = self._build_success_session(
+            prepared=prepared,
+            generation_output=generation_result.value,
         )
         self.deps.container.session_store.set(request.session_id, session)
-        return ChatCreateResponse(
-            session_id=request.session_id,
-            trace_id=trace_id,
-            status=status,
-            degraded_features=session.degraded_features,
+        return self._to_create_response(session)
+
+    def stream_chat(self, request: ChatRequest, fail_features: set[str] | None = None) -> Iterator[GatewayStreamEvent]:
+        """单请求流式聊天：前置能力准备完成后，边生成边向前端输出增量。"""
+        fail_features = fail_features or set()
+        prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
+        if prepared.blocked_reply is not None:
+            session = self._build_blocked_session(prepared)
+            self.deps.container.session_store.set(request.session_id, session)
+            yield from self._yield_text_events(session.text)
+            yield self._build_done_event(session)
+            return
+
+        prefix_text, degraded = self._build_citation_notice(
+            effective_features=prepared.effective_features,
+            sources=prepared.sources,
+            degraded=prepared.degraded,
         )
+        emitted_parts: list[str] = []
+        if prefix_text:
+            emitted_parts.append(prefix_text)
+            yield from self._yield_text_events(prefix_text)
+
+        generation_output = None
+        generation_error: str | None = None
+        for item in self.deps.container.isolation.execute_stream(
+            "generation-service",
+            lambda: self._invoke_generation_stream(
+                user_query=prepared.last_user,
+                context_blocks=prepared.context_blocks,
+                feature_notes=prepared.feature_notes,
+                request=request,
+                fail_features=fail_features,
+            ),
+        ):
+            if not item.ok:
+                generation_error = item.error or "generation failed"
+                break
+            chunk = item.value
+            if chunk is None:
+                continue
+            if chunk.done:
+                generation_output = chunk.response
+                continue
+            if chunk.delta:
+                emitted_parts.append(chunk.delta)
+                yield GatewayStreamEvent(event="message", data={"delta": chunk.delta})
+
+        if generation_output is None:
+            failure_text = ""
+            if not emitted_parts:
+                failure_text = "当前生成服务异常，请稍后重试。"
+                yield from self._yield_text_events(failure_text)
+            else:
+                failure_text = "".join(emitted_parts) + "\n\n生成过程中断，请稍后重试。"
+                yield from self._yield_text_events("\n\n生成过程中断，请稍后重试。")
+            session = self._build_failed_generation_session(
+                prepared=prepared,
+                error_message=generation_error or "generation failed",
+                text_override=failure_text,
+                degraded_override=degraded,
+            )
+            self.deps.container.session_store.set(request.session_id, session)
+            yield self._build_done_event(session)
+            return
+
+        session = self._build_success_session(
+            prepared=prepared,
+            generation_output=generation_output,
+            prefix_override=prefix_text,
+            degraded_override=degraded,
+        )
+        self.deps.container.session_store.set(request.session_id, session)
+        yield self._build_done_event(session)
 
     def _route_features(self, query: str, request: ChatRequest) -> QueryRouteDecision:
         """按问题类型动态裁剪工具链"""
@@ -498,6 +314,382 @@ class GatewayOrchestrator:
                 temperature=request.temperature,
                 top_p=request.top_p,
             )
+        )
+
+    def _invoke_generation_stream(
+        self,
+        user_query: str,
+        context_blocks: list[str],
+        feature_notes: list[str],
+        request: ChatRequest,
+        fail_features: set[str],
+    ):
+        """执行最终生成的流式版本，供真正的 SSE 接口复用。"""
+        if "generation" in fail_features:
+            raise RuntimeError("generation failure injected")
+        return self.deps.services.stream_generate(
+            GenerationRequest(
+                user_query=user_query,
+                context_blocks=context_blocks,
+                feature_notes=feature_notes,
+                model=request.model,
+                temperature=request.temperature,
+                top_p=request.top_p,
+            )
+        )
+
+    def _prepare_chat_context(self, request: ChatRequest, fail_features: set[str]) -> PreparedChatContext:
+        """执行生成前的所有准备步骤，供同步与流式接口复用。"""
+        trace_id = uuid.uuid4().hex
+        degraded: list[FeatureFlag] = []
+        feature_notes: list[str] = []
+        sources: list[ChatSource] = []
+        context_blocks: list[str] = []
+        tool_audit: list[str] = []
+
+        last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
+        if not last_user:
+            last_user = "请介绍中原工学院招生政策要点。"
+        print(
+            f"[Gateway] create_chat start trace_id={trace_id} session_id={request.session_id} "
+            f"features={request.features} strict_citation={request.strict_citation} user={last_user[:120]}"
+        )
+        input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)
+        if input_blocked:
+            tool_audit.append(f"safety_audit:input_blocked:{input_reason}")
+            return PreparedChatContext(
+                trace_id=trace_id,
+                session_id=request.session_id,
+                last_user=last_user,
+                effective_features=list(request.features),
+                degraded=[],
+                feature_notes=feature_notes,
+                sources=sources,
+                context_blocks=context_blocks,
+                tool_audit=tool_audit,
+                blocked_reply=safe_reply,
+            )
+
+        route_decision = self._route_features(query=last_user, request=request)
+        print(
+            f"[Gateway] route_decision trace_id={trace_id} label={route_decision.route_label} "
+            f"reason={route_decision.reason} features={route_decision.features}"
+        )
+        tool_audit.extend(route_decision.audit)
+        feature_notes.extend(route_decision.notes)
+        effective_features = route_decision.features
+        ordered_features = self.deps.services.plan_features(effective_features)
+
+        memory_result = self.deps.container.isolation.execute(
+            "memory-service",
+            lambda: self.deps.services.read_short_memory(request.session_id),
+        )
+        if memory_result.ok and memory_result.value and memory_result.value.entries:
+            context_blocks.extend([f"[memory] {item.value}" for item in memory_result.value.entries[:3]])
+            feature_notes.append("短期记忆已接入上下文。")
+        elif memory_result.ok:
+            feature_notes.append("当前会话暂无短期记忆，已跳过。")
+        else:
+            feature_notes.append("短期记忆服务不可用，已忽略。")
+        self._append_optional_memory_context(
+            context_blocks=context_blocks,
+            feature_notes=feature_notes,
+            session_id=request.session_id,
+            kind="long",
+            label="长期记忆",
+            prefix="[long-memory]",
+        )
+        self._append_optional_memory_context(
+            context_blocks=context_blocks,
+            feature_notes=feature_notes,
+            session_id=request.session_id,
+            kind="special",
+            label="特殊记忆",
+            prefix="[special-memory]",
+        )
+        rag_memory_context_blocks = list(context_blocks)
+
+        for feature in ordered_features:
+            if feature == "rag":
+                rag_result = self.deps.container.isolation.execute(
+                    "rag-agent-service",
+                    lambda: self._invoke_rag(
+                        request.session_id,
+                        last_user,
+                        fail_features,
+                        rag_memory_context_blocks,
+                    ),
+                )
+                print(
+                    f"[Gateway] rag_result trace_id={trace_id} ok={rag_result.ok} "
+                    f"error={rag_result.error} degraded={rag_result.degraded}"
+                )
+                if rag_result.ok and rag_result.value is not None:
+                    rag_output = rag_result.value
+                    context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
+                    sources = self._dedupe_chat_sources(
+                        [ChatSource(title=item.title, url=item.url) for item in rag_output.sources],
+                        limit=5,
+                    )
+                    if rag_output.status == "degraded":
+                        print(
+                            f"[Gateway] rag_output degraded trace_id={trace_id} "
+                            f"reason={rag_output.degrade_reason} sources={len(rag_output.sources)}"
+                        )
+                        if rag_output.degrade_reason and rag_output.degrade_reason.startswith("node_timeout:") and rag_output.sources:
+                            feature_notes.append(f"RAG 节点耗时偏高：{rag_output.degrade_reason}，已保留有效检索证据。")
+                        else:
+                            degraded.append("rag")
+                            if rag_output.degrade_reason:
+                                feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
+                    else:
+                        print(
+                            f"[Gateway] rag_output ok trace_id={trace_id} "
+                            f"context_blocks={len(rag_output.context_blocks)} sources={len(sources)}"
+                        )
+                        feature_notes.append("RAG LangGraph 工作流执行成功。")
+                else:
+                    degraded.append("rag")
+                    feature_notes.append("RAG 检索失败，降级为无检索回答。")
+                continue
+
+            if feature == "web_search":
+                allowed, guarded_query, reason = self._guard_web_search(last_user)
+                tool_audit.append(f"web_search:{'allowed' if allowed else 'blocked'}:{reason}")
+                if not allowed:
+                    degraded.append("web_search")
+                    feature_notes.append(f"联网搜索已拦截：{reason}")
+                    continue
+                web_result = self.deps.container.isolation.execute(
+                    "web-search-service",
+                    lambda: self._invoke_web_search(guarded_query, fail_features),
+                )
+                if web_result.ok and web_result.value:
+                    hits = web_result.value
+                    context_blocks.extend([f"联网搜索摘要：{item.title} | {item.snippet}" for item in hits])
+                    read_result = self.deps.container.isolation.execute(
+                        "web-read-service",
+                        lambda: self._invoke_web_read(query=guarded_query, hits=hits, fail_features=fail_features),
+                    )
+                    if read_result.ok and read_result.value:
+                        tool_audit.append("web_read:allowed:official_whitelist")
+                        context_blocks.extend(read_result.value)
+                        feature_notes.append("联网搜索与官方网页阅读补充成功。")
+                    else:
+                        tool_audit.append("web_read:degraded:official_whitelist")
+                        degraded.append("web_search")
+                        feature_notes.append("官方网页阅读失败，已保留搜索摘要并标记降级。")
+                else:
+                    degraded.append("web_search")
+                    feature_notes.append("联网搜索失败，已降级。")
+                continue
+
+            if feature == "skill_exec":
+                allowed, reason = self._guard_skill_request(query=last_user, saved_skill_id=None)
+                tool_audit.append(f"skill_exec:{'allowed' if allowed else 'blocked'}:{reason}")
+                if not allowed:
+                    degraded.append("skill_exec")
+                    feature_notes.append(f"技能执行已拦截：{reason}")
+                    continue
+                skill_result = self.deps.container.isolation.execute(
+                    "skill-service",
+                    lambda: self._invoke_skill(last_user, request.session_id, None, fail_features),
+                )
+                if skill_result.ok and skill_result.value:
+                    feature_notes.append(skill_result.value)
+                else:
+                    degraded.append("skill_exec")
+                    feature_notes.append("技能执行失败，已跳过。")
+                continue
+
+            if feature == "use_saved_skill":
+                allowed, reason = self._guard_skill_request(query=last_user, saved_skill_id=request.saved_skill_id)
+                tool_audit.append(f"use_saved_skill:{'allowed' if allowed else 'blocked'}:{reason}")
+                if not allowed:
+                    degraded.append("use_saved_skill")
+                    feature_notes.append(f"历史技能调用已拦截：{reason}")
+                    continue
+                saved_skill_result = self.deps.container.isolation.execute(
+                    "saved-skill-service",
+                    lambda: self._invoke_skill(last_user, request.session_id, request.saved_skill_id, fail_features),
+                )
+                if saved_skill_result.ok and saved_skill_result.value:
+                    feature_notes.append(saved_skill_result.value)
+                else:
+                    degraded.append("use_saved_skill")
+                    feature_notes.append("历史技能不可用，已回退通用流程。")
+                continue
+
+            if feature == "citation_guard":
+                guard_result = self.deps.container.isolation.execute(
+                    "citation-guard",
+                    lambda: self._invoke_citation_guard(sources=sources, fail_features=fail_features),
+                )
+                print(
+                    f"[Gateway] citation_guard trace_id={trace_id} ok={guard_result.ok} "
+                    f"value={guard_result.value} error={guard_result.error} sources={len(sources)}"
+                )
+                if guard_result.ok and guard_result.value:
+                    feature_notes.append("引用校验通过。")
+                elif sources and self._can_soft_pass_citation_guard(guard_result=guard_result):
+                    tool_audit.append(f"citation_guard:soft_pass:{guard_result.error or 'service_unavailable'}")
+                    feature_notes.append("引用校验服务异常，但已检测到可展示来源，已按保守策略继续回答。")
+                else:
+                    degraded.append("citation_guard")
+                    feature_notes.append("引用校验失败，已启用保守模板。")
+
+        return PreparedChatContext(
+            trace_id=trace_id,
+            session_id=request.session_id,
+            last_user=last_user,
+            effective_features=effective_features,
+            degraded=degraded,
+            feature_notes=feature_notes,
+            sources=sources,
+            context_blocks=context_blocks,
+            tool_audit=tool_audit,
+        )
+
+    def _build_blocked_session(self, prepared: PreparedChatContext) -> SessionResult:
+        return SessionResult(
+            session_id=prepared.session_id,
+            trace_id=prepared.trace_id,
+            text=prepared.blocked_reply or "",
+            status="degraded",
+            degraded_features=[],
+            sources=[],
+            tool_audit=prepared.tool_audit,
+            finish_reason="stop",
+        )
+
+    def _build_failed_generation_session(
+        self,
+        prepared: PreparedChatContext,
+        error_message: str,
+        text_override: str | None = None,
+        degraded_override: list[FeatureFlag] | None = None,
+    ) -> SessionResult:
+        degraded = list(dict.fromkeys(degraded_override if degraded_override is not None else prepared.degraded))
+        return SessionResult(
+            session_id=prepared.session_id,
+            trace_id=prepared.trace_id,
+            text=text_override or "当前生成服务异常，请稍后重试。",
+            status="failed",
+            degraded_features=degraded,
+            sources=prepared.sources,
+            tool_audit=prepared.tool_audit,
+            finish_reason="error",
+            error_message=error_message,
+        )
+
+    def _build_success_session(
+        self,
+        prepared: PreparedChatContext,
+        generation_output,
+        prefix_override: str | None = None,
+        degraded_override: list[FeatureFlag] | None = None,
+    ) -> SessionResult:
+        tool_audit = list(prepared.tool_audit)
+        tool_audit.append(
+            "generation:"
+            f"{generation_output.route}:"
+            f"{generation_output.model or 'unknown'}:"
+            f"cache_{'hit' if generation_output.cache_hit else 'miss'}"
+        )
+        degraded = list(degraded_override if degraded_override is not None else prepared.degraded)
+        prefix_text = prefix_override
+        if prefix_text is None:
+            prefix_text, degraded = self._build_citation_notice(
+                effective_features=prepared.effective_features,
+                sources=prepared.sources,
+                degraded=degraded,
+            )
+        final_text = f"{prefix_text}{generation_output.text}"
+        output_flagged, output_reason, audited_text = self._audit_generated_output(final_text)
+        status: ChatStatus = "ok"
+        if output_flagged:
+            tool_audit.append(f"safety_audit:output_sanitized:{output_reason}")
+            final_text = audited_text
+            status = "degraded"
+        if degraded:
+            status = "degraded"
+        print(
+            f"[Gateway] create_chat done trace_id={prepared.trace_id} status={status} "
+            f"degraded={list(dict.fromkeys(degraded))} sources={len(prepared.sources)} tool_audit={tool_audit}"
+        )
+        self._persist_memory_side_effects(session_id=prepared.session_id, last_user=prepared.last_user, final_text=final_text)
+        return SessionResult(
+            session_id=prepared.session_id,
+            trace_id=prepared.trace_id,
+            text=final_text,
+            status=status,
+            degraded_features=list(dict.fromkeys(degraded)),
+            sources=prepared.sources,
+            tool_audit=tool_audit,
+        )
+
+    def _persist_memory_side_effects(self, session_id: str, last_user: str, final_text: str) -> None:
+        self.deps.container.isolation.execute(
+            "memory-service",
+            lambda: self.deps.services.write_short_memory(session_id, "last_user_query", last_user),
+        )
+        self.deps.container.isolation.execute(
+            "memory-service",
+            lambda: self.deps.services.append_long_memory_summary(
+                session_id,
+                self._build_long_memory_snippet(last_user=last_user, response_text=final_text),
+            ),
+        )
+        special_preference = self._infer_special_memory(last_user)
+        if special_preference is not None:
+            self.deps.container.isolation.execute(
+                "memory-service",
+                lambda: self.deps.services.write_memory(session_id, special_preference),
+            )
+
+    def _build_citation_notice(
+        self,
+        effective_features: list[FeatureFlag],
+        sources: list[ChatSource],
+        degraded: list[FeatureFlag],
+    ) -> tuple[str, list[FeatureFlag]]:
+        deduped_degraded = list(dict.fromkeys(degraded))
+        if "citation_guard" not in effective_features:
+            return "", deduped_degraded
+        if sources and "citation_guard" not in deduped_degraded:
+            return "", deduped_degraded
+        if "citation_guard" not in deduped_degraded:
+            deduped_degraded.append("citation_guard")
+        prefix_text = (
+            "当前证据链不完整，以下内容仅供参考。\n"
+            "建议联系招生办电话 0371-67698700 / 67698712 / 67698674 进一步确认。\n\n"
+        )
+        return prefix_text, deduped_degraded
+
+    def _yield_text_events(self, text: str) -> Iterator[GatewayStreamEvent]:
+        chunk_size = max(1, self.deps.services.settings.stream_chunk_size)
+        for idx in range(0, len(text), chunk_size):
+            yield GatewayStreamEvent(event="message", data={"delta": text[idx : idx + chunk_size]})
+
+    def _build_done_event(self, session: SessionResult) -> GatewayStreamEvent:
+        return GatewayStreamEvent(
+            event="done",
+            data={
+                "finish_reason": session.finish_reason,
+                "status": session.status,
+                "degraded_features": session.degraded_features,
+                "sources": [item.model_dump() for item in session.sources],
+                "trace_id": session.trace_id,
+                "tool_audit": session.tool_audit,
+            },
+        )
+
+    def _to_create_response(self, session: SessionResult) -> ChatCreateResponse:
+        return ChatCreateResponse(
+            session_id=session.session_id,
+            trace_id=session.trace_id,
+            status=session.status,
+            degraded_features=session.degraded_features,
         )
 
     def _append_optional_memory_context(
