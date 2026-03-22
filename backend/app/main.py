@@ -218,3 +218,5 @@ def admin_reindex() -> dict[str, object]:
 @app.get("/api/admin/retrieval/stats", dependencies=[Depends(_require_admin_token)])
 def admin_retrieval_stats() -> dict[str, object]:
     return {"status": "ok", "result": service_client.rag_stats()}
+
+

@@ -105,7 +105,7 @@ class RagIndexManager:
         self._doc_by_chunk_id: dict[str, Document] = {}
         self._embeddings = OpenAICompatibleEmbeddings(
             endpoint=settings.resolve_embedding_api_url(),
-            api_key=settings.api_key,
+            api_key=settings.resolve_embedding_api_key(),
             model=settings.embedding_model,
             timeout_seconds=settings.request_timeout_seconds,
             batch_size=settings.embedding_batch_size,

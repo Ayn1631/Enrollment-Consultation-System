@@ -63,7 +63,7 @@ class GatewayOrchestrator:
         last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
         if not last_user:
             last_user = "请介绍中原工学院招生政策要点。"
-        input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)
+        input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)  # 违禁词判断
         if input_blocked:
             tool_audit.append(f"safety_audit:input_blocked:{input_reason}")
             session = SessionResult(
@@ -83,6 +83,7 @@ class GatewayOrchestrator:
                 status="degraded",
                 degraded_features=[],
             )
+            
         route_decision = self._route_features(query=last_user, request=request)
         tool_audit.extend(route_decision.audit)
         feature_notes.extend(route_decision.notes)
@@ -97,9 +98,11 @@ class GatewayOrchestrator:
         if memory_result.ok and memory_result.value and memory_result.value.entries:
             context_blocks.extend([f"[memory] {item.value}" for item in memory_result.value.entries[:3]])
             feature_notes.append("短期记忆已接入上下文。")
+        elif memory_result.ok:
+            feature_notes.append("当前会话暂无短期记忆，已跳过。")
         else:
             degraded.append("skill_exec") if False else None
-            feature_notes.append("短期记忆不可用，已忽略。")
+            feature_notes.append("短期记忆服务不可用，已忽略。")
         self._append_optional_memory_context(
             context_blocks=context_blocks,
             feature_notes=feature_notes,
@@ -129,12 +132,14 @@ class GatewayOrchestrator:
                     sources = [
                         ChatSource(title=item.title, url=item.url)
                         for item in rag_output.sources
-                        if item.url
                     ][:5]
                     if rag_output.status == "degraded":
-                        degraded.append("rag")
-                        if rag_output.degrade_reason:
-                            feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
+                        if rag_output.degrade_reason and rag_output.degrade_reason.startswith("node_timeout:") and rag_output.sources:
+                            feature_notes.append(f"RAG 节点耗时偏高：{rag_output.degrade_reason}，已保留有效检索证据。")
+                        else:
+                            degraded.append("rag")
+                            if rag_output.degrade_reason:
+                                feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
                     else:
                         feature_notes.append("RAG LangGraph 工作流执行成功。")
                 else:
@@ -226,6 +231,7 @@ class GatewayOrchestrator:
                 user_query=last_user,
                 context_blocks=context_blocks,
                 feature_notes=feature_notes,
+                # feature_notes=[],
                 request=request,
                 fail_features=fail_features,
             ),
@@ -322,7 +328,7 @@ class GatewayOrchestrator:
         )
 
     def _route_features(self, query: str, request: ChatRequest) -> QueryRouteDecision:
-        """按问题类型动态裁剪工具链，避免每个请求都一把梭全开。"""
+        """按问题类型动态裁剪工具链"""
         route_label, reason = self._classify_query_intent(query)
         routed = list(dict.fromkeys(request.features))
         notes: list[str] = []
@@ -366,7 +372,7 @@ class GatewayOrchestrator:
             session_id=session_id,
             query=query,
             top_k=self.deps.services.settings.rag_final_top_k,
-            debug=False,
+            debug=True,
         )
 
     def _invoke_web_search(self, query: str, fail_features: set[str]) -> list[WebSearchHit]:

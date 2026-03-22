@@ -1,24 +1,25 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
-from app.config import DOCS_DIR, Settings
+from app.config import Settings
 from app.contracts import GenerationRequest, MemoryEntry, RagQueryResponse
 from app.services.service_client import ServiceClient
+from app.services.llm import GenerationService
 
 
-def _local_settings() -> Settings:
-    return Settings(
-        service_call_mode="local",
-        use_mock_generation=True,
-        docs_dir=DOCS_DIR,
-        api_key="mock-key",
-        api_url="https://example.com/v1/chat/completions",
+def _local_settings(isolated_runtime_settings: Settings) -> Settings:
+    return isolated_runtime_settings.model_copy(
+        update={
+            "service_call_mode": "local",
+            "use_mock_generation": True,
+        }
     )
 
 
-def test_dependency_health_local_mode():
-    settings = _local_settings()
+def test_dependency_health_local_mode(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
     client = ServiceClient(settings=settings)
     client.startup()
     health = client.dependency_health()
@@ -26,8 +27,8 @@ def test_dependency_health_local_mode():
     assert health["generation-service"]["healthy"] is True
 
 
-def test_service_client_skill_save_and_list():
-    settings = _local_settings()
+def test_service_client_skill_save_and_list(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
     client = ServiceClient(settings=settings)
     saved = client.save_skill("custom_flow", "步骤A->步骤B->给来源")
     assert saved["name"] == "custom_flow"
@@ -89,9 +90,12 @@ class _HttpModeFakeClient:
         return _FakeResponse(200, {"ok": True})
 
 
-def _http_settings() -> Settings:
-    settings = _local_settings()
-    settings.service_call_mode = "http"
+def _http_settings(runtime_settings: Settings) -> Settings:
+    settings = runtime_settings.model_copy(
+        update={
+            "service_call_mode": "http",
+        }
+    )
     settings.rag_agent_service_url = "http://rag-agent-service:8001"
     settings.memory_service_url = "http://memory-service:8003"
     settings.skill_service_url = "http://skill-service:8004"
@@ -99,9 +103,9 @@ def _http_settings() -> Settings:
     return settings
 
 
-def test_dependency_health_http_mode(monkeypatch):
+def test_dependency_health_http_mode(monkeypatch, runtime_settings: Settings):
     monkeypatch.setattr("app.services.service_client.httpx.Client", _HttpModeFakeClient)
-    settings = _http_settings()
+    settings = _http_settings(runtime_settings)
     client = ServiceClient(settings=settings)
     health = client.dependency_health()
     assert health["rag-agent-service"]["healthy"] is True
@@ -109,17 +113,17 @@ def test_dependency_health_http_mode(monkeypatch):
     assert "timeout" in str(health["memory-service"]["detail"])
 
 
-def test_reindex_http_mode(monkeypatch):
+def test_reindex_http_mode(monkeypatch, runtime_settings: Settings):
     monkeypatch.setattr("app.services.service_client.httpx.Client", _HttpModeFakeClient)
-    settings = _http_settings()
+    settings = _http_settings(runtime_settings)
     client = ServiceClient(settings=settings)
     payload = client.reindex()
     assert payload["chunks"] == 88
 
 
-def test_run_rag_graph_http_mode(monkeypatch):
+def test_run_rag_graph_http_mode(monkeypatch, runtime_settings: Settings):
     monkeypatch.setattr("app.services.service_client.httpx.Client", _HttpModeFakeClient)
-    settings = _http_settings()
+    settings = _http_settings(runtime_settings)
     client = ServiceClient(settings=settings)
     response = client.run_rag_graph(session_id="s1", query="招生章程", top_k=3, debug=False)
     assert isinstance(response, RagQueryResponse)
@@ -127,16 +131,16 @@ def test_run_rag_graph_http_mode(monkeypatch):
     assert len(response.context_blocks) >= 1
 
 
-def test_plan_features_orders_citation_guard_last():
-    settings = _local_settings()
+def test_plan_features_orders_citation_guard_last(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
     client = ServiceClient(settings=settings)
     ordered = client.plan_features(["citation_guard", "rag", "web_search"])
     assert ordered[0] == "rag"
     assert ordered[-1] == "citation_guard"
 
 
-def test_execute_skill_prefers_langchain4j_bridge(monkeypatch):
-    settings = _local_settings()
+def test_execute_skill_prefers_langchain4j_bridge(monkeypatch, isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
     settings.langchain4j_service_url = "http://langchain4j-service:8080"
     client = ServiceClient(settings=settings)
 
@@ -149,8 +153,8 @@ def test_execute_skill_prefers_langchain4j_bridge(monkeypatch):
     assert result.note == "来自LangChain4j的技能结果"
 
 
-def test_memory_client_supports_long_and_special_memory():
-    settings = _local_settings()
+def test_memory_client_supports_long_and_special_memory(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
     client = ServiceClient(settings=settings)
     client.write_memory(
         session_id="s-memory",
@@ -163,8 +167,8 @@ def test_memory_client_supports_long_and_special_memory():
     assert "用户关注学费和资助" in long_entries[0].value
 
 
-def test_generate_uses_light_route_and_prompt_cache_in_local_mode():
-    settings = _local_settings()
+def test_generate_uses_light_route_and_prompt_cache_in_local_mode(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
     settings.generation_light_model = "light-model"
     settings.generation_main_model = "main-model"
     client = ServiceClient(settings=settings)
@@ -184,10 +188,11 @@ def test_generate_uses_light_route_and_prompt_cache_in_local_mode():
     assert second.text == first.text
 
 
-def test_generate_honors_requested_model_even_in_remote_mode(monkeypatch):
-    settings = _http_settings()
+def test_generate_honors_requested_model_even_in_remote_mode(monkeypatch, runtime_settings: Settings):
+    settings = _http_settings(runtime_settings)
     settings.use_mock_generation = False
-    settings.api_key = "test-key"
+    if not settings.resolve_llm_api_key():
+        pytest.skip("当前环境未配置可用的 LLM API KEY")
     captured_payloads: list[dict] = []
 
     class _GenerationClient(_HttpModeFakeClient):
@@ -219,3 +224,60 @@ def test_generate_honors_requested_model_even_in_remote_mode(monkeypatch):
     assert response.model == "custom-model"
     assert response.route == "requested"
     assert captured_payloads[0]["model"] == "custom-model"
+
+
+def test_generation_service_prefers_split_llm_endpoint_and_key(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "这是远程生成结果",
+                        }
+                    }
+                ]
+            }
+
+    class _GenerationHttpClient:
+        def __init__(self, timeout: float):
+            captured["timeout"] = timeout
+
+        def close(self) -> None:
+            return None
+
+        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            captured["json"] = json or {}
+            return _FakeResponse()
+
+    monkeypatch.setattr("app.services.llm.httpx.Client", _GenerationHttpClient)
+    settings = Settings()
+    if not settings.resolve_llm_api_key():
+        pytest.skip("当前环境未配置可用的 LLM API KEY")
+    settings = settings.model_copy(
+        update={
+            "service_call_mode": "local",
+            "use_mock_generation": False,
+        }
+    )
+    service = GenerationService(settings)
+
+    result = service.generate(
+        user_query="请介绍招生政策",
+        context_blocks=["证据A"],
+        feature_notes=["RAG 已执行"],
+    )
+
+    assert result.text == "这是远程生成结果"
+    assert captured["url"] == settings.resolve_llm_api_url()
+    assert captured["headers"] == {
+        "Authorization": f"Bearer {settings.resolve_llm_api_key()}",
+        "Content-Type": "application/json",
+    }

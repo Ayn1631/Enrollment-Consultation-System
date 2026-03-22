@@ -12,7 +12,12 @@ DOCS_DIR = ROOT_DIR / "docs" / "zyit"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=ROOT_DIR / "backend" / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     app_name: str = Field(default="admissions-gateway", alias="APP_NAME")
     service_call_mode: str = Field(default="local", alias="SERVICE_CALL_MODE")
@@ -22,6 +27,8 @@ class Settings(BaseSettings):
         alias="API_URL",
     )
     api_key: str = Field(default="", alias="API_KEY")
+    llm_api_url: str = Field(default="", alias="LLM_API_URL")
+    llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     admin_api_token: str = Field(default="", alias="ADMIN_API_TOKEN")
     agent_stack: str = Field(default="langgraph", alias="AGENT_STACK")
     request_timeout_seconds: float = Field(default=6.0, alias="REQUEST_TIMEOUT_SECONDS")
@@ -37,8 +44,12 @@ class Settings(BaseSettings):
     docs_dir: Path = DOCS_DIR
 
     embedding_api_url: str = Field(default="", alias="EMBEDDING_API_URL")
-    embedding_model: str = Field(default="text-embedding-3-large", alias="EMBEDDING_MODEL")
+    embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
+    embedding_model: str = Field(default="BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
     embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
+    rerank_api_url: str = Field(default="", alias="RERANK_API_URL")
+    rerank_api_key: str = Field(default="", alias="RERANK_API_KEY")
+    rerank_model: str = Field(default="BAAI/bge-reranker-v2-m3", alias="RERANK_MODEL")
     rag_faiss_dir: Path = Field(default=ROOT_DIR / "backend" / "data" / "faiss", alias="RAG_FAISS_DIR")
     rag_chunk_size: int = Field(default=500, alias="RAG_CHUNK_SIZE")
     rag_chunk_overlap: int = Field(default=80, alias="RAG_CHUNK_OVERLAP")
@@ -74,14 +85,39 @@ class Settings(BaseSettings):
     citation_guard_timeout_seconds: float = Field(default=0.4, alias="CITATION_GUARD_TIMEOUT_SECONDS")
     generation_service_timeout_seconds: float = Field(default=7.0, alias="GENERATION_SERVICE_TIMEOUT_SECONDS")
 
+    def resolve_llm_api_url(self) -> str:
+        """解析对话模型地址，优先使用专用 LLM_API_URL，未配置时回退 API_URL。"""
+        return (self.llm_api_url or self.api_url).strip()
+
+    def resolve_llm_api_key(self) -> str:
+        """解析对话模型密钥，优先使用专用 LLM_API_KEY，未配置时回退 API_KEY。"""
+        return (self.llm_api_key or self.api_key).strip()
+
     def resolve_embedding_api_url(self) -> str:
-        """从 API_URL 推导 Embedding 端点，支持同源 OpenAI 兼容接口。"""
+        """解析 Embedding 端点，未单独配置时从对话端点推导。"""
         if self.embedding_api_url:
             return self.embedding_api_url.strip()
-        base = self.api_url.strip()
+        base = self.resolve_llm_api_url()
         if base.endswith("/chat/completions"):
             return f"{base[:-len('/chat/completions')]}/embeddings"
         return f"{base.rstrip('/')}/embeddings"
+
+    def resolve_embedding_api_key(self) -> str:
+        """解析 Embedding 密钥，未单独配置时回退到对话模型密钥。"""
+        return (self.embedding_api_key or self.resolve_llm_api_key()).strip()
+
+    def resolve_rerank_api_url(self) -> str:
+        """解析 Rerank 端点，未单独配置时从对话端点推导。"""
+        if self.rerank_api_url:
+            return self.rerank_api_url.strip()
+        base = self.resolve_llm_api_url()
+        if base.endswith("/chat/completions"):
+            return f"{base[:-len('/chat/completions')]}/rerank"
+        return f"{base.rstrip('/')}/rerank"
+
+    def resolve_rerank_api_key(self) -> str:
+        """解析 Rerank 密钥，未单独配置时回退到对话模型密钥。"""
+        return (self.rerank_api_key or self.resolve_llm_api_key()).strip()
 
     def resolve_cors_allow_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]

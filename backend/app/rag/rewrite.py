@@ -45,18 +45,19 @@ class QueryRewriter:
 
     def _build_llm(self):
         """初始化改写模型，缺少依赖或密钥时返回 None。"""
-        if self.settings.use_mock_generation or not self.settings.api_key:
+        llm_api_key = self.settings.resolve_llm_api_key()
+        if self.settings.use_mock_generation or not llm_api_key:
             return None
         try:
             from langchain_openai import ChatOpenAI
         except Exception:
             return None
-        base_url = self.settings.api_url.strip()
+        base_url = self.settings.resolve_llm_api_url()
         if base_url.endswith("/chat/completions"):
             base_url = base_url[: -len("/chat/completions")]
         return ChatOpenAI(
             model="gpt-4o-mini",
-            api_key=self.settings.api_key,
+            api_key=llm_api_key,
             base_url=base_url,
             temperature=0.1,
             timeout=self.settings.request_timeout_seconds,

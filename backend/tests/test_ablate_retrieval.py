@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from app.config import Settings
 from app.rag.index import RagIndexManager
 from app.rag.rerank import ListwiseReranker
@@ -11,36 +9,7 @@ from scripts.ablate_retrieval import _relevant_chunk_ids, build_variant_queries,
 from scripts.evaluate_retrieval import RetrievalEvalCase, build_retrieval_cases
 
 
-def _build_real_components(tmp_path: Path) -> tuple[RagIndexManager, QueryRewriter, HybridRetriever, ListwiseReranker]:
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
-    sample = docs_dir / "01-招生政策.md"
-    sample.write_text(
-        "# 原文（来源：https://example.com/policy）\n"
-        "网页标题：2025 招生政策\n"
-        "抓取时间：2026-03-20\n"
-        "发布时间：2025-05-15\n\n"
-        "第一章 收费与资助\n"
-        "第一条 学费 5000 元，住宿费 800 元。\n"
-        "第二条 国家助学贷款每生每年最高 20000 元。\n"
-        "第三条 新生报到流程包括资格核验、宿舍办理、缴费确认。\n"
-        "第四条 咨询电话 0371-67698700。\n"
-        "第五条 学费 5000 元，住宿费 800 元，奖助贷政策按年度通知执行。\n",
-        encoding="utf-8",
-    )
-    settings = Settings(
-        api_key="",
-        api_url="https://example.com/v1/chat/completions",
-        service_call_mode="local",
-        use_mock_generation=True,
-        docs_dir=docs_dir,
-        rag_faiss_dir=tmp_path / "faiss",
-        rag_chunk_size=80,
-        rag_chunk_overlap=10,
-        rag_retrieve_top_n=12,
-        rag_final_top_k=4,
-        rag_retry_top_n=16,
-    )
+def _build_real_components(settings: Settings) -> tuple[RagIndexManager, QueryRewriter, HybridRetriever, ListwiseReranker]:
     index = RagIndexManager(settings)
     index.reindex()
     rewriter = QueryRewriter(settings)
@@ -65,8 +34,8 @@ def test_summarize_variant_averages_metrics():
     assert summary["avg_latency_ms"] == 20.0
 
 
-def test_build_variant_queries_respects_rewrite_switch_with_real_rewriter(tmp_path: Path):
-    _, rewriter, _, _ = _build_real_components(tmp_path)
+def test_build_variant_queries_respects_rewrite_switch_with_real_rewriter(isolated_runtime_settings: Settings):
+    _, rewriter, _, _ = _build_real_components(isolated_runtime_settings)
     case = RetrievalEvalCase(
         name="c1-1",
         category="招生政策",
@@ -82,8 +51,8 @@ def test_build_variant_queries_respects_rewrite_switch_with_real_rewriter(tmp_pa
     assert len(rewrite_on) >= 2
 
 
-def test_evaluate_variant_runs_rerank_variants_with_real_components(tmp_path: Path):
-    index, rewriter, retriever, reranker = _build_real_components(tmp_path)
+def test_evaluate_variant_runs_rerank_variants_with_real_components(isolated_runtime_settings: Settings):
+    index, rewriter, retriever, reranker = _build_real_components(isolated_runtime_settings)
     cases = build_retrieval_cases(index.all_documents(), max_cases=4)
     assert cases
     case = cases[0]
@@ -113,8 +82,8 @@ def test_evaluate_variant_runs_rerank_variants_with_real_components(tmp_path: Pa
         assert float(summary["avg_latency_ms"]) >= 0.0
 
 
-def test_relevant_chunk_ids_respects_small2big_switch_with_real_case(tmp_path: Path):
-    index, _, _, _ = _build_real_components(tmp_path)
+def test_relevant_chunk_ids_respects_small2big_switch_with_real_case(isolated_runtime_settings: Settings):
+    index, _, _, _ = _build_real_components(isolated_runtime_settings)
     cases = build_retrieval_cases(index.all_documents(), max_cases=8)
     case = next((item for item in cases if len(item.relevant_chunk_ids) > 1), None)
 

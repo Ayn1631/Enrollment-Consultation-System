@@ -3,51 +3,79 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import httpx
 from langchain_core.documents import Document
 
 from app.config import Settings
 
 
 class ListwiseReranker:
-    """基于 LangChain listwise rerank 的重排器，失败时回退启发式重排。"""
+    """基于 /rerank 接口的重排器，失败时回退启发式重排。"""
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._compressor = self._build_compressor()
+        self._endpoint = settings.resolve_rerank_api_url()
+        self._api_key = settings.resolve_rerank_api_key()
+        self._enabled = self._can_use_remote()
 
     def rerank(self, query: str, docs: list[Document], top_k: int) -> tuple[list[Document], bool]:
         """重排候选文档，返回结果及是否发生降级。"""
         if not docs:
             return [], False
-        if self._compressor is None:
+        if not self._enabled:
             return self._fallback_rerank(query=query, docs=docs, top_k=top_k), True
         try:
-            ranked = self._compressor.compress_documents(docs, query=query)
-            return list(ranked)[:top_k], False
+            ranked = self._rerank_remote(query=query, docs=docs, top_k=top_k)
+            if not ranked:
+                raise RuntimeError("rerank response is empty")
+            return ranked, False
         except Exception:
             return self._fallback_rerank(query=query, docs=docs, top_k=top_k), True
 
-    def _build_compressor(self):
-        """构建 LangChain listwise rerank 组件。"""
-        if self.settings.use_mock_generation or not self.settings.api_key:
-            return None
-        try:
-            from langchain.retrievers.document_compressors import LLMListwiseRerank
-            from langchain_openai import ChatOpenAI
-        except Exception:
-            return None
+    def _can_use_remote(self) -> bool:
+        return not self.settings.use_mock_generation and bool(self._api_key and self.settings.rerank_model)
 
-        base_url = self.settings.api_url.strip()
-        if base_url.endswith("/chat/completions"):
-            base_url = base_url[: -len("/chat/completions")]
-        llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=self.settings.api_key,
-            base_url=base_url,
-            temperature=0,
-            timeout=self.settings.request_timeout_seconds,
-        )
-        return LLMListwiseRerank.from_llm(llm=llm, top_n=self.settings.rag_final_top_k)
+    def _rerank_remote(self, query: str, docs: list[Document], top_k: int) -> list[Document]:
+        payload: dict[str, Any] = {
+            "model": self.settings.rerank_model,
+            "query": query,
+            "documents": [self._document_text(doc) for doc in docs],
+            "top_n": max(1, min(top_k, len(docs))),
+            "return_documents": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(timeout=self.settings.request_timeout_seconds) as client:
+            response = client.post(self._endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            body = response.json()
+        results = body.get("results", [])
+        ranked: list[Document] = []
+        for row in results:
+            doc = self._map_result_to_document(row=row, docs=docs)
+            if doc is not None:
+                ranked.append(doc)
+        return ranked[:top_k]
+
+    def _map_result_to_document(self, row: dict[str, Any], docs: list[Document]) -> Document | None:
+        try:
+            index = int(row["index"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if index < 0 or index >= len(docs):
+            return None
+        score = row.get("relevance_score", row.get("score", 0.0))
+        cloned = Document(page_content=docs[index].page_content, metadata=dict(docs[index].metadata))
+        cloned.metadata["score"] = float(score)
+        return cloned
+
+    def _document_text(self, doc: Document) -> str:
+        chunk_text = str(doc.metadata.get("chunk_text", "")).strip()
+        if chunk_text:
+            return chunk_text
+        return doc.page_content
 
     def _fallback_rerank(self, query: str, docs: list[Document], top_k: int) -> list[Document]:
         """回退排序：按关键词覆盖度与原分数进行混合排序。"""

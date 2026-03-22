@@ -336,7 +336,7 @@ class RagGraphOrchestrator:
         return self._timed(state, "finalize", lambda: {})
 
     def _timed(self, state: RagGraphState, node: str, fn):
-        """包装节点执行，统一采集耗时并处理超时降级。"""
+        """包装节点执行，统一采集耗时并记录慢节点。"""
         start = time.perf_counter()
         patch = fn()
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -344,9 +344,9 @@ class RagGraphOrchestrator:
         # 关键变量：latency_breakdown_ms 记录节点级耗时，用于 debug 与评测。
         latency = dict(merged.get("latency_breakdown_ms", {}))
         latency[node] = elapsed_ms
+        if elapsed_ms > self.node_timeout_ms:
+            latency[f"{node}_overrun_ms"] = round(elapsed_ms - self.node_timeout_ms, 2)
         merged["latency_breakdown_ms"] = latency
-        if elapsed_ms > self.node_timeout_ms and not merged.get("degrade_reason"):
-            merged["degrade_reason"] = f"node_timeout:{node}"
         return merged
 
     def _merge_state(self, state: RagGraphState, patch: RagGraphState) -> RagGraphState:

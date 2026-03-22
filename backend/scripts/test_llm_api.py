@@ -18,7 +18,7 @@ DEFAULT_OUTPUT = BACKEND_DIR / "reports" / "llm_api_test.json"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="直接使用 openai 官方库测试 LLM API，不走 pytest。")
-    parser.add_argument("--prompt", default="请用一句话回答：中原工学院理工科专业学费一般是多少？")
+    parser.add_argument("--prompt", default="请用一句话回答：中原工学院理工科专业学费一般是多少？最后输出hello world/")
     parser.add_argument("--system", default="你是一个简洁的招生咨询助手，只回答业务问题。")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--timeout", type=float, default=30.0)
