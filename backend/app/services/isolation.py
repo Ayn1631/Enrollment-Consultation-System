@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -8,6 +9,7 @@ from typing import Callable, Generic, TypeVar
 
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -41,6 +43,12 @@ class IsolationExecutor:
             state = self._states.setdefault(name, CircuitState())
             now = time.time()
             if state.open_until > now:
+                message = (
+                    f"[IsolationExecutor] circuit open name={name} "
+                    f"open_until={state.open_until:.3f} failures={state.failures} last_error={state.last_error}"
+                )
+                print(message)
+                logger.warning(message)
                 return IsolationResult(ok=False, error=f"circuit_open:{name}", degraded=True)
 
         try:
@@ -53,6 +61,12 @@ class IsolationExecutor:
                 state.updated_at = datetime.utcnow()
                 if state.failures >= self.failure_threshold:
                     state.open_until = time.time() + self.open_seconds
+                message = (
+                    f"[IsolationExecutor] execute failed name={name} failures={state.failures} "
+                    f"threshold={self.failure_threshold} error={exc}"
+                )
+                print(message)
+                logger.exception(message)
             return IsolationResult(ok=False, error=str(exc), degraded=True)
 
         with self._lock:
@@ -61,6 +75,7 @@ class IsolationExecutor:
             state.last_error = None
             state.open_until = 0.0
             state.updated_at = datetime.utcnow()
+        logger.info("[IsolationExecutor] execute ok name=%s", name)
         return IsolationResult(ok=True, value=value)
 
     def snapshot(self) -> dict[str, CircuitState]:

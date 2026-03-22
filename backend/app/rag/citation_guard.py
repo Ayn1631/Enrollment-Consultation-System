@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import logging
 import re
 
 from langchain_core.documents import Document
+
+
+logger = logging.getLogger(__name__)
 
 
 class CitationGuard:
@@ -17,18 +21,28 @@ class CitationGuard:
     def validate(self, docs: list[Document]) -> tuple[bool, str | None]:
         """按来源数量与 top1 分数阈值判断是否通过引用校验。"""
         if not docs:
+            print("[CitationGuard] validate failed reason=no_source docs=0")
+            logger.warning("[CitationGuard] validate failed reason=no_source docs=0")
             return False, "no_source"
         top_score = float(docs[0].metadata.get("score", 0.0))
-        source_count = len(
-            {
-                str(doc.metadata.get("source_url") or doc.metadata.get("source_title") or doc.metadata.get("doc_id"))
-                for doc in docs
-                if doc.metadata.get("source_url") or doc.metadata.get("source_title") or doc.metadata.get("doc_id")
-            }
+        source_keys = [
+            str(doc.metadata.get("source_url") or doc.metadata.get("source_title") or doc.metadata.get("doc_id"))
+            for doc in docs
+            if doc.metadata.get("source_url") or doc.metadata.get("source_title") or doc.metadata.get("doc_id")
+        ]
+        source_count = len(set(source_keys))
+        message = (
+            f"[CitationGuard] validate docs={len(docs)} top_score={top_score:.4f} "
+            f"source_count={source_count} min_sources={self.min_sources} "
+            f"min_top1_score={self.min_top1_score} sources={source_keys[:5]}"
         )
+        print(message)
+        logger.info(message)
         if source_count < self.min_sources:
+            logger.warning("[CitationGuard] validate failed reason=insufficient_sources")
             return False, "insufficient_sources"
         if top_score < self.min_top1_score:
+            logger.warning("[CitationGuard] validate failed reason=low_top_score")
             return False, "low_top_score"
         return True, None
 

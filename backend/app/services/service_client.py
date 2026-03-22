@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 import httpx
@@ -26,6 +27,9 @@ from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanne
 from app.services.llm import GenerationService
 from app.services.memory import MemoryManager
 from app.services.skill_manager import SkillManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class ServiceClient:
@@ -84,14 +88,37 @@ class ServiceClient:
     def run_rag_graph(self, session_id: str, query: str, top_k: int = 8, debug: bool = False) -> RagQueryResponse:
         """执行 LangGraph RAG 工作流。"""
         request = RagQueryRequest(session_id=session_id, query=query, top_k=top_k, debug=debug)
+        print(
+            f"[ServiceClient] run_rag_graph start session_id={session_id} top_k={top_k} "
+            f"debug={debug} query={query[:80]}"
+        )
         if self.settings.service_call_mode == "http":
             body = self._post(
                 f"{self.settings.rag_agent_service_url}/rag/query",
                 request.model_dump(),
                 self.settings.rag_agent_service_timeout_seconds,
             )
-            return RagQueryResponse.model_validate(body)
-        return self._rag_service.run(session_id=session_id, query=query, top_k=top_k, debug=debug)
+            result = RagQueryResponse.model_validate(body)
+            logger.info(
+                "[ServiceClient] run_rag_graph http result status=%s sources=%s degrade_reason=%s",
+                result.status,
+                len(result.sources),
+                result.degrade_reason,
+            )
+            return result
+        result = self._rag_service.run(session_id=session_id, query=query, top_k=top_k, debug=debug)
+        logger.info(
+            "[ServiceClient] run_rag_graph local result status=%s sources=%s degrade_reason=%s latency=%s",
+            result.status,
+            len(result.sources),
+            result.degrade_reason,
+            result.latency_ms,
+        )
+        print(
+            f"[ServiceClient] run_rag_graph done status={result.status} "
+            f"sources={len(result.sources)} degrade_reason={result.degrade_reason}"
+        )
+        return result
 
     def write_short_memory(self, session_id: str, key: str, value: str) -> None:
         self.write_memory(session_id=session_id, entry=MemoryEntry(key=key, value=value, kind="short"))
@@ -183,14 +210,25 @@ class ServiceClient:
         return self._skills.save(name=name, workflow=workflow).model_dump(mode="json")
 
     def generate(self, request: GenerationRequest) -> GenerationResponse:
+        print(
+            f"[ServiceClient] generate start model={request.model or 'auto'} "
+            f"context_blocks={len(request.context_blocks)} feature_notes={len(request.feature_notes)}"
+        )
         if self.settings.service_call_mode == "http":
             body = self._post(
                 f"{self.settings.generation_service_url}/generate",
                 request.model_dump(),
                 self.settings.generation_service_timeout_seconds,
             )
-            return GenerationResponse.model_validate(body)
-        return self._generator.generate(
+            result = GenerationResponse.model_validate(body)
+            logger.info(
+                "[ServiceClient] generate http result route=%s model=%s cache_hit=%s",
+                result.route,
+                result.model,
+                result.cache_hit,
+            )
+            return result
+        result = self._generator.generate(
             user_query=request.user_query,
             context_blocks=request.context_blocks,
             feature_notes=request.feature_notes,
@@ -198,8 +236,29 @@ class ServiceClient:
             temperature=request.temperature,
             top_p=request.top_p,
         )
+        logger.info(
+            "[ServiceClient] generate local result route=%s model=%s cache_hit=%s text_preview=%s",
+            result.route,
+            result.model,
+            result.cache_hit,
+            result.text[:120],
+        )
+        print(
+            f"[ServiceClient] generate done route={result.route} model={result.model} "
+            f"cache_hit={result.cache_hit}"
+        )
+        return result
 
     def citation_guard(self, sources: list[ChatSource]) -> CitationGuardResponse:
+        print(
+            f"[ServiceClient] citation_guard sources={len(sources)} "
+            f"source_titles={[item.title for item in sources[:5]]}"
+        )
+        logger.info(
+            "[ServiceClient] citation_guard sources=%s urls=%s",
+            len(sources),
+            [item.url for item in sources[:5]],
+        )
         return CitationGuardResponse(ok=len(sources) > 0)
 
     def dependency_health(self) -> dict[str, dict[str, str | bool]]:

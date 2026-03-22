@@ -63,6 +63,10 @@ class GatewayOrchestrator:
         last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
         if not last_user:
             last_user = "请介绍中原工学院招生政策要点。"
+        print(
+            f"[Gateway] create_chat start trace_id={trace_id} session_id={request.session_id} "
+            f"features={request.features} strict_citation={request.strict_citation} user={last_user[:120]}"
+        )
         input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)  # 违禁词判断
         if input_blocked:
             tool_audit.append(f"safety_audit:input_blocked:{input_reason}")
@@ -85,6 +89,10 @@ class GatewayOrchestrator:
             )
             
         route_decision = self._route_features(query=last_user, request=request)
+        print(
+            f"[Gateway] route_decision trace_id={trace_id} label={route_decision.route_label} "
+            f"reason={route_decision.reason} features={route_decision.features}"
+        )
         tool_audit.extend(route_decision.audit)
         feature_notes.extend(route_decision.notes)
         effective_features = route_decision.features
@@ -126,6 +134,10 @@ class GatewayOrchestrator:
                     "rag-agent-service",
                     lambda: self._invoke_rag(request.session_id, last_user, fail_features),
                 )
+                print(
+                    f"[Gateway] rag_result trace_id={trace_id} ok={rag_result.ok} "
+                    f"error={rag_result.error} degraded={rag_result.degraded}"
+                )
                 if rag_result.ok and rag_result.value is not None:
                     rag_output = rag_result.value
                     context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
@@ -137,6 +149,10 @@ class GatewayOrchestrator:
                         limit=5,
                     )
                     if rag_output.status == "degraded":
+                        print(
+                            f"[Gateway] rag_output degraded trace_id={trace_id} "
+                            f"reason={rag_output.degrade_reason} sources={len(rag_output.sources)}"
+                        )
                         if rag_output.degrade_reason and rag_output.degrade_reason.startswith("node_timeout:") and rag_output.sources:
                             feature_notes.append(f"RAG 节点耗时偏高：{rag_output.degrade_reason}，已保留有效检索证据。")
                         else:
@@ -144,6 +160,10 @@ class GatewayOrchestrator:
                             if rag_output.degrade_reason:
                                 feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
                     else:
+                        print(
+                            f"[Gateway] rag_output ok trace_id={trace_id} "
+                            f"context_blocks={len(rag_output.context_blocks)} sources={len(sources)}"
+                        )
                         feature_notes.append("RAG LangGraph 工作流执行成功。")
                 else:
                     degraded.append("rag")
@@ -222,6 +242,10 @@ class GatewayOrchestrator:
                     "citation-guard",
                     lambda: self._invoke_citation_guard(sources=sources, fail_features=fail_features),
                 )
+                print(
+                    f"[Gateway] citation_guard trace_id={trace_id} ok={guard_result.ok} "
+                    f"value={guard_result.value} error={guard_result.error} sources={len(sources)}"
+                )
                 if guard_result.ok and guard_result.value:
                     feature_notes.append("引用校验通过。")
                 else:
@@ -238,6 +262,11 @@ class GatewayOrchestrator:
                 request=request,
                 fail_features=fail_features,
             ),
+        )
+        print(
+            f"[Gateway] generation_result trace_id={trace_id} ok={generation_result.ok} "
+            f"error={generation_result.error} degraded={generation_result.degraded} "
+            f"context_blocks={len(context_blocks)} sources={len(sources)}"
         )
         if not generation_result.ok or generation_result.value is None:
             self.logger.error(
@@ -291,6 +320,10 @@ class GatewayOrchestrator:
 
         if degraded:
             status = "degraded"
+        print(
+            f"[Gateway] create_chat done trace_id={trace_id} status={status} "
+            f"degraded={list(dict.fromkeys(degraded))} sources={len(sources)} tool_audit={tool_audit}"
+        )
 
         self.deps.container.isolation.execute(
             "memory-service",
