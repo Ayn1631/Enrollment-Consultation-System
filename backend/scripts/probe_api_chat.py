@@ -26,7 +26,7 @@ def bootstrap_env() -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="模拟前端通过真实 HTTP 调用 /api/chat 与 /api/chat/stream。")
+    parser = argparse.ArgumentParser(description="模拟前端通过真实 HTTP 调用 /api/chat/stream。")
     parser.add_argument("--base-url", default=os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--output", default=os.getenv("PROBE_OUTPUT_PATH", str(DEFAULT_OUTPUT_PATH)))
     parser.add_argument("--timeout", type=float, default=float(os.getenv("PROBE_TIMEOUT_SECONDS", "30.0")))
@@ -40,29 +40,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_sse_body(body: str) -> dict[str, Any]:
-    messages: list[str] = []
-    done_payload: dict[str, Any] = {}
-    current_event = ""
-    for block in body.split("\n\n"):
-        block = block.strip()
-        if not block:
+def parse_sse_block(block: str) -> dict[str, str] | None:
+    lines = [line.rstrip() for line in block.splitlines() if line.strip()]
+    if not lines:
+        return None
+    event = "message"
+    data_lines: list[str] = []
+    for line in lines:
+        if line.startswith("event:"):
+            event = line.removeprefix("event:").strip() or "message"
             continue
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                current_event = line.removeprefix("event: ").strip()
-                continue
-            if not line.startswith("data: "):
-                continue
-            payload = json.loads(line.removeprefix("data: ").strip())
-            if current_event == "message":
-                messages.append(str(payload.get("delta", "")))
-            elif current_event == "done":
-                done_payload = payload
-    return {
-        "text": "".join(messages),
-        "done": done_payload,
-    }
+        if line.startswith("data:"):
+            data_lines.append(line.removeprefix("data:").strip())
+    if not data_lines:
+        return None
+    return {"event": event, "data": "\n".join(data_lines)}
+
+
+def iter_sse_events(response: httpx.Response):
+    buffer = ""
+    for chunk in response.iter_text():
+        if not chunk:
+            continue
+        buffer += chunk.replace("\r\n", "\n")
+        while "\n\n" in buffer:
+            block, buffer = buffer.split("\n\n", 1)
+            parsed = parse_sse_block(block)
+            if parsed is not None:
+                yield parsed
+    if buffer.strip():
+        parsed = parse_sse_block(buffer.strip())
+        if parsed is not None:
+            yield parsed
 
 
 def preview(text: str, limit: int = 800) -> str:
@@ -111,51 +120,76 @@ def run_round(
     if model.strip():
         request_payload["model"] = model.strip()
     client_logs: list[dict[str, Any]] = []
-
-    create_started = time.perf_counter()
-    create_response = client.post(f"{base_url}/api/chat", json=request_payload)
-    create_latency_ms = round((time.perf_counter() - create_started) * 1000, 2)
-    create_body = create_response.json() if create_response.headers.get("content-type", "").startswith("application/json") else {"raw": create_response.text}
-    client_logs.append(
-        {
-            "stage": "create_chat",
-            "status_code": create_response.status_code,
-            "latency_ms": create_latency_ms,
-        }
-    )
+    raw_chunks: list[str] = []
+    messages: list[str] = []
+    done_payload: dict[str, Any] = {}
+    delta_logs: list[dict[str, Any]] = []
+    first_event_ms: float | None = None
+    first_delta_ms: float | None = None
 
     stream_started = time.perf_counter()
-    stream_response = client.get(f"{base_url}/api/chat/stream", params={"session_id": session_id})
-    stream_latency_ms = round((time.perf_counter() - stream_started) * 1000, 2)
-    stream_body = stream_response.text
-    parsed_stream = parse_sse_body(stream_body)
+    with client.stream(
+        "POST",
+        f"{base_url}/api/chat/stream",
+        json=request_payload,
+        headers={"Accept": "text/event-stream"},
+    ) as stream_response:
+        stream_open_latency_ms = round((time.perf_counter() - stream_started) * 1000, 2)
+        client_logs.append(
+            {
+                "stage": "open_stream",
+                "status_code": stream_response.status_code,
+                "latency_ms": stream_open_latency_ms,
+            }
+        )
+        for event in iter_sse_events(stream_response):
+            elapsed_ms = round((time.perf_counter() - stream_started) * 1000, 2)
+            raw_chunks.append(f"event: {event['event']} data: {event['data']}")
+            if first_event_ms is None:
+                first_event_ms = elapsed_ms
+            payload = json.loads(event["data"])
+            if event["event"] == "message":
+                delta = str(payload.get("delta", ""))
+                if delta:
+                    messages.append(delta)
+                    if first_delta_ms is None:
+                        first_delta_ms = elapsed_ms
+                    delta_logs.append(
+                        {
+                            "elapsed_ms": elapsed_ms,
+                            "delta_preview": preview(delta, limit=120),
+                            "delta_length": len(delta),
+                        }
+                    )
+            elif event["event"] == "done":
+                done_payload = payload
+    stream_total_latency_ms = round((time.perf_counter() - stream_started) * 1000, 2)
     client_logs.append(
         {
-            "stage": "stream_chat",
-            "status_code": stream_response.status_code,
-            "latency_ms": stream_latency_ms,
+            "stage": "stream_done",
+            "status_code": 200,
+            "latency_ms": stream_total_latency_ms,
+            "first_event_ms": first_event_ms,
+            "first_delta_ms": first_delta_ms,
         }
     )
 
     notes = [
-        "本脚本通过真实 HTTP 请求模拟前端联调，不使用 TestClient。",
-        "后端运行日志仍打印在后端服务控制台；本报告只记录客户端可观测结果和后端 SSE 回包。",
+        "本脚本通过真实 HTTP 请求直接调用 POST /api/chat/stream，不使用 TestClient。",
+        "后端运行日志仍打印在后端服务控制台；本报告记录首包延迟、delta 片段与 done 事件。",
     ]
-    if create_body.get("status") == "failed":
+    if done_payload.get("status") == "failed":
         notes.append("本轮生成阶段失败，请优先检查后端控制台日志、trace_id 和模型配置。")
 
     return {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "request": request_payload,
-        "create_response": {
-            "status_code": create_response.status_code,
-            "body": create_body,
-        },
         "stream_response": {
-            "status_code": stream_response.status_code,
-            "text_preview": preview(parsed_stream.get("text", "")),
-            "done": parsed_stream.get("done", {}),
-            "raw_preview": preview(stream_body, limit=1200),
+            "status_code": 200,
+            "text_preview": preview("".join(messages)),
+            "done": done_payload,
+            "delta_logs": delta_logs[:40],
+            "raw_preview": preview(" ".join(raw_chunks), limit=1200),
         },
         "client_logs": client_logs,
         "notes": notes,
