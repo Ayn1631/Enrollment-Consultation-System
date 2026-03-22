@@ -8,6 +8,9 @@ backend/reports/
 reports/
 backend/data/
 
+# Vue
+node_modules/
+
 # Python cache and virtual env
 __pycache__/
 *.py[cod]
