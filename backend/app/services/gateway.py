@@ -129,10 +129,13 @@ class GatewayOrchestrator:
                 if rag_result.ok and rag_result.value is not None:
                     rag_output = rag_result.value
                     context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
-                    sources = [
-                        ChatSource(title=item.title, url=item.url)
-                        for item in rag_output.sources
-                    ][:5]
+                    sources = self._dedupe_chat_sources(
+                        [
+                            ChatSource(title=item.title, url=item.url)
+                            for item in rag_output.sources
+                        ],
+                        limit=5,
+                    )
                     if rag_output.status == "degraded":
                         if rag_output.degrade_reason and rag_output.degrade_reason.startswith("node_timeout:") and rag_output.sources:
                             feature_notes.append(f"RAG 节点耗时偏高：{rag_output.degrade_reason}，已保留有效检索证据。")
@@ -465,6 +468,20 @@ class GatewayOrchestrator:
         if memory_result.ok and memory_result.value and memory_result.value.entries:
             context_blocks.extend([f"{prefix} {item.value}" for item in memory_result.value.entries[:2]])
             feature_notes.append(f"{label}已接入上下文。")
+
+    def _dedupe_chat_sources(self, sources: list[ChatSource], limit: int) -> list[ChatSource]:
+        """按 url/title 去重来源，避免同一文档不同 chunk 被重复展示。"""
+        deduped: list[ChatSource] = []
+        seen: set[tuple[str, str]] = set()
+        for source in sources:
+            key = (source.url.strip(), source.title.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(source)
+            if len(deduped) >= limit:
+                break
+        return deduped
 
     def _build_long_memory_snippet(self, last_user: str, response_text: str) -> str:
         """构造滚动摘要片段，给长期记忆做增量更新。"""
