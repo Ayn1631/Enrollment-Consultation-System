@@ -86,6 +86,139 @@ export async function postChat(request: ChatRequest): Promise<{
   return payload
 }
 
+function parseSseBlock(block: string): { event: string; data: string } | null {
+  const lines = block
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+  if (!lines.length) return null
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      event = line.slice('event:'.length).trim() || 'message'
+      continue
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart())
+    }
+  }
+  if (!dataLines.length) return null
+  return { event, data: dataLines.join('\n') }
+}
+
+export async function startChatStream(
+  request: ChatRequest,
+  handlers: {
+    onDelta: (delta: string) => void
+    onDone: (event: ChatStreamEvent) => void
+    onError: (err: Error) => void
+  }
+): Promise<() => void> {
+  const controller = new AbortController()
+  console.log('[api.startChatStream] request', {
+    apiBase: API_BASE,
+    session_id: request.session_id,
+    features: request.features,
+    mode: request.mode,
+    strict_citation: request.strict_citation,
+    model: request.model,
+    message_count: request.messages.length
+  })
+  const res = await fetch(`${API_BASE}/api/chat/stream`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(request),
+    signal: controller.signal
+  })
+  await ensureOk(res, '发起流式聊天请求失败')
+  if (!res.body) {
+    throw new ApiRequestError('后端未返回可读取的流式响应体。')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let closed = false
+  let doneReceived = false
+
+  const cleanup = () => {
+    if (closed) return
+    closed = true
+    controller.abort()
+    void reader.cancel().catch(() => undefined)
+  }
+
+  const dispatchBlock = (block: string) => {
+    const parsed = parseSseBlock(block)
+    if (!parsed) return
+    if (parsed.event === 'done') {
+      const data = JSON.parse(parsed.data) as ChatStreamEvent
+      console.log('[api.startChatStream] done', data)
+      doneReceived = true
+      cleanup()
+      handlers.onDone(data)
+      return
+    }
+    try {
+      const data = JSON.parse(parsed.data) as ChatStreamEvent
+      console.log('[api.startChatStream] message', data)
+      if (data.delta) {
+        handlers.onDelta(data.delta)
+      }
+    } catch {
+      console.log('[api.startChatStream] message(raw)', parsed.data)
+      handlers.onDelta(parsed.data)
+    }
+  }
+
+  void (async () => {
+    try {
+      while (!closed) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+        let splitIndex = buffer.indexOf('\n\n')
+        while (splitIndex !== -1) {
+          const block = buffer.slice(0, splitIndex)
+          buffer = buffer.slice(splitIndex + 2)
+          dispatchBlock(block)
+          splitIndex = buffer.indexOf('\n\n')
+        }
+      }
+      buffer += decoder.decode().replace(/\r\n/g, '\n')
+      if (buffer.trim()) {
+        dispatchBlock(buffer.trim())
+      }
+      if (!doneReceived && !closed) {
+        cleanup()
+        handlers.onError(new ApiRequestError('流式连接已结束，但后端没有返回 done 事件。'))
+      }
+    } catch (error) {
+      if (closed || controller.signal.aborted) {
+        return
+      }
+      console.error('[api.startChatStream] error', error)
+      cleanup()
+      handlers.onError(
+        error instanceof Error
+          ? error
+          : new ApiRequestError('与后端流式连接中断，请检查后端服务或接口地址配置。')
+      )
+    }
+  })()
+
+  return () => {
+    console.log('[api.startChatStream] cancel', { sessionId: request.session_id })
+    cleanup()
+  }
+}
+
 export function openChatStream(
   sessionId: string,
   handlers: {

@@ -1,4 +1,4 @@
-import { openChatStream, postChat } from '../services/api'
+import { startChatStream } from '../services/api'
 import type { ChatRequest, ChatStreamEvent } from '../types'
 
 export function useStream() {
@@ -20,9 +20,7 @@ export function useStream() {
       })
     }
 
-    const res = await postChat(request)
-    const sessionId = res.session_id || request.session_id
-    return openChatStream(sessionId, handlers)
+    return startChatStream(request, handlers)
   }
 
   return { startStream }
