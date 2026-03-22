@@ -139,13 +139,14 @@ class RagGraphOrchestrator:
         """节点：生成 2-3 条检索改写。"""
         def _run() -> RagGraphState:
             normalized = str(state.get("normalized_query", ""))
-            if state.get("route_label") == "follow_up":
+            memory_hints = list(state.get("memory_context_blocks", []))
+            if state.get("route_label") == "follow_up" and not memory_hints:
                 rewritten = [normalized] if normalized else []
             else:
-                rewritten = self.rewriter.rewrite(normalized)
+                rewritten = self.rewriter.rewrite(normalized, memory_hints=memory_hints)
             if normalized and normalized not in rewritten:
                 rewritten.insert(0, normalized)
-            return {"rewritten_queries": rewritten[:3]}
+            return {"rewritten_queries": list(dict.fromkeys(rewritten))[:6]}
 
         return self._timed(state, "rewrite_query", _run)
 

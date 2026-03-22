@@ -18,30 +18,39 @@ class QueryRewriter:
             [
                 (
                     "system",
-                    "你是招生检索改写器。先判断是否需要改写；无必要时保留原问。必须保留年份、省份、专业、分数、金额、否定词等硬约束。输出2-3条简短检索语句，每行一条，禁止解释。",
+                    "你是招生检索改写器。需要综合会话记忆线索、原始问题，生成适合知识库检索的查询。"
+                    "必须保留年份、省份、专业、分数、金额、否定词等硬约束。"
+                    "若原问包含多个并列意图，要拆成多个独立检索语句。输出2-6条，每行一条，禁止解释。",
                 ),
-                ("user", "原始问题：{query}"),
+                ("user", "会话记忆：\n{memory_hints}\n\n原始问题：{query}"),
             ]
         )
 
-    def rewrite(self, query: str) -> list[str]:
+    def rewrite(self, query: str, memory_hints: list[str] | None = None) -> list[str]:
         """改写用户问题，保证至少返回可检索语句。"""
         normalized = query.strip()
         if not normalized:
             return []
+        memory_hints = list(memory_hints or [])
+        heuristic_queries = self._fallback_rewrite(normalized, memory_hints=memory_hints)
         if self._llm is None:
-            return self._fallback_rewrite(normalized)
+            return heuristic_queries
 
         try:
             chain = self._prompt | self._llm
-            result = chain.invoke({"query": normalized})
+            result = chain.invoke(
+                {
+                    "query": normalized,
+                    "memory_hints": "\n".join(memory_hints[:3]) if memory_hints else "无",
+                }
+            )
             text = getattr(result, "content", str(result))
             rewritten = self._parse_lines(text)
             if rewritten:
-                return rewritten
+                return self._merge_queries(heuristic_queries, rewritten)
         except Exception:
             pass
-        return self._fallback_rewrite(normalized)
+        return heuristic_queries
 
     def _build_llm(self):
         """初始化改写模型，缺少依赖或密钥时返回 None。"""
@@ -75,25 +84,31 @@ class QueryRewriter:
                 continue
             seen.add(line)
             rows.append(line)
-            if len(rows) >= 3:
+            if len(rows) >= 6:
                 break
         return rows
 
-    def _fallback_rewrite(self, query: str) -> list[str]:
+    def _fallback_rewrite(self, query: str, memory_hints: list[str] | None = None) -> list[str]:
         """无可用 LLM 时，至少返回原问题和两个轻量变体。"""
-        variants = [query]
-        if self._needs_rewrite(query):
+        variants: list[str] = []
+        enriched_query = self._enrich_query_with_memory(query, memory_hints or [])
+        variants.append(enriched_query)
+        if enriched_query != query:
+            variants.append(query)
+        variants.extend(self._split_multi_query(enriched_query))
+        target_query = enriched_query
+        if self._needs_rewrite(target_query):
             suffixes = ["招生章程", "官方政策"]
             for suffix in suffixes:
-                variants.append(f"{query} {suffix}".strip())
+                variants.append(f"{target_query} {suffix}".strip())
         else:
-            variants.append(f"{query} 官方")
-            constraint_tail = " ".join(self._extract_constraints(query))
+            variants.append(f"{target_query} 官方")
+            constraint_tail = " ".join(self._extract_constraints(target_query))
             if constraint_tail:
-                variants.append(f"{query} {constraint_tail}".strip())
+                variants.append(f"{target_query} {constraint_tail}".strip())
             else:
-                variants.append(f"{query} 招生")
-        return list(dict.fromkeys(variants))[:3]
+                variants.append(f"{target_query} 招生")
+        return self._merge_queries([], variants)
 
     def _needs_rewrite(self, query: str) -> bool:
         """简单判断是否需要扩展召回，而不是逮啥都改。"""
@@ -107,3 +122,72 @@ class QueryRewriter:
         """提取年份、数字和否定等硬约束，避免改写跑偏。"""
         constraints = re.findall(r"20\d{2}|\d+分|\d+元|不(?:要|能|可以|允许)|河南|河北|艺术类|理工类", query)
         return list(dict.fromkeys(constraints))
+
+    def _enrich_query_with_memory(self, query: str, memory_hints: list[str]) -> str:
+        """短追问优先拼接会话记忆，让检索不再只拿代词乱撞。"""
+        normalized = query.strip()
+        if not normalized or not memory_hints or not self._needs_memory_enrichment(normalized):
+            return normalized
+        hint_text = " ".join(self._normalize_memory_hint(item) for item in memory_hints[:2]).strip()
+        if not hint_text:
+            return normalized
+        return f"{normalized} {hint_text}".strip()
+
+    def _needs_memory_enrichment(self, query: str) -> bool:
+        return len(query) <= 18 or any(token in query for token in ("这个", "那个", "它", "还", "那", "呢", "吗"))
+
+    def _normalize_memory_hint(self, hint: str) -> str:
+        normalized = re.sub(r"\[[^\]]+\]", " ", hint)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized[:48]
+
+    def _split_multi_query(self, query: str) -> list[str]:
+        """对复合问题做轻量拆分，便于后续并发检索。"""
+        keywords = [
+            "学费",
+            "住宿费",
+            "住宿",
+            "奖学金",
+            "资助",
+            "贷款",
+            "电话",
+            "地址",
+            "报到",
+            "报名",
+            "录取",
+            "分数线",
+            "转专业",
+            "选科",
+            "学制",
+        ]
+        hits = [keyword for keyword in keywords if keyword in query]
+        unique_hits = list(dict.fromkeys(hits))
+        if len(unique_hits) <= 1:
+            return []
+        if any(token in query for token in ("多少", "收费", "费用")):
+            tail = "是多少"
+        elif any(token in query for token in ("怎么", "如何", "办理", "申请")):
+            tail = "怎么办"
+        elif "什么" in query:
+            tail = "是什么"
+        else:
+            tail = ""
+        constraints = " ".join(self._extract_constraints(query)[:2])
+        sub_queries: list[str] = []
+        for keyword in unique_hits:
+            base = f"{keyword}{tail}".strip() if tail else keyword
+            sub_queries.append(f"{base} {constraints}".strip())
+        return sub_queries[:4]
+
+    def _merge_queries(self, primary: list[str], secondary: list[str]) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for candidate in [*primary, *secondary]:
+            line = " ".join(candidate.split()).strip()
+            if not line or line in seen:
+                continue
+            seen.add(line)
+            merged.append(line)
+            if len(merged) >= 6:
+                break
+        return merged
