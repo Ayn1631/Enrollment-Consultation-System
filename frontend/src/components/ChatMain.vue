@@ -42,7 +42,11 @@ watch(
 
     <div ref="messagesRef" class="messages">
       <MessageBubble v-for="message in props.messages" :key="message.id" :message="message" />
-      <StreamBubble v-if="props.isStreaming" :content="props.streamingText" />
+      <StreamBubble
+        v-if="props.isStreaming"
+        :content="props.streamingText"
+        :waiting-first-chunk="props.streamingText.length === 0"
+      />
     </div>
   </section>
 </template>
