@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
 
 import httpx
 
@@ -10,6 +11,7 @@ from app.contracts import (
     CitationGuardResponse,
     GenerationRequest,
     GenerationResponse,
+    GenerationStreamChunk,
     MemoryEntry,
     MemoryQuery,
     MemoryReadResponse,
@@ -267,6 +269,35 @@ class ServiceClient:
             f"cache_hit={result.cache_hit}"
         )
         return result
+
+    def stream_generate(self, request: GenerationRequest) -> Iterator[GenerationStreamChunk]:
+        print(
+            f"[ServiceClient] stream_generate start model={request.model or 'auto'} "
+            f"context_blocks={len(request.context_blocks)} feature_notes={len(request.feature_notes)}"
+        )
+        if self.settings.service_call_mode == "http":
+            raise RuntimeError("stream generate is only supported in local mode")
+        for chunk in self._generator.stream_generate(
+            user_query=request.user_query,
+            context_blocks=request.context_blocks,
+            feature_notes=request.feature_notes,
+            model=request.model,
+            temperature=request.temperature,
+            top_p=request.top_p,
+        ):
+            if chunk.done and chunk.response is not None:
+                logger.info(
+                    "[ServiceClient] stream_generate local done route=%s model=%s cache_hit=%s text_preview=%s",
+                    chunk.response.route,
+                    chunk.response.model,
+                    chunk.response.cache_hit,
+                    chunk.response.text[:120],
+                )
+                print(
+                    f"[ServiceClient] stream_generate done route={chunk.response.route} "
+                    f"model={chunk.response.model} cache_hit={chunk.response.cache_hit}"
+                )
+            yield chunk
 
     def citation_guard(self, sources: list[ChatSource]) -> CitationGuardResponse:
         print(

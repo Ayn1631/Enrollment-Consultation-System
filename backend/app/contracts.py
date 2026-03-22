@@ -53,6 +53,12 @@ class GenerationResponse(BaseModel):
     cache_hit: bool = False
 
 
+class GenerationStreamChunk(BaseModel):
+    delta: str = ""
+    done: bool = False
+    response: GenerationResponse | None = None
+
+
 class MemoryEntry(BaseModel):
     key: str
     value: str
