@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
 import MessageBubble from './MessageBubble.vue'
 import StreamBubble from './StreamBubble.vue'
 import type { ChatMessage, FeatureFlag } from '../types'
@@ -10,6 +11,23 @@ const props = defineProps<{
   activeFeatures: FeatureFlag[]
   degradedFeatures: FeatureFlag[]
 }>()
+
+const messagesRef = ref<HTMLElement | null>(null)
+
+const scrollToBottom = async () => {
+  await nextTick()
+  const container = messagesRef.value
+  if (!container) return
+  container.scrollTop = container.scrollHeight
+}
+
+watch(
+  () => [props.messages.length, props.streamingText, props.isStreaming],
+  () => {
+    void scrollToBottom()
+  },
+  { flush: 'post' }
+)
 </script>
 
 <template>
@@ -22,7 +40,7 @@ const props = defineProps<{
       </div>
     </div>
 
-    <div class="messages">
+    <div ref="messagesRef" class="messages">
       <MessageBubble v-for="message in props.messages" :key="message.id" :message="message" />
       <StreamBubble v-if="props.isStreaming" :content="props.streamingText" />
     </div>

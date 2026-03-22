@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ChatMessage } from '../types'
+import { renderMarkdown } from '../utils/markdown'
 
 const props = defineProps<{ message: ChatMessage }>()
+const renderedContent = computed(() => renderMarkdown(props.message.content))
 </script>
 
 <template>
@@ -14,7 +17,7 @@ const props = defineProps<{ message: ChatMessage }>()
       部分能力降级：{{ props.message.degradedFeatures?.join(' / ') }}
     </div>
     <div v-if="props.message.status === 'failed'" class="degraded-banner failed">生成服务异常，本轮回答失败。</div>
-    <p class="content">{{ props.message.content }}</p>
+    <div class="content markdown-body" v-html="renderedContent"></div>
 
     <div v-if="props.message.sources?.length" class="sources">
       <div class="source" v-for="source in props.message.sources" :key="source.url">
@@ -61,9 +64,61 @@ const props = defineProps<{ message: ChatMessage }>()
 }
 
 .content {
+  line-height: 1.7;
+  color: var(--ink-0);
+}
+
+.content :deep(p) {
   margin: 0;
-  white-space: pre-wrap;
-  line-height: 1.6;
+}
+
+.content :deep(p + p),
+.content :deep(p + ul),
+.content :deep(ul + p),
+.content :deep(pre + p),
+.content :deep(p + pre) {
+  margin-top: 10px;
+}
+
+.content :deep(ul) {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.content :deep(li + li) {
+  margin-top: 4px;
+}
+
+.content :deep(code) {
+  font-family: 'Consolas', 'SFMono-Regular', monospace;
+  font-size: 0.92em;
+  padding: 0.14em 0.38em;
+  border-radius: 6px;
+  background: rgba(127, 21, 27, 0.08);
+}
+
+.content :deep(pre) {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(80, 14, 18, 0.92);
+  color: #fff8f7;
+  overflow-x: auto;
+}
+
+.content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.content :deep(a) {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.content :deep(strong) {
+  font-weight: 700;
 }
 
 .degraded-banner {

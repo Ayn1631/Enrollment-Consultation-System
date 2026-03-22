@@ -1,5 +1,9 @@
 <script setup lang="ts">
-defineProps<{ content: string }>()
+import { computed } from 'vue'
+import { renderMarkdown } from '../utils/markdown'
+
+const props = defineProps<{ content: string }>()
+const renderedContent = computed(() => renderMarkdown(props.content))
 </script>
 
 <template>
@@ -8,7 +12,10 @@ defineProps<{ content: string }>()
       <span class="role">系统</span>
       <span class="time">流式输出中</span>
     </div>
-    <p class="content">{{ content }}<span class="caret">▍</span></p>
+    <div class="content markdown-body">
+      <div v-html="renderedContent"></div>
+      <span class="caret">▍</span>
+    </div>
   </div>
 </template>
 
@@ -30,9 +37,52 @@ defineProps<{ content: string }>()
 }
 
 .content {
-  margin: 0;
-  white-space: pre-wrap;
   line-height: 1.6;
+}
+
+.content :deep(p) {
+  margin: 0;
+}
+
+.content :deep(p + p),
+.content :deep(p + ul),
+.content :deep(ul + p),
+.content :deep(pre + p),
+.content :deep(p + pre) {
+  margin-top: 10px;
+}
+
+.content :deep(ul) {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.content :deep(code) {
+  font-family: 'Consolas', 'SFMono-Regular', monospace;
+  font-size: 0.92em;
+  padding: 0.14em 0.38em;
+  border-radius: 6px;
+  background: rgba(127, 21, 27, 0.08);
+}
+
+.content :deep(pre) {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(80, 14, 18, 0.92);
+  color: #fff8f7;
+  overflow-x: auto;
+}
+
+.content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.content :deep(a) {
+  color: var(--accent);
+  text-decoration: none;
 }
 
 .caret {
