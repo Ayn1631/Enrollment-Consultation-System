@@ -20,6 +20,7 @@ class RagGraphState(TypedDict, total=False):
     trace_id: str
     session_id: str
     raw_query: str
+    memory_context_blocks: list[str]
     normalized_query: str
     route_label: str
     route_reason: str

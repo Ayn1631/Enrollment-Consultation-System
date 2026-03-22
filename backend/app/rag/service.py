@@ -47,13 +47,25 @@ class RagGraphService:
         """初始化索引资源，通常在应用启动阶段调用。"""
         self.index.startup()
 
-    def run(self, session_id: str, query: str, top_k: int = 8, debug: bool = False) -> RagQueryResponse:
+    def run(
+        self,
+        session_id: str,
+        query: str,
+        top_k: int = 8,
+        debug: bool = False,
+        memory_context_blocks: list[str] | None = None,
+    ) -> RagQueryResponse:
         """执行一轮 RAG 查询并返回上下文、来源与降级状态。"""
         if getattr(self.index, "_bm25", None) is None:
             self.index.startup()
         # 关键变量：effective_top_k 保证请求参数不会突破系统上限。
         effective_top_k = max(1, min(top_k, self.settings.rag_final_top_k))
-        result = self.orchestrator.run(session_id=session_id, query=query, top_k=effective_top_k)
+        result = self.orchestrator.run(
+            session_id=session_id,
+            query=query,
+            top_k=effective_top_k,
+            memory_context_blocks=memory_context_blocks,
+        )
         sources = [
             RagEvidence(
                 chunk_id=str(item["chunk_id"]),

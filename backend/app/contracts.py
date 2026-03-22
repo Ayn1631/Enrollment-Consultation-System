@@ -22,6 +22,7 @@ class RagQueryRequest(BaseModel):
     query: str
     top_k: int = 8
     debug: bool = False
+    memory_context_blocks: list[str] = Field(default_factory=list)
 
 
 class RagQueryResponse(BaseModel):

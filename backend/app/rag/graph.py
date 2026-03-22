@@ -50,12 +50,13 @@ class RagGraphOrchestrator:
         self.node_timeout_ms = node_timeout_ms
         self._graph = self._compile_graph()
 
-    def run(self, session_id: str, query: str, top_k: int) -> RagGraphResult:
+    def run(self, session_id: str, query: str, top_k: int, memory_context_blocks: list[str] | None = None) -> RagGraphResult:
         """执行图工作流并把状态投影为对外响应结构。"""
         initial_state: RagGraphState = {
             "trace_id": uuid.uuid4().hex,
             "session_id": session_id,
             "raw_query": query,
+            "memory_context_blocks": list(memory_context_blocks or []),
             "latency_breakdown_ms": {},
             "degrade_reason": None,
         }

@@ -127,12 +127,18 @@ class GatewayOrchestrator:
             label="特殊记忆",
             prefix="[special-memory]",
         )
+        rag_memory_context_blocks = list(context_blocks)
 
         for feature in ordered_features:
             if feature == "rag":
                 rag_result = self.deps.container.isolation.execute(
                     "rag-agent-service",
-                    lambda: self._invoke_rag(request.session_id, last_user, fail_features),
+                    lambda: self._invoke_rag(
+                        request.session_id,
+                        last_user,
+                        fail_features,
+                        rag_memory_context_blocks,
+                    ),
                 )
                 print(
                     f"[Gateway] rag_result trace_id={trace_id} ok={rag_result.ok} "
@@ -403,7 +409,13 @@ class GatewayOrchestrator:
             audit=audit,
         )
 
-    def _invoke_rag(self, session_id: str, query: str, fail_features: set[str]):
+    def _invoke_rag(
+        self,
+        session_id: str,
+        query: str,
+        fail_features: set[str],
+        memory_context_blocks: list[str],
+    ):
         """执行 LangGraph RAG 调用，支持测试注入 rag 故障。"""
         if "rag" in fail_features:
             raise RuntimeError("rag failure injected")
@@ -412,6 +424,7 @@ class GatewayOrchestrator:
             query=query,
             top_k=self.deps.services.settings.rag_final_top_k,
             debug=True,
+            memory_context_blocks=memory_context_blocks,
         )
 
     def _invoke_web_search(self, query: str, fail_features: set[str]) -> list[WebSearchHit]:

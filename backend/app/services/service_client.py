@@ -85,12 +85,25 @@ class ServiceClient:
             raise last_error
         raise RuntimeError("post request failed with unknown reason")
 
-    def run_rag_graph(self, session_id: str, query: str, top_k: int = 8, debug: bool = False) -> RagQueryResponse:
+    def run_rag_graph(
+        self,
+        session_id: str,
+        query: str,
+        top_k: int = 8,
+        debug: bool = False,
+        memory_context_blocks: list[str] | None = None,
+    ) -> RagQueryResponse:
         """执行 LangGraph RAG 工作流。"""
-        request = RagQueryRequest(session_id=session_id, query=query, top_k=top_k, debug=debug)
+        request = RagQueryRequest(
+            session_id=session_id,
+            query=query,
+            top_k=top_k,
+            debug=debug,
+            memory_context_blocks=list(memory_context_blocks or []),
+        )
         print(
             f"[ServiceClient] run_rag_graph start session_id={session_id} top_k={top_k} "
-            f"debug={debug} query={query[:80]}"
+            f"debug={debug} memory_blocks={len(request.memory_context_blocks)} query={query[:80]}"
         )
         if self.settings.service_call_mode == "http":
             body = self._post(
@@ -106,7 +119,13 @@ class ServiceClient:
                 result.degrade_reason,
             )
             return result
-        result = self._rag_service.run(session_id=session_id, query=query, top_k=top_k, debug=debug)
+        result = self._rag_service.run(
+            session_id=session_id,
+            query=query,
+            top_k=top_k,
+            debug=debug,
+            memory_context_blocks=request.memory_context_blocks,
+        )
         logger.info(
             "[ServiceClient] run_rag_graph local result status=%s sources=%s degrade_reason=%s latency=%s",
             result.status,
