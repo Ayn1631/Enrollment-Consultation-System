@@ -9,10 +9,13 @@ const props = defineProps<{
   strictCitation: boolean
   healthLoading: boolean
   reindexLoading: boolean
+  compressLoading: boolean
   healthApp: string
   healthOverall: boolean
   dependencies: HealthDependency[]
   reindexInfo: string
+  compressInfo: string
+  canCompressContext: boolean
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +26,7 @@ const emit = defineEmits<{
   (e: 'update:strictCitation', value: boolean): void
   (e: 'refreshHealth'): void
   (e: 'reindex'): void
+  (e: 'compressContext'): void
 }>()
 </script>
 
@@ -104,8 +108,16 @@ const emit = defineEmits<{
           <button class="op-btn warn" :disabled="props.reindexLoading" @click="emit('reindex')">
             {{ props.reindexLoading ? '执行中...' : '重建索引' }}
           </button>
+          <button
+            class="op-btn accent"
+            :disabled="props.compressLoading || !props.canCompressContext"
+            @click="emit('compressContext')"
+          >
+            {{ props.compressLoading ? '压缩中...' : '压缩当前上下文' }}
+          </button>
         </div>
         <div v-if="props.reindexInfo" class="reindex-info">{{ props.reindexInfo }}</div>
+        <div v-if="props.compressInfo" class="reindex-info">{{ props.compressInfo }}</div>
       </div>
     </div>
   </aside>
@@ -241,6 +253,12 @@ const emit = defineEmits<{
 .op-btn.warn {
   border-color: rgba(166, 30, 36, 0.4);
   background: rgba(166, 30, 36, 0.1);
+}
+
+.op-btn.accent {
+  border-color: rgba(127, 21, 27, 0.35);
+  background: rgba(127, 21, 27, 0.08);
+  color: var(--accent);
 }
 
 .op-btn:disabled {

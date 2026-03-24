@@ -35,6 +35,16 @@ export interface HealthResponse {
   dependencies: HealthDependency[]
 }
 
+export interface MemoryCompressionResponse {
+  session_id: string
+  long_summary: string
+  long_memory_count: number
+  special_memory_count: number
+  route: 'light' | 'main' | 'requested' | 'mock'
+  model: string
+  notes: string[]
+}
+
 export interface ChatMessage {
   id: string
   role: Role

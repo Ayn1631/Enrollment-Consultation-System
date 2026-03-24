@@ -18,10 +18,13 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
       strictCitation: true,
       healthLoading: false,
       reindexLoading: false,
+      compressLoading: false,
       healthApp: 'admissions-gateway',
       healthOverall: false,
       dependencies: deps,
       reindexInfo: '',
+      compressInfo: '',
+      canCompressContext: true,
       ...overrides
     }
   })
@@ -36,18 +39,21 @@ describe('RightPanel', () => {
     expect(wrapper.text()).toContain('web-search')
 
     const buttons = wrapper.findAll('.op-btn')
-    expect(buttons.length).toBe(2)
+    expect(buttons.length).toBe(3)
     await buttons[0].trigger('click')
     await buttons[1].trigger('click')
+    await buttons[2].trigger('click')
 
     expect(wrapper.emitted('refreshHealth')).toBeTruthy()
     expect(wrapper.emitted('reindex')).toBeTruthy()
+    expect(wrapper.emitted('compressContext')).toBeTruthy()
   })
 
   test('加载中时运维按钮禁用', () => {
-    const wrapper = mountPanel({ healthLoading: true, reindexLoading: true })
+    const wrapper = mountPanel({ healthLoading: true, reindexLoading: true, compressLoading: true })
     const buttons = wrapper.findAll('.op-btn')
     expect((buttons[0].element as HTMLButtonElement).disabled).toBe(true)
     expect((buttons[1].element as HTMLButtonElement).disabled).toBe(true)
+    expect((buttons[2].element as HTMLButtonElement).disabled).toBe(true)
   })
 })

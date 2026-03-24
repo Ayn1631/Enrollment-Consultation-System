@@ -5,7 +5,7 @@ import LeftSidebar from './components/LeftSidebar.vue'
 import ChatMain from './components/ChatMain.vue'
 import ActionBar from './components/ActionBar.vue'
 import RightPanel from './components/RightPanel.vue'
-import { getFeatures, getHealth, getSavedSkills, postReindex } from './services/api'
+import { compressMemory, getFeatures, getHealth, getSavedSkills, postReindex } from './services/api'
 import { useStream } from './composables/useStream'
 import { buildChatRequest, validateFeatureSelection } from './utils/requestBuilder'
 import type {
@@ -63,10 +63,12 @@ const strictCitation = ref(true)
 const rightOpen = ref(true)
 const healthLoading = ref(false)
 const reindexLoading = ref(false)
+const compressLoading = ref(false)
 const healthApp = ref('')
 const healthOverall = ref(true)
 const healthDependencies = ref<HealthDependency[]>([])
 const reindexInfo = ref('')
+const compressInfo = ref('')
 const pageNotice = ref<{ type: 'info' | 'warning' | 'error'; message: string } | null>(null)
 let cancelStream: (() => void) | null = null
 let pendingStreamText = ''
@@ -109,6 +111,10 @@ const blockedReason = computed(() => {
 })
 
 const canSend = computed(() => !blockedReason.value)
+const canCompressContext = computed(() => {
+  const usefulMessages = activeSession.value.messages.filter((item) => item.role !== 'system' && item.content.trim())
+  return usefulMessages.length >= 2 && !anyStreaming.value
+})
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message.trim()) {
@@ -420,7 +426,42 @@ const handleClearSession = () => {
   session.isStreaming = false
   session.latestDegradedFeatures = []
   input.value = ''
+  compressInfo.value = ''
   showNotice('当前会话已清空，并已重置为新的空白对话。', 'info')
+}
+
+const handleCompressContext = async () => {
+  if (!canCompressContext.value) {
+    showNotice('当前会话内容太少，或仍在生成中，暂时不能压缩上下文。', 'warning')
+    return
+  }
+  const session = activeSession.value
+  compressLoading.value = true
+  compressInfo.value = ''
+  try {
+    const response = await compressMemory({
+      session_id: session.sessionId,
+      session_title: session.title,
+      messages: session.messages.map((item) => ({
+        role: item.role,
+        content: item.content
+      }))
+    })
+    compressInfo.value =
+      `已写入长期记忆 ${response.long_memory_count} 条，特殊记忆 ${response.special_memory_count} 条。`
+    const noteText = response.notes.length ? `备注：${response.notes.join('；')}` : ''
+    const summaryText = response.long_summary ? `摘要：${response.long_summary}` : '本次未生成长期摘要。'
+    showNotice(
+      `上下文压缩完成，模型 ${response.model || 'unknown'}。${summaryText}${noteText ? ` ${noteText}` : ''}`,
+      'info'
+    )
+  } catch (error) {
+    const message = getErrorMessage(error, '压缩上下文失败，请检查后端服务。')
+    compressInfo.value = '压缩失败，请查看页面提示或后端日志。'
+    showNotice(message, 'error')
+  } finally {
+    compressLoading.value = false
+  }
 }
 </script>
 
@@ -472,12 +513,16 @@ const handleClearSession = () => {
         v-model:strictCitation="strictCitation"
         :health-loading="healthLoading"
         :reindex-loading="reindexLoading"
+        :compress-loading="compressLoading"
         :health-app="healthApp"
         :health-overall="healthOverall"
         :dependencies="healthDependencies"
         :reindex-info="reindexInfo"
+        :compress-info="compressInfo"
+        :can-compress-context="canCompressContext"
         @refresh-health="refreshHealth"
         @reindex="triggerReindex"
+        @compress-context="handleCompressContext"
         @toggle="toggleRightPanel"
       />
     </div>

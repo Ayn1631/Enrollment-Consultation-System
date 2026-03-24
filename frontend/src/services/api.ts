@@ -3,6 +3,7 @@ import type {
   ChatStreamEvent,
   FeatureMeta,
   HealthResponse,
+  MemoryCompressionResponse,
   SavedSkill
 } from '../types'
 
@@ -301,4 +302,28 @@ export async function postReindex(): Promise<{ status: string; result: { chunks:
   })
   await ensureOk(res, '重建索引失败')
   return res.json()
+}
+
+export async function compressMemory(request: {
+  session_id: string
+  session_title?: string
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+}): Promise<MemoryCompressionResponse> {
+  console.log('[api.compressMemory] request', {
+    apiBase: API_BASE,
+    session_id: request.session_id,
+    session_title: request.session_title,
+    message_count: request.messages.length
+  })
+  const res = await fetch(`${API_BASE}/api/memory/compress`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(request)
+  })
+  await ensureOk(res, '压缩上下文失败')
+  const payload = (await res.json()) as MemoryCompressionResponse
+  console.log('[api.compressMemory] response', payload)
+  return payload
 }
