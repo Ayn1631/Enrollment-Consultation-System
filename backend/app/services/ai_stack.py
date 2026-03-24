@@ -5,7 +5,8 @@ from typing import TypedDict
 
 import httpx
 
-from app.models import FeatureFlag
+from app.config import Settings
+from app.models import ChatSource, FeatureFlag
 
 
 # 关键变量：定义 Agent 功能执行优先级，保证引用校验在 RAG 后执行。
@@ -151,3 +152,42 @@ class LangChain4jSkillBridge:
         if not note:
             return None
         return str(note)
+
+
+@dataclass(slots=True)
+class AgentExecutionResult:
+    text: str
+    sources: list[ChatSource]
+    notes: list[str]
+    tool_audit: list[str]
+
+
+def build_langchain_chat_model(
+    settings: Settings,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+):
+    """构造 LangChain ChatOpenAI 兼容模型，缺少依赖或密钥时返回 None。"""
+    llm_api_key = settings.resolve_llm_api_key()
+    if settings.use_mock_generation or not llm_api_key:
+        return None
+    try:
+        from langchain_openai import ChatOpenAI
+    except Exception:
+        return None
+    base_url = settings.resolve_llm_api_url()
+    if base_url.endswith("/chat/completions"):
+        base_url = base_url[: -len("/chat/completions")]
+    model_kwargs: dict[str, float] = {}
+    if top_p is not None:
+        model_kwargs["top_p"] = top_p
+    return ChatOpenAI(
+        model=model or settings.generation_main_model,
+        api_key=llm_api_key,
+        base_url=base_url,
+        temperature=0.2 if temperature is None else temperature,
+        timeout=settings.request_timeout_seconds,
+        model_kwargs=model_kwargs,
+    )

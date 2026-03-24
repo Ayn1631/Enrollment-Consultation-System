@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 Role = Literal["user", "assistant", "system"]
-ChatMode = Literal["chat", "plan", "guide"]
+ChatMode = Literal["chat", "plan", "guide", "agent"]
 
 FeatureFlag = Literal["rag", "web_search", "skill_exec", "use_saved_skill", "citation_guard"]
 LegacyToolMode = Literal["search", "react", "plan", "guide"]

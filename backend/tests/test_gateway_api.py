@@ -111,6 +111,22 @@ def test_create_chat_defaults_to_ok_or_degraded():
     assert "trace_id" in data
 
 
+def test_agent_mode_request_should_be_accepted():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["mode"] = "agent"
+    payload["messages"] = [{"role": "user", "content": "请说明学费和住宿费"}]
+    res = client.post("/api/chat", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] in {"ok", "degraded", "failed"}
+
+    session_id = data["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    assert stream_res.text.strip()
+
+
 def test_use_saved_skill_requires_id():
     client = TestClient(app)
     payload = _base_payload()

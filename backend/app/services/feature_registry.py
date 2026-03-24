@@ -70,6 +70,33 @@ def tool_catalog() -> list[ToolMeta]:
             max_query_length=200,
             audit_scope="use_saved_skill",
         ),
+        ToolMeta(
+            id="memory_recall",
+            label="会话记忆读取",
+            kind="local",
+            timeout_seconds=0.4,
+            retry_attempts=0,
+            max_query_length=0,
+            audit_scope="agent_memory",
+        ),
+        ToolMeta(
+            id="mcp_tools_catalog",
+            label="MCP工具目录",
+            kind="local",
+            timeout_seconds=0.2,
+            retry_attempts=0,
+            max_query_length=0,
+            audit_scope="mcp_catalog",
+        ),
+        ToolMeta(
+            id="mcp_tool_router",
+            label="统一工具路由",
+            kind="local",
+            timeout_seconds=1.2,
+            retry_attempts=1,
+            max_query_length=200,
+            audit_scope="agent_router",
+        ),
     ]
 
 
