@@ -397,6 +397,31 @@ const handleSwitchSession = (sessionId: string) => {
   activeSessionId.value = sessionId
   pageNotice.value = null
 }
+
+const handleClearSession = () => {
+  const session = activeSession.value
+  if (session.id === currentStreamingSessionId && cancelStream) {
+    cancelStream()
+    cancelStream = null
+    currentStreamingSessionId = null
+    pendingStreamText = ''
+    if (streamFlushHandle !== null) {
+      cancelAnimationFrame(streamFlushHandle)
+      streamFlushHandle = null
+    }
+  }
+  const now = new Date().toISOString()
+  session.sessionId = newId()
+  session.title = DEFAULT_SESSION_TITLE
+  session.createdAt = now
+  session.updatedAt = now
+  session.messages = [createWelcomeMessage()]
+  session.streamingText = ''
+  session.isStreaming = false
+  session.latestDegradedFeatures = []
+  input.value = ''
+  showNotice('当前会话已清空，并已重置为新的空白对话。', 'info')
+}
 </script>
 
 <template>
@@ -414,6 +439,7 @@ const handleSwitchSession = (sessionId: string) => {
         :active-session-id="activeSessionId"
         @switch-session="handleSwitchSession"
         @create-session="handleCreateSession"
+        @clear-session="handleClearSession"
       />
 
       <main class="chat-area">
