@@ -47,6 +47,18 @@ export interface ChatMessage {
   sources?: ChatSource[]
 }
 
+export interface ChatSession {
+  id: string
+  sessionId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messages: ChatMessage[]
+  streamingText: string
+  isStreaming: boolean
+  latestDegradedFeatures: FeatureFlag[]
+}
+
 export interface ChatRequest {
   session_id: string
   messages: Array<{ role: Role; content: string }>

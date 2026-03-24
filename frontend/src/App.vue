@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   ChatMode,
   ChatRequest,
+  ChatSession,
   FeatureFlag,
   FeatureMeta,
   HealthDependency,
@@ -21,16 +22,32 @@ import type {
 const { startStream } = useStream()
 
 const newId = () => (crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`)
+const DEFAULT_SESSION_TITLE = '新会话'
 
-const messages = ref<ChatMessage[]>([
-  {
+const createWelcomeMessage = (): ChatMessage => ({
+  id: newId(),
+  role: 'assistant',
+  content: '欢迎来到中原工学院招生咨询系统。你可以直接提问，也可以开启工具模式获取更完整的答案。',
+  createdAt: new Date().toISOString()
+})
+
+const createSession = (): ChatSession => {
+  const now = new Date().toISOString()
+  return {
     id: newId(),
-    role: 'assistant',
-    content:
-      '欢迎来到中原工学院招生咨询系统。你可以直接提问，也可以开启工具模式获取更完整的答案。',
-    createdAt: new Date().toISOString()
+    sessionId: newId(),
+    title: DEFAULT_SESSION_TITLE,
+    createdAt: now,
+    updatedAt: now,
+    messages: [createWelcomeMessage()],
+    streamingText: '',
+    isStreaming: false,
+    latestDegradedFeatures: []
   }
-])
+}
+
+const sessions = ref<ChatSession[]>([createSession()])
+const activeSessionId = ref(sessions.value[0].id)
 
 const input = ref('')
 const selectedFeatures = ref<FeatureFlag[]>(['rag', 'citation_guard'])
@@ -51,13 +68,29 @@ const healthOverall = ref(true)
 const healthDependencies = ref<HealthDependency[]>([])
 const reindexInfo = ref('')
 const pageNotice = ref<{ type: 'info' | 'warning' | 'error'; message: string } | null>(null)
-
-const streamingText = ref('')
-const streaming = ref(false)
-const latestDegradedFeatures = ref<FeatureFlag[]>([])
 let cancelStream: (() => void) | null = null
 let pendingStreamText = ''
 let streamFlushHandle: number | null = null
+let currentStreamingSessionId: string | null = null
+
+const activeSession = computed(() => {
+  const matched = sessions.value.find((session) => session.id === activeSessionId.value)
+  if (matched) {
+    return matched
+  }
+  const fallback = sessions.value[0] ?? createSession()
+  if (!sessions.value.length) {
+    sessions.value = [fallback]
+  }
+  activeSessionId.value = fallback.id
+  return fallback
+})
+
+const messages = computed(() => activeSession.value.messages)
+const streamingText = computed(() => activeSession.value.streamingText)
+const streaming = computed(() => activeSession.value.isStreaming)
+const latestDegradedFeatures = computed(() => activeSession.value.latestDegradedFeatures)
+const anyStreaming = computed(() => sessions.value.some((session) => session.isStreaming))
 
 const modeLabel = computed(() => {
   if (mode.value === 'plan') return '规划执行'
@@ -66,6 +99,9 @@ const modeLabel = computed(() => {
 })
 
 const blockedReason = computed(() => {
+  if (anyStreaming.value && !activeSession.value.isStreaming) {
+    return '另一个会话正在生成回答，请等待这一轮结束后再继续发送。'
+  }
   if (selectedFeatures.value.includes('use_saved_skill') && !savedSkillId.value) {
     return '已启用“使用以往技能”，请选择一个历史技能后再发送。'
   }
@@ -146,10 +182,37 @@ onMounted(() => {
   void Promise.all([loadMeta(), refreshHealth()])
 })
 
+const getSessionById = (sessionId: string) => sessions.value.find((session) => session.id === sessionId) ?? null
+
+const touchSession = (sessionId: string) => {
+  const index = sessions.value.findIndex((session) => session.id === sessionId)
+  if (index === -1) return
+  const [session] = sessions.value.splice(index, 1)
+  if (!session) return
+  session.updatedAt = new Date().toISOString()
+  sessions.value.unshift(session)
+}
+
+const buildSessionTitle = (content: string) => {
+  const compact = content.trim().replace(/\s+/g, ' ')
+  if (!compact) return DEFAULT_SESSION_TITLE
+  return compact.length > 16 ? `${compact.slice(0, 16)}...` : compact
+}
+
 const flushStreamingText = () => {
   streamFlushHandle = null
   if (!pendingStreamText) return
-  streamingText.value += pendingStreamText
+  if (!currentStreamingSessionId) {
+    pendingStreamText = ''
+    return
+  }
+  const session = getSessionById(currentStreamingSessionId)
+  if (!session) {
+    pendingStreamText = ''
+    return
+  }
+  session.streamingText += pendingStreamText
+  touchSession(session.id)
   pendingStreamText = ''
 }
 
@@ -165,21 +228,29 @@ const drainStreamingBuffer = () => {
     streamFlushHandle = null
   }
   if (!pendingStreamText) return
-  streamingText.value += pendingStreamText
+  if (currentStreamingSessionId) {
+    const session = getSessionById(currentStreamingSessionId)
+    if (session) {
+      session.streamingText += pendingStreamText
+      touchSession(session.id)
+    }
+  }
   pendingStreamText = ''
 }
 
 const handleSend = async () => {
   const content = input.value.trim()
-  if (!content || streaming.value) return
+  const session = activeSession.value
+  if (!content || anyStreaming.value) return
   const selectionError = validateFeatureSelection(selectedFeatures.value, savedSkillId.value)
   if (selectionError) {
-    messages.value.push({
+    session.messages.push({
       id: newId(),
       role: 'system',
       content: selectionError,
       createdAt: new Date().toISOString()
     })
+    touchSession(session.id)
     return
   }
 
@@ -190,14 +261,20 @@ const handleSend = async () => {
     createdAt: new Date().toISOString()
   }
 
-  messages.value.push(userMessage)
+  session.messages.push(userMessage)
+  if (session.title === DEFAULT_SESSION_TITLE) {
+    session.title = buildSessionTitle(content)
+  }
+  touchSession(session.id)
   input.value = ''
-  streaming.value = true
-  streamingText.value = ''
+  session.isStreaming = true
+  session.streamingText = ''
+  session.latestDegradedFeatures = []
+  currentStreamingSessionId = session.id
 
   const request: ChatRequest = buildChatRequest({
-    sessionId: newId(),
-    messages: messages.value.map((msg) => ({ role: msg.role, content: msg.content })),
+    sessionId: session.sessionId,
+    messages: session.messages.map((msg) => ({ role: msg.role, content: msg.content })),
     features: selectedFeatures.value,
     mode: mode.value,
     stream: true,
@@ -223,17 +300,19 @@ const handleSend = async () => {
     trace_id?: string
   }) => {
     drainStreamingBuffer()
+    const targetSession = getSessionById(session.id)
+    if (!targetSession) return
     console.log('[App.handleSend] finalize', {
       done,
-      buffered_length: streamingText.value.length,
+      buffered_length: targetSession.streamingText.length,
       degraded_features: done?.degraded_features ?? []
     })
-    if (streamingText.value.trim()) {
-      latestDegradedFeatures.value = done?.degraded_features ?? []
-      messages.value.push({
+    if (targetSession.streamingText.trim()) {
+      targetSession.latestDegradedFeatures = done?.degraded_features ?? []
+      targetSession.messages.push({
         id: newId(),
         role: 'assistant',
-        content: streamingText.value.trim(),
+        content: targetSession.streamingText.trim(),
         createdAt: new Date().toISOString(),
         status: done?.status ?? 'ok',
         degradedFeatures: done?.degraded_features ?? [],
@@ -242,9 +321,13 @@ const handleSend = async () => {
         sources: done?.sources
       })
     }
-    streamingText.value = ''
-    streaming.value = false
+    targetSession.streamingText = ''
+    targetSession.isStreaming = false
+    touchSession(targetSession.id)
     cancelStream = null
+    if (currentStreamingSessionId === targetSession.id) {
+      currentStreamingSessionId = null
+    }
   }
 
   try {
@@ -260,14 +343,18 @@ const handleSend = async () => {
       },
       onError: (error) => {
         console.error('[App.handleSend] stream error', error)
-        latestDegradedFeatures.value = []
         const message = getErrorMessage(error, '系统连接异常，请稍后重试。')
-        messages.value.push({
+        const targetSession = getSessionById(session.id)
+        targetSession?.messages.push({
           id: newId(),
           role: 'system',
           content: message,
           createdAt: new Date().toISOString()
         })
+        if (targetSession) {
+          targetSession.latestDegradedFeatures = []
+          touchSession(targetSession.id)
+        }
         showNotice(message, 'error')
         finalize()
       }
@@ -275,13 +362,14 @@ const handleSend = async () => {
   } catch (error) {
     console.error('[App.handleSend] request error', error)
     const message = getErrorMessage(error, '无法连接后端服务，请检查接口配置。')
-    messages.value.push({
+    session.messages.push({
       id: newId(),
       role: 'system',
       content: message,
       createdAt: new Date().toISOString()
     })
-    latestDegradedFeatures.value = []
+    session.latestDegradedFeatures = []
+    touchSession(session.id)
     showNotice(message, 'error')
     finalize()
   }
@@ -296,6 +384,19 @@ const handleStop = () => {
 const toggleRightPanel = () => {
   rightOpen.value = !rightOpen.value
 }
+
+const handleCreateSession = () => {
+  const session = createSession()
+  sessions.value.unshift(session)
+  activeSessionId.value = session.id
+  input.value = ''
+}
+
+const handleSwitchSession = (sessionId: string) => {
+  if (activeSessionId.value === sessionId) return
+  activeSessionId.value = sessionId
+  pageNotice.value = null
+}
 </script>
 
 <template>
@@ -309,6 +410,10 @@ const toggleRightPanel = () => {
         v-model:savedSkillId="savedSkillId"
         :feature-options="featureOptions"
         :saved-skills="savedSkills"
+        :sessions="sessions"
+        :active-session-id="activeSessionId"
+        @switch-session="handleSwitchSession"
+        @create-session="handleCreateSession"
       />
 
       <main class="chat-area">
