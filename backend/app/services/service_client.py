@@ -9,9 +9,13 @@ import httpx
 from app.config import Settings
 from app.contracts import (
     CitationGuardResponse,
+    ConversationTurn,
     GenerationRequest,
     GenerationResponse,
     GenerationStreamChunk,
+    MemoryCompressionRequest,
+    MemoryCompressionResponse,
+    MemoryCompressionResult,
     MemoryEntry,
     MemoryQuery,
     MemoryReadResponse,
@@ -179,6 +183,31 @@ class ServiceClient:
             self.write_memory(session_id=session_id, entry=entry)
             return entry
         return self._memory.append_long_summary(session_id=session_id, snippet=snippet)
+
+    def compress_memories(self, request: MemoryCompressionRequest) -> MemoryCompressionResponse:
+        print(
+            f"[ServiceClient] compress_memories start session_id={request.session_id} "
+            f"messages={len(request.messages)} session_title={request.session_title or ''}"
+        )
+        if self.settings.service_call_mode == "http":
+            body = self._post(
+                f"{self.settings.generation_service_url}/memory/compress",
+                request.model_dump(mode='json'),
+                self.settings.generation_service_timeout_seconds,
+            )
+            result = MemoryCompressionResponse.model_validate(body)
+            print(
+                f"[ServiceClient] compress_memories http done long={result.long_memory_count} "
+                f"special={result.special_memory_count} route={result.route} model={result.model}"
+            )
+            return result
+
+        result = self._generator.compress_memories(
+            session_id=request.session_id,
+            session_title=request.session_title,
+            messages=request.messages,
+        )
+        return self._persist_memory_compression(request=request, result=result)
 
     def execute_skill(self, query: str, session_id: str, saved_skill_id: str | None = None) -> SkillExecuteResponse:
         """技能执行入口：保存技能优先走 LangChain4j 桥接，失败后回退本地策略。"""
@@ -353,3 +382,45 @@ class ServiceClient:
             response.raise_for_status()
             return response.json()
         return self._rag_service.stats()
+
+    def _persist_memory_compression(
+        self,
+        *,
+        request: MemoryCompressionRequest,
+        result: MemoryCompressionResult,
+    ) -> MemoryCompressionResponse:
+        long_count = 0
+        special_count = 0
+        if result.long_summary:
+            self.append_long_memory_summary(request.session_id, result.long_summary)
+            long_count += 1
+        for entry in result.long_entries:
+            self.write_memory(request.session_id, entry)
+            long_count += 1
+        for entry in result.special_entries:
+            self.write_memory(request.session_id, entry)
+            special_count += 1
+        response = MemoryCompressionResponse(
+            session_id=request.session_id,
+            long_summary=result.long_summary,
+            long_memory_count=long_count,
+            special_memory_count=special_count,
+            route=result.route,
+            model=result.model,
+            notes=result.notes,
+        )
+        print(
+            f"[ServiceClient] compress_memories done session_id={request.session_id} "
+            f"long={response.long_memory_count} special={response.special_memory_count} "
+            f"route={response.route} model={response.model}"
+        )
+        logger.info(
+            "[ServiceClient] compress_memories done session_id=%s long=%s special=%s route=%s model=%s notes=%s",
+            request.session_id,
+            response.long_memory_count,
+            response.special_memory_count,
+            response.route,
+            response.model,
+            response.notes,
+        )
+        return response

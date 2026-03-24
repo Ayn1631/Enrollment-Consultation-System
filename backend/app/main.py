@@ -23,6 +23,7 @@ from app.models import (
     SavedSkill,
     ToolMeta,
 )
+from app.contracts import MemoryCompressionRequest, MemoryCompressionResponse
 from app.services.feature_registry import feature_catalog, tool_catalog
 from app.services.gateway import GatewayDependencies, GatewayOrchestrator
 from app.services.service_client import ServiceClient
@@ -125,6 +126,26 @@ def get_mcp_tools() -> list[ToolMeta]:
 @app.post("/api/skills/save")
 def save_skill(name: str, workflow: str):
     return service_client.save_skill(name=name, workflow=workflow)
+
+
+@app.post("/api/memory/compress", response_model=MemoryCompressionResponse)
+def compress_memory(request: MemoryCompressionRequest) -> MemoryCompressionResponse:
+    try:
+        return service_client.compress_memories(request)
+    except Exception:  # noqa: BLE001
+        trace_id = uuid.uuid4().hex
+        logger.exception(
+            "compress_memory unexpected failure trace_id=%s session_id=%s",
+            trace_id,
+            request.session_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "上下文压缩失败，请查看后端日志。",
+                "trace_id": trace_id,
+            },
+        ) from None
 
 
 @app.post("/api/chat", response_model=ChatCreateResponse)
@@ -243,4 +264,3 @@ def admin_reindex() -> dict[str, object]:
 @app.get("/api/admin/retrieval/stats", dependencies=[Depends(_require_admin_token)])
 def admin_retrieval_stats() -> dict[str, object]:
     return {"status": "ok", "result": service_client.rag_stats()}
-

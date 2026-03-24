@@ -83,6 +83,36 @@ class MemoryReadResponse(BaseModel):
     entries: list[MemoryEntry] = Field(default_factory=list)
 
 
+class ConversationTurn(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str
+
+
+class MemoryCompressionRequest(BaseModel):
+    session_id: str
+    session_title: str | None = None
+    messages: list[ConversationTurn] = Field(default_factory=list)
+
+
+class MemoryCompressionResult(BaseModel):
+    long_summary: str = ""
+    long_entries: list[MemoryEntry] = Field(default_factory=list)
+    special_entries: list[MemoryEntry] = Field(default_factory=list)
+    route: GenerationRoute = "requested"
+    model: str = ""
+    notes: list[str] = Field(default_factory=list)
+
+
+class MemoryCompressionResponse(BaseModel):
+    session_id: str
+    long_summary: str = ""
+    long_memory_count: int = 0
+    special_memory_count: int = 0
+    route: GenerationRoute = "requested"
+    model: str = ""
+    notes: list[str] = Field(default_factory=list)
+
+
 class SkillExecuteRequest(BaseModel):
     query: str
     session_id: str

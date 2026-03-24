@@ -10,7 +10,14 @@ from typing import Any, Iterator
 from openai import OpenAI
 
 from app.config import Settings
-from app.contracts import GenerationResponse, GenerationRoute, GenerationStreamChunk
+from app.contracts import (
+    ConversationTurn,
+    GenerationResponse,
+    GenerationRoute,
+    GenerationStreamChunk,
+    MemoryCompressionResult,
+    MemoryEntry,
+)
 
 
 class GenerationService:
@@ -147,6 +154,35 @@ class GenerationService:
                 route=route,
                 cache_hit=False,
             ),
+        )
+
+    def compress_memories(
+        self,
+        *,
+        session_id: str,
+        session_title: str | None,
+        messages: list[ConversationTurn],
+    ) -> MemoryCompressionResult:
+        """调用 LLM 将当前会话压缩为长期记忆与特殊记忆。"""
+        llm_api_key = self.settings.resolve_llm_api_key()
+        selected_model = self.settings.generation_main_model
+        route: GenerationRoute = "main"
+        if self.settings.use_mock_generation or not llm_api_key:
+            route = "mock"
+            selected_model = "mock-generator"
+            return self._mock_compress_memories(
+                session_id=session_id,
+                session_title=session_title,
+                messages=messages,
+                route=route,
+                model=selected_model,
+            )
+        return self._remote_compress_memories(
+            session_id=session_id,
+            session_title=session_title,
+            messages=messages,
+            route=route,
+            model=selected_model,
         )
 
     def _select_model_route(
@@ -329,6 +365,118 @@ class GenerationService:
             raise RuntimeError("generation stream content is empty")
         return text
 
+    def _remote_compress_memories(
+        self,
+        *,
+        session_id: str,
+        session_title: str | None,
+        messages: list[ConversationTurn],
+        route: GenerationRoute,
+        model: str,
+    ) -> MemoryCompressionResult:
+        transcript = self._build_memory_transcript(messages)
+        response = self._client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是会话记忆压缩器。你的任务是从招生咨询对话中提炼可持久化的长期记忆和特殊记忆。"
+                        "长期记忆用于保存稳定背景、已确认事实和连续上下文；特殊记忆用于保存用户长期偏好。"
+                        "必须只输出 JSON，不要输出额外解释。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"session_id={session_id}\n"
+                        f"session_title={self._sanitize_external_text(session_title or '')}\n\n"
+                        "请基于下面对话提炼记忆，并输出 JSON，字段必须包含：\n"
+                        "{\n"
+                        '  "long_summary": "不超过180字的长期摘要",\n'
+                        '  "long_memories": [{"key":"...", "value":"...", "confidence":0.0}],\n'
+                        '  "special_memories": [{"key":"...", "value":"...", "confidence":0.0}],\n'
+                        '  "notes": ["..."]\n'
+                        "}\n\n"
+                        "要求：\n"
+                        "1. long_memories 最多 3 条，保存稳定事实、用户持续关注点、已解决结论。\n"
+                        "2. special_memories 最多 3 条，只保留稳定偏好，如回答风格、关注维度；不要把一次性问题写进去。\n"
+                        "3. key 使用英文蛇形命名。\n"
+                        "4. confidence 介于 0 和 1。\n"
+                        "5. 如果没有特殊记忆，special_memories 返回空数组。\n\n"
+                        f"对话记录：\n{transcript}"
+                    ),
+                },
+            ],
+            temperature=0.2,
+            top_p=0.9,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        choices = list(response.choices or [])
+        if not choices:
+            raise RuntimeError("memory compression response has no choices")
+        content = choices[0].message.content or ""
+        if not content:
+            raise RuntimeError("memory compression content is empty")
+        payload = json.loads(str(content))
+        return self._normalize_memory_compression_payload(payload=payload, route=route, model=model)
+
+    def _mock_compress_memories(
+        self,
+        *,
+        session_id: str,
+        session_title: str | None,
+        messages: list[ConversationTurn],
+        route: GenerationRoute,
+        model: str,
+    ) -> MemoryCompressionResult:
+        user_messages = [item.content.strip() for item in messages if item.role == "user" and item.content.strip()]
+        assistant_messages = [item.content.strip() for item in messages if item.role == "assistant" and item.content.strip()]
+        long_summary = " | ".join((user_messages + assistant_messages)[:4])[:180]
+        long_entries: list[MemoryEntry] = []
+        if user_messages:
+            long_entries.append(
+                MemoryEntry(
+                    key="user_focus",
+                    value=f"用户近期关注：{'；'.join(user_messages[:2])[:120]}",
+                    kind="long",
+                    confidence=0.68,
+                    source="memory_compression_mock",
+                )
+            )
+        special_entries: list[MemoryEntry] = []
+        merged_text = " ".join(user_messages)
+        for keyword, value in {
+            "简短": "偏好简短回答",
+            "简洁": "偏好简短回答",
+            "详细": "偏好详细回答",
+            "表格": "偏好表格化展示",
+            "分点": "偏好分点回答",
+        }.items():
+            if keyword in merged_text:
+                special_entries.append(
+                    MemoryEntry(
+                        key="response_style",
+                        value=value,
+                        kind="special",
+                        confidence=0.82,
+                        source="memory_compression_mock",
+                    )
+                )
+                break
+        notes = ["当前未配置真实 LLM，已使用本地 mock 压缩记忆。"]
+        if session_title:
+            notes.append(f"会话标题：{session_title}")
+        return MemoryCompressionResult(
+            long_summary=long_summary,
+            long_entries=long_entries,
+            special_entries=special_entries,
+            route=route,
+            model=model,
+            notes=notes,
+        )
+
     def _resolve_openai_base_url(self) -> str:
         endpoint = self.settings.resolve_llm_api_url().strip()
         for suffix in ("/chat/completions", "/responses", "/completions"):
@@ -365,3 +513,67 @@ class GenerationService:
         chunk_size = max(1, min(self.settings.stream_chunk_size, 64))
         for idx in range(0, len(text), chunk_size):
             yield GenerationStreamChunk(delta=text[idx : idx + chunk_size])
+
+    def _build_memory_transcript(self, messages: list[ConversationTurn]) -> str:
+        rows: list[str] = []
+        for item in messages[-24:]:
+            content = self._sanitize_external_text(item.content)
+            if not content:
+                continue
+            rows.append(f"[{item.role}] {content}")
+        return "\n".join(rows) or "[system] 当前没有可压缩的有效对话内容。"
+
+    def _normalize_memory_compression_payload(
+        self,
+        *,
+        payload: dict[str, Any],
+        route: GenerationRoute,
+        model: str,
+    ) -> MemoryCompressionResult:
+        long_summary = self._sanitize_external_text(str(payload.get("long_summary", "")))[:180]
+        long_entries = self._to_memory_entries(payload.get("long_memories"), kind="long", source="memory_compression_llm")
+        special_entries = self._to_memory_entries(
+            payload.get("special_memories"),
+            kind="special",
+            source="memory_compression_llm",
+        )
+        notes = [self._sanitize_external_text(str(item))[:80] for item in (payload.get("notes") or [])[:5]]
+        return MemoryCompressionResult(
+            long_summary=long_summary,
+            long_entries=long_entries,
+            special_entries=special_entries,
+            route=route,
+            model=model,
+            notes=notes,
+        )
+
+    def _to_memory_entries(self, raw_items: Any, *, kind: str, source: str) -> list[MemoryEntry]:
+        rows = raw_items if isinstance(raw_items, list) else []
+        entries: list[MemoryEntry] = []
+        for idx, item in enumerate(rows[:3], start=1):
+            if not isinstance(item, dict):
+                continue
+            raw_key = self._sanitize_memory_key(str(item.get("key") or f"{kind}_{idx}"))
+            raw_value = self._sanitize_external_text(str(item.get("value") or ""))
+            if not raw_value:
+                continue
+            confidence_raw = item.get("confidence", 0.7)
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.7
+            confidence = max(0.0, min(confidence, 1.0))
+            entries.append(
+                MemoryEntry(
+                    key=raw_key,
+                    value=raw_value[:180],
+                    kind=kind,
+                    confidence=confidence,
+                    source=source,
+                )
+            )
+        return entries
+
+    def _sanitize_memory_key(self, value: str) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", value).strip("_").lower()
+        return normalized or "memory_item"
