@@ -6,6 +6,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', value: ChatMode): void }>()
 
 const options: Array<{ value: ChatMode; label: string }> = [
   { value: 'chat', label: '对话模式' },
+  { value: 'agent', label: '智能体模式' },
   { value: 'plan', label: '规划执行' },
   { value: 'guide', label: '指引模式' }
 ]

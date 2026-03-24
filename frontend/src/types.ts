@@ -1,7 +1,7 @@
 export type Role = 'user' | 'assistant' | 'system'
 export type FeatureFlag = 'rag' | 'web_search' | 'skill_exec' | 'use_saved_skill' | 'citation_guard'
 export type ToolMode = 'search' | 'react' | 'plan' | 'guide' // legacy compatibility
-export type ChatMode = 'chat' | 'plan' | 'guide'
+export type ChatMode = 'chat' | 'plan' | 'guide' | 'agent'
 export type ChatStatus = 'ok' | 'degraded' | 'failed'
 
 export interface ChatSource {

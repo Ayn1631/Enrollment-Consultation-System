@@ -95,6 +95,7 @@ const latestDegradedFeatures = computed(() => activeSession.value.latestDegraded
 const anyStreaming = computed(() => sessions.value.some((session) => session.isStreaming))
 
 const modeLabel = computed(() => {
+  if (mode.value === 'agent') return '智能体模式'
   if (mode.value === 'plan') return '规划执行'
   if (mode.value === 'guide') return '指引模式'
   return '对话模式'
