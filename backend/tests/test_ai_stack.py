@@ -5,7 +5,7 @@ import os
 
 from app.config import Settings
 from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanner, Neo4jKnowledgeAdapter
-from app.services.ai_stack import load_mcp_server_configs
+from app.services.ai_stack import _format_exception_summary, load_mcp_server_configs
 
 
 def test_langgraph_planner_fallback_keeps_priority_and_dedup(monkeypatch):
@@ -126,3 +126,19 @@ def test_load_mcp_server_configs_merges_process_env(tmp_path, monkeypatch):
     assert len(servers) == 1
     assert "PATH" in servers[0].env
     assert servers[0].env["CUSTOM_TOKEN"] == "abc"
+
+
+def test_format_exception_summary_should_flatten_exception_group():
+    summary = _format_exception_summary(
+        ExceptionGroup(
+            "group",
+            [
+                ConnectionError("dns failed"),
+                RuntimeError("tool unavailable"),
+            ],
+        )
+    )
+
+    assert "ExceptionGroup" in summary
+    assert "ConnectionError: dns failed" in summary
+    assert "RuntimeError: tool unavailable" in summary

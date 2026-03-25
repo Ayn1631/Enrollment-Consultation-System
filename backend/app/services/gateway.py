@@ -210,13 +210,10 @@ class GatewayOrchestrator:
         try:
             session = self._run_agent_session(request=request, fail_features=fail_features)
         except Exception as exc:  # noqa: BLE001
-            self.logger.exception("agent mode failed, fallback to standard pipeline session_id=%s", request.session_id)
-            fallback_request = request.model_copy(update={"mode": "chat"})
-            response = self.create_chat(fallback_request, fail_features=fail_features)
-            existing = self.deps.container.session_store.get(response.session_id)
-            if existing is not None:
-                existing.tool_audit.append(f"agent:fallback:{exc.__class__.__name__}")
-            return response
+            self.logger.exception("agent mode failed session_id=%s", request.session_id)
+            session = self._build_agent_failure_session(request=request, exc=exc)
+            self.deps.container.session_store.set(request.session_id, session)
+            return self._to_create_response(session)
         self.deps.container.session_store.set(request.session_id, session)
         return self._to_create_response(session)
 
@@ -225,13 +222,42 @@ class GatewayOrchestrator:
         try:
             session = self._run_agent_session(request=request, fail_features=fail_features)
         except Exception as exc:  # noqa: BLE001
-            self.logger.exception("agent stream failed, fallback to standard stream session_id=%s", request.session_id)
-            fallback_request = request.model_copy(update={"mode": "chat"})
-            yield from self.stream_chat(fallback_request, fail_features=fail_features)
+            self.logger.exception("agent stream failed session_id=%s", request.session_id)
+            session = self._build_agent_failure_session(request=request, exc=exc)
+            self.deps.container.session_store.set(request.session_id, session)
+            yield from self._yield_text_events(session.text)
+            yield self._build_done_event(session)
             return
         self.deps.container.session_store.set(request.session_id, session)
         yield from self._yield_text_events(session.text)
         yield self._build_done_event(session)
+
+    def _build_agent_failure_session(self, request: ChatRequest, exc: Exception) -> SessionResult:
+        trace_id = uuid.uuid4().hex
+        error_summary = self._summarize_exception(exc)
+        text = (
+            "当前智能体执行失败，未能完成可靠的外部工具链调用。\n"
+            "为避免误导，本轮不会自动回退成普通回答并假装已经使用了 MCP 或其他外部工具。\n\n"
+            f"失败原因：{error_summary}\n\n"
+            "建议：\n"
+            "1. 检查模型服务和外部 MCP 服务是否可用。\n"
+            "2. 如果只是想先拿到基础答案，可暂时关闭智能体模式后重试。"
+        )
+        return SessionResult(
+            session_id=request.session_id,
+            trace_id=trace_id,
+            text=text,
+            status="failed",
+            degraded_features=[],
+            sources=[],
+            tool_audit=[
+                f"agent:error:{exc.__class__.__name__}",
+                f"agent:error_summary:{error_summary}",
+                "agent:mcp_execution_not_confirmed",
+            ],
+            finish_reason="error",
+            error_message=error_summary,
+        )
 
     def _run_agent_session(self, request: ChatRequest, fail_features: set[str]) -> SessionResult:
         trace_id = uuid.uuid4().hex
@@ -514,10 +540,18 @@ class GatewayOrchestrator:
         mcp_runtime = await build_langchain_mcp_runtime(self.deps.services.settings)
         if mcp_runtime.notes:
             collector.notes.extend(mcp_runtime.notes)
+            collector.tool_audit.extend(
+                [f"mcp_runtime:note:{item}" for item in mcp_runtime.notes]
+            )
         if mcp_runtime.tools:
             tools.extend(mcp_runtime.tools)
             collector.tool_audit.append(
                 "agent_tool:mcp_runtime:"
+                + ",".join(item.alias for item in mcp_runtime.servers)
+            )
+        elif mcp_runtime.servers:
+            collector.tool_audit.append(
+                "agent_tool:mcp_runtime_unavailable:"
                 + ",".join(item.alias for item in mcp_runtime.servers)
             )
 
@@ -1237,3 +1271,18 @@ class GatewayOrchestrator:
                     "如需继续咨询招生政策、流程、费用或资助问题，请换一个业务相关问题继续提问。",
                 )
         return False, "ok", normalized
+
+    def _summarize_exception(self, exc: BaseException) -> str:
+        nested = getattr(exc, "exceptions", None)
+        if nested:
+            parts = [
+                self._summarize_exception(item)
+                for item in nested
+                if isinstance(item, BaseException)
+            ]
+            compact = " | ".join(part for part in parts if part)
+            return f"{exc.__class__.__name__}: {compact or str(exc)}"
+        message = str(exc).strip()
+        if message:
+            return f"{exc.__class__.__name__}: {message}"
+        return exc.__class__.__name__

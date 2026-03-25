@@ -207,6 +207,20 @@ def _safe_server_alias(name: str) -> str:
     return normalized or "mcp_server"
 
 
+def _format_exception_summary(exc: BaseException) -> str:
+    """把异常压平成可读摘要，尤其处理 ExceptionGroup 这种大便输出。"""
+    nested = getattr(exc, "exceptions", None)
+    if nested:
+        child_parts = [
+            _format_exception_summary(item)
+            for item in nested
+            if isinstance(item, BaseException)
+        ]
+        compact = " | ".join(part for part in child_parts if part)
+        return f"{exc.__class__.__name__}: {compact or str(exc)}"
+    return f"{exc.__class__.__name__}: {exc}"
+
+
 def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], list[str]]:
     """读取类似 Cline 的 mcpServers 配置，并归一化为官方 SDK 可消费格式。"""
     notes: list[str] = []
@@ -334,7 +348,7 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
 
     client = None
     try:
-        client = MultiServerMCPClient(connections=connections, tool_name_prefix=True)
+        client = MultiServerMCPClient(connections=connections)
         tools = await client.get_tools()
     except Exception as exc:  # noqa: BLE001
         if client is not None:
@@ -343,7 +357,7 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
                 result = close_method()
                 if hasattr(result, "__await__"):
                     await result
-        notes.append(f"MCP 工具加载失败：{exc.__class__.__name__}: {exc}")
+        notes.append(f"MCP 工具加载失败：{_format_exception_summary(exc)}")
         return McpToolRuntime(client=None, tools=[], servers=servers, notes=notes)
 
     configured_tools: list[Any] = []

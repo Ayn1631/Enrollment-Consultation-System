@@ -127,6 +127,24 @@ def test_agent_mode_request_should_be_accepted():
     assert stream_res.text.strip()
 
 
+def test_agent_mode_failure_should_not_fallback_to_plain_chat():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["mode"] = "agent"
+    payload["messages"] = [{"role": "user", "content": "请优先使用外部 MCP 查询最新招生公告"}]
+    res = client.post("/api/chat", json=payload, headers={"x-fail-features": "generation"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "failed"
+
+    session_id = data["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    parsed = _parse_sse_body(stream_res.text)
+    assert "未能完成可靠的外部工具链调用" in parsed["text"]
+    assert "agent:mcp_execution_not_confirmed" in stream_res.text
+
+
 def test_use_saved_skill_requires_id():
     client = TestClient(app)
     payload = _base_payload()
