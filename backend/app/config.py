@@ -68,6 +68,8 @@ class Settings(BaseSettings):
 
     langchain4j_service_url: str = Field(default="", alias="LANGCHAIN4J_SERVICE_URL")
     langchain4j_timeout_seconds: float = Field(default=1.5, alias="LANGCHAIN4J_TIMEOUT_SECONDS")
+    mcp_enabled: bool = Field(default=True, alias="MCP_ENABLED")
+    mcp_config_path: str = Field(default="", alias="MCP_CONFIG_PATH")
 
     rag_agent_service_url: str = Field(default="http://rag-agent-service:8001", alias="RAG_AGENT_SERVICE_URL")
     memory_service_url: str = Field(default="http://memory-service:8003", alias="MEMORY_SERVICE_URL")
@@ -121,6 +123,23 @@ class Settings(BaseSettings):
 
     def resolve_cors_allow_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
+
+    def resolve_mcp_config_path(self) -> Path | None:
+        """解析 MCP 配置文件路径，优先使用显式环境变量。"""
+        candidate = self.mcp_config_path.strip()
+        if candidate:
+            return Path(candidate).expanduser()
+        fallback_candidates = [
+            ROOT_DIR / "backend" / "config" / "mcp.json",
+            ROOT_DIR / "backend" / "config" / "mcp_settings.json",
+            ROOT_DIR / "backend" / "config.json",
+            ROOT_DIR / "config" / "mcp.json",
+            ROOT_DIR / "config.json",
+        ]
+        for path in fallback_candidates:
+            if path.exists():
+                return path
+        return None
 
 
 @lru_cache(maxsize=1)
