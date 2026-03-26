@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypedDict
@@ -221,6 +223,52 @@ def _format_exception_summary(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
 
 
+def _normalize_stdio_command(command: str) -> tuple[str, str | None]:
+    """对 Windows 上常见 MCP 命令做兼容处理，减少子进程启动失败。"""
+    normalized = command.strip()
+    if not normalized or os.name != "nt":
+        return normalized, None
+
+    lower_name = Path(normalized).name.lower()
+    if lower_name in {"python", "python.exe"}:
+        return sys.executable, f"已将 MCP 命令 {command} 映射为当前解释器：{sys.executable}"
+
+    if lower_name in {"npx", "npx.cmd", "npm", "npm.cmd"}:
+        preferred = "npx.cmd" if lower_name.startswith("npx") else "npm.cmd"
+        resolved = shutil.which(preferred) or shutil.which(lower_name)
+        if resolved:
+            return resolved, f"已将 MCP 命令 {command} 映射为 Windows 可执行文件：{resolved}"
+
+    return normalized, None
+
+
+def _build_stdio_env(
+    *,
+    command: str,
+    extra_env: dict[str, str],
+    config_dir: Path,
+) -> tuple[dict[str, str], str | None]:
+    """合并 stdio 子进程环境，并为 Windows/npm 注入可写缓存目录。"""
+    merged_env = {str(key): str(value) for key, value in os.environ.items()}
+    merged_env.update(extra_env)
+
+    if os.name != "nt":
+        return merged_env, None
+
+    lower_name = Path(command).name.lower()
+    if lower_name not in {"npx", "npx.cmd", "npm", "npm.cmd"}:
+        return merged_env, None
+
+    cache_key = next((key for key in ("npm_config_cache", "NPM_CONFIG_CACHE") if merged_env.get(key)), None)
+    if cache_key is not None:
+        return merged_env, None
+
+    cache_dir = config_dir / ".cache" / "npm"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    merged_env["npm_config_cache"] = str(cache_dir)
+    return merged_env, f"已为 {Path(command).name} 注入可写 npm 缓存目录：{cache_dir}"
+
+
 def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], list[str]]:
     """读取类似 Cline 的 mcpServers 配置，并归一化为官方 SDK 可消费格式。"""
     notes: list[str] = []
@@ -265,17 +313,25 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
         normalized_timeout = float(timeout_seconds) if timeout_seconds is not None else None
 
         if transport == "stdio":
-            command = _expand_text_value(str(raw.get("command") or ""))
+            raw_command = _expand_text_value(str(raw.get("command") or ""))
+            command, command_note = _normalize_stdio_command(raw_command)
             if not command:
                 notes.append(f"MCP 服务 {original_name} 缺少 command，已跳过。")
                 continue
+            if command_note:
+                notes.append(f"MCP 服务 {original_name}：{command_note}")
             args = [_expand_text_value(str(item)) for item in list(raw.get("args") or [])]
             extra_env = {
                 str(key): _expand_text_value(str(value))
                 for key, value in dict(raw.get("env") or {}).items()
             }
-            merged_env = {str(key): str(value) for key, value in os.environ.items()}
-            merged_env.update(extra_env)
+            merged_env, env_note = _build_stdio_env(
+                command=command,
+                extra_env=extra_env,
+                config_dir=config_path.parent,
+            )
+            if env_note:
+                notes.append(f"MCP 服务 {original_name}：{env_note}")
             servers.append(
                 McpServerConfig(
                     alias=alias,
