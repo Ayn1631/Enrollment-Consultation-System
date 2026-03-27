@@ -12,10 +12,11 @@ function mountPanel(overrides: Record<string, unknown> = {}) {
   return mount(RightPanel, {
     props: {
       open: true,
+      mode: 'agent',
       temperature: 0.6,
       topP: 0.9,
-      model: 'zyit-gpt',
-      strictCitation: true,
+      model: 'gpt-5.4',
+      agentStrategy: 'speed',
       healthLoading: false,
       reindexLoading: false,
       compressLoading: false,
@@ -55,5 +56,18 @@ describe('RightPanel', () => {
     expect((buttons[0].element as HTMLButtonElement).disabled).toBe(true)
     expect((buttons[1].element as HTMLButtonElement).disabled).toBe(true)
     expect((buttons[2].element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test('可以切换执行策略', async () => {
+    const wrapper = mountPanel()
+    const buttons = wrapper.findAll('.strategy-btn')
+    expect(buttons.length).toBe(2)
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('update:agentStrategy')?.[0]).toEqual(['quality'])
+  })
+
+  test('非专家模式下隐藏执行策略', () => {
+    const wrapper = mountPanel({ mode: 'chat' })
+    expect(wrapper.findAll('.strategy-btn')).toHaveLength(0)
   })
 })

@@ -5,18 +5,18 @@ import LeftSidebar from './components/LeftSidebar.vue'
 import ChatMain from './components/ChatMain.vue'
 import ActionBar from './components/ActionBar.vue'
 import RightPanel from './components/RightPanel.vue'
-import { compressMemory, getFeatures, getHealth, getSavedSkills, postReindex } from './services/api'
+import { compressMemory, getHealth, postReindex } from './services/api'
 import { useStream } from './composables/useStream'
-import { buildChatRequest, validateFeatureSelection } from './utils/requestBuilder'
+import { buildChatRequest } from './utils/requestBuilder'
 import type {
+  AgentStepEvent,
+  AgentStrategy,
   ChatMessage,
   ChatMode,
   ChatRequest,
   ChatSession,
   FeatureFlag,
-  FeatureMeta,
-  HealthDependency,
-  SavedSkill
+  HealthDependency
 } from './types'
 
 const { startStream } = useStream()
@@ -27,7 +27,7 @@ const DEFAULT_SESSION_TITLE = '新会话'
 const createWelcomeMessage = (): ChatMessage => ({
   id: newId(),
   role: 'assistant',
-  content: '欢迎来到中原工学院招生咨询系统。你可以直接提问，也可以开启工具模式获取更完整的答案。',
+  content: '欢迎来到中原工学院招生咨询系统。你可以直接对话，也可以切换到 RAG 问答模式或专家模式获取更完整的答案。',
   createdAt: new Date().toISOString()
 })
 
@@ -42,7 +42,8 @@ const createSession = (): ChatSession => {
     messages: [createWelcomeMessage()],
     streamingText: '',
     isStreaming: false,
-    latestDegradedFeatures: []
+    latestDegradedFeatures: [],
+    currentAgentTrace: []
   }
 }
 
@@ -50,16 +51,12 @@ const sessions = ref<ChatSession[]>([createSession()])
 const activeSessionId = ref(sessions.value[0].id)
 
 const input = ref('')
-const selectedFeatures = ref<FeatureFlag[]>(['rag', 'citation_guard'])
 const mode = ref<ChatMode>('chat')
-const featureOptions = ref<FeatureMeta[]>([])
-const savedSkills = ref<SavedSkill[]>([])
-const savedSkillId = ref('')
 
 const temperature = ref(0.6)
 const topP = ref(0.9)
-const model = ref('zyit-gpt')
-const strictCitation = ref(true)
+const model = ref('gpt-5.4')
+const agentStrategy = ref<AgentStrategy>('speed')
 const rightOpen = ref(true)
 const healthLoading = ref(false)
 const reindexLoading = ref(false)
@@ -95,18 +92,14 @@ const latestDegradedFeatures = computed(() => activeSession.value.latestDegraded
 const anyStreaming = computed(() => sessions.value.some((session) => session.isStreaming))
 
 const modeLabel = computed(() => {
-  if (mode.value === 'agent') return '智能体模式'
-  if (mode.value === 'plan') return '规划执行'
-  if (mode.value === 'guide') return '指引模式'
+  if (mode.value === 'agent') return '专家模式'
+  if (mode.value === 'rag') return 'RAG问答模式'
   return '对话模式'
 })
 
 const blockedReason = computed(() => {
   if (anyStreaming.value && !activeSession.value.isStreaming) {
     return '另一个会话正在生成回答，请等待这一轮结束后再继续发送。'
-  }
-  if (selectedFeatures.value.includes('use_saved_skill') && !savedSkillId.value) {
-    return '已启用“使用以往技能”，请选择一个历史技能后再发送。'
   }
   return ''
 })
@@ -126,30 +119,6 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 
 const showNotice = (message: string, type: 'info' | 'warning' | 'error' = 'error') => {
   pageNotice.value = { message, type }
-}
-
-const loadMeta = async () => {
-  try {
-    const [features, skills] = await Promise.all([getFeatures(), getSavedSkills()])
-    featureOptions.value = features
-    savedSkills.value = skills
-    const defaultFeatures = features.filter((item) => item.default_enabled).map((item) => item.id)
-    if (defaultFeatures.length) {
-      selectedFeatures.value = defaultFeatures
-    }
-  } catch {
-    featureOptions.value = [
-      { id: 'rag', label: '本地RAG检索', default_enabled: true, dependencies: [] },
-      { id: 'web_search', label: '联网搜索增强', default_enabled: false, dependencies: [] },
-      { id: 'skill_exec', label: '通用技能执行', default_enabled: false, dependencies: [] },
-      { id: 'use_saved_skill', label: '使用以往技能', default_enabled: false, dependencies: ['skill_exec'] },
-      { id: 'citation_guard', label: '引用校验', default_enabled: true, dependencies: ['rag'] }
-    ]
-    savedSkills.value = [
-      { id: 'admission_faq_v1', label: '招生FAQ助手', description: '聚焦招生政策与时间节点问答' }
-    ]
-    showNotice('获取后端功能配置失败，当前已切换为前端内置兜底配置。', 'warning')
-  }
 }
 
 const refreshHealth = async () => {
@@ -186,7 +155,7 @@ const triggerReindex = async () => {
 }
 
 onMounted(() => {
-  void Promise.all([loadMeta(), refreshHealth()])
+  void refreshHealth()
 })
 
 const getSessionById = (sessionId: string) => sessions.value.find((session) => session.id === sessionId) ?? null
@@ -249,17 +218,6 @@ const handleSend = async () => {
   const content = input.value.trim()
   const session = activeSession.value
   if (!content || anyStreaming.value) return
-  const selectionError = validateFeatureSelection(selectedFeatures.value, savedSkillId.value)
-  if (selectionError) {
-    session.messages.push({
-      id: newId(),
-      role: 'system',
-      content: selectionError,
-      createdAt: new Date().toISOString()
-    })
-    touchSession(session.id)
-    return
-  }
 
   const userMessage: ChatMessage = {
     id: newId(),
@@ -277,27 +235,28 @@ const handleSend = async () => {
   session.isStreaming = true
   session.streamingText = ''
   session.latestDegradedFeatures = []
+  session.currentAgentTrace = []
   currentStreamingSessionId = session.id
 
   const request: ChatRequest = buildChatRequest({
     sessionId: session.sessionId,
     messages: session.messages.map((msg) => ({ role: msg.role, content: msg.content })),
-    features: selectedFeatures.value,
     mode: mode.value,
     stream: true,
-    savedSkillId: savedSkillId.value,
-    strictCitation: strictCitation.value,
     temperature: temperature.value,
     topP: topP.value,
-    model: model.value
+    model: model.value,
+    agentStrategy: agentStrategy.value
   })
+  const requestFeatures = [...request.features]
+  const hasToolFeatures = requestFeatures.length > 0
   console.log('[App.handleSend] request built', {
     session_id: request.session_id,
     features: request.features,
     mode: request.mode,
     strict_citation: request.strict_citation,
     model: request.model,
-    selectedFeatures: selectedFeatures.value
+    requestFeatures
   })
 
   const finalize = (done?: {
@@ -305,6 +264,8 @@ const handleSend = async () => {
     degraded_features?: FeatureFlag[]
     sources?: Array<{ title: string; url: string }>
     trace_id?: string
+    tool_audit?: string[]
+    error_message?: string
   }) => {
     drainStreamingBuffer()
     const targetSession = getSessionById(session.id)
@@ -314,23 +275,53 @@ const handleSend = async () => {
       buffered_length: targetSession.streamingText.length,
       degraded_features: done?.degraded_features ?? []
     })
+    const fallbackFailureText =
+      done?.status === 'failed'
+        ? [done.error_message ? `失败原因：${done.error_message}` : '', done.trace_id ? `trace_id：${done.trace_id}` : '']
+            .filter(Boolean)
+            .join('\n')
+        : ''
     if (targetSession.streamingText.trim()) {
-      targetSession.latestDegradedFeatures = done?.degraded_features ?? []
+      targetSession.latestDegradedFeatures = hasToolFeatures ? (done?.degraded_features ?? []) : []
       targetSession.messages.push({
         id: newId(),
         role: 'assistant',
         content: targetSession.streamingText.trim(),
         createdAt: new Date().toISOString(),
         status: done?.status ?? 'ok',
-        degradedFeatures: done?.degraded_features ?? [],
-        enabledFeatures: [...selectedFeatures.value],
-        traceId: done?.trace_id,
-        sources: done?.sources
+        degradedFeatures: hasToolFeatures ? (done?.degraded_features ?? []) : [],
+        enabledFeatures: requestFeatures,
+        traceId: hasToolFeatures ? done?.trace_id : undefined,
+        sources: hasToolFeatures ? done?.sources : undefined,
+        errorMessage: done?.error_message,
+        toolAudit: hasToolFeatures ? (done?.tool_audit ?? []) : [],
+        agentTrace: hasToolFeatures ? [...targetSession.currentAgentTrace] : []
+      })
+    } else if (fallbackFailureText) {
+      targetSession.messages.push({
+        id: newId(),
+        role: 'assistant',
+        content: fallbackFailureText,
+        createdAt: new Date().toISOString(),
+        status: 'failed',
+        degradedFeatures: hasToolFeatures ? (done?.degraded_features ?? []) : [],
+        enabledFeatures: requestFeatures,
+        traceId: hasToolFeatures ? done?.trace_id : undefined,
+        sources: hasToolFeatures ? done?.sources : undefined,
+        errorMessage: done?.error_message,
+        toolAudit: hasToolFeatures ? (done?.tool_audit ?? []) : [],
+        agentTrace: hasToolFeatures ? [...targetSession.currentAgentTrace] : []
       })
     }
     targetSession.streamingText = ''
     targetSession.isStreaming = false
+    targetSession.currentAgentTrace = []
     touchSession(targetSession.id)
+    if (done?.status === 'failed') {
+      const detail = done.error_message ? `失败原因：${done.error_message}` : '本轮执行失败。'
+      const traceText = done.trace_id ? ` trace_id：${done.trace_id}` : ''
+      showNotice(`${detail}${traceText}`, 'error')
+    }
     cancelStream = null
     if (currentStreamingSessionId === targetSession.id) {
       currentStreamingSessionId = null
@@ -343,6 +334,12 @@ const handleSend = async () => {
       onDelta: (delta) => {
         console.log('[App.handleSend] delta', delta)
         queueStreamingDelta(delta)
+      },
+      onStep: (event: AgentStepEvent) => {
+        const targetSession = getSessionById(session.id)
+        if (!targetSession) return
+        targetSession.currentAgentTrace = [...targetSession.currentAgentTrace, event]
+        touchSession(targetSession.id)
       },
       onDone: (done) => {
         console.log('[App.handleSend] stream done', done)
@@ -426,6 +423,7 @@ const handleClearSession = () => {
   session.streamingText = ''
   session.isStreaming = false
   session.latestDegradedFeatures = []
+  session.currentAgentTrace = []
   input.value = ''
   compressInfo.value = ''
   showNotice('当前会话已清空，并已重置为新的空白对话。', 'info')
@@ -472,11 +470,7 @@ const handleCompressContext = async () => {
 
     <div class="layout" :class="{ compact: !rightOpen }">
       <LeftSidebar
-        v-model:features="selectedFeatures"
         v-model:mode="mode"
-        v-model:savedSkillId="savedSkillId"
-        :feature-options="featureOptions"
-        :saved-skills="savedSkills"
         :sessions="sessions"
         :active-session-id="activeSessionId"
         @switch-session="handleSwitchSession"
@@ -493,8 +487,9 @@ const handleCompressContext = async () => {
           :messages="messages"
           :streaming-text="streamingText"
           :is-streaming="streaming"
-          :active-features="selectedFeatures"
+          :mode="mode"
           :degraded-features="latestDegradedFeatures"
+          :current-agent-trace="activeSession.currentAgentTrace"
         />
         <ActionBar
           v-model="input"
@@ -508,10 +503,11 @@ const handleCompressContext = async () => {
 
       <RightPanel
         :open="rightOpen"
+        :mode="mode"
         v-model:temperature="temperature"
         v-model:topP="topP"
         v-model:model="model"
-        v-model:strictCitation="strictCitation"
+        v-model:agentStrategy="agentStrategy"
         :health-loading="healthLoading"
         :reindex-loading="reindexLoading"
         :compress-loading="compressLoading"

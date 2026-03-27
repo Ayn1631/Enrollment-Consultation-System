@@ -1,21 +1,14 @@
 <script setup lang="ts">
-import ToolToggleGroup from './ToolToggleGroup.vue'
 import ModeSelector from './ModeSelector.vue'
-import type { ChatMode, ChatSession, FeatureFlag, FeatureMeta, SavedSkill } from '../types'
+import type { ChatMode, ChatSession } from '../types'
 
 const props = defineProps<{
-  features: FeatureFlag[]
-  featureOptions: FeatureMeta[]
   mode: ChatMode
-  savedSkills: SavedSkill[]
-  savedSkillId: string
   sessions: ChatSession[]
   activeSessionId: string
 }>()
 const emit = defineEmits<{
-  (e: 'update:features', value: FeatureFlag[]): void
   (e: 'update:mode', value: ChatMode): void
-  (e: 'update:savedSkillId', value: string): void
   (e: 'switchSession', sessionId: string): void
   (e: 'createSession'): void
   (e: 'clearSession'): void
@@ -40,28 +33,6 @@ const getSessionSummary = (session: ChatSession) => {
 
 <template>
   <aside class="sidebar">
-    <div class="panel">
-      <div class="panel-title">功能权限</div>
-      <ToolToggleGroup
-        :model-value="props.features"
-        :options="props.featureOptions"
-        @update:model-value="emit('update:features', $event)"
-      />
-      <div v-if="props.features.includes('use_saved_skill')" class="saved-skill">
-        <label class="skill-label" for="savedSkill">历史技能</label>
-        <select
-          id="savedSkill"
-          :value="props.savedSkillId"
-          @change="emit('update:savedSkillId', ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">请选择技能</option>
-          <option v-for="skill in props.savedSkills" :key="skill.id" :value="skill.id">
-            {{ skill.label }}
-          </option>
-        </select>
-      </div>
-    </div>
-
     <div class="panel">
       <div class="panel-title">对话方式</div>
       <ModeSelector :model-value="props.mode" @update:model-value="emit('update:mode', $event)" />
@@ -209,21 +180,4 @@ const getSessionSummary = (session: ChatSession) => {
   line-height: 1.45;
 }
 
-.saved-skill {
-  margin-top: 10px;
-  display: grid;
-  gap: 6px;
-}
-
-.saved-skill select {
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.95);
-}
-
-.skill-label {
-  font-size: 12px;
-  color: var(--ink-2);
-}
 </style>

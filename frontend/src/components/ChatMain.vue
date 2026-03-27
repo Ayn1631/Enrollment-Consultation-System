@@ -2,14 +2,15 @@
 import { nextTick, ref, watch } from 'vue'
 import MessageBubble from './MessageBubble.vue'
 import StreamBubble from './StreamBubble.vue'
-import type { ChatMessage, FeatureFlag } from '../types'
+import type { AgentStepEvent, ChatMessage, ChatMode, FeatureFlag } from '../types'
 
 const props = defineProps<{
   messages: ChatMessage[]
   streamingText: string
   isStreaming: boolean
-  activeFeatures: FeatureFlag[]
+  mode: ChatMode
   degradedFeatures: FeatureFlag[]
+  currentAgentTrace: AgentStepEvent[]
 }>()
 
 const messagesRef = ref<HTMLElement | null>(null)
@@ -32,11 +33,20 @@ watch(
 
 <template>
   <section class="chat-main">
-    <div class="status">
-      <div class="status-title">系统状态</div>
-      <div class="status-desc">已启用：{{ props.activeFeatures.join(' / ') || '无' }}</div>
-      <div v-if="props.degradedFeatures.length" class="status-degraded">
-        已降级：{{ props.degradedFeatures.join(' / ') }}
+    <div v-if="props.mode !== 'chat' && props.degradedFeatures.length" class="status">
+      <div class="status-title">能力降级提醒</div>
+      <div class="status-degraded">已降级：{{ props.degradedFeatures.join(' / ') }}</div>
+    </div>
+
+    <div v-if="props.mode === 'agent' && props.currentAgentTrace.length" class="trace-panel">
+      <div class="trace-title">当前执行轨迹</div>
+      <div class="trace-item" v-for="item in props.currentAgentTrace" :key="item.id">
+        <span class="trace-node">{{ item.title }}</span>
+        <span class="trace-status" :class="item.status">{{ item.status }}</span>
+        <span v-if="item.subproblem_id" class="trace-meta">{{ item.subproblem_id }}</span>
+        <span v-if="item.plan_step_index !== undefined" class="trace-meta">步骤 {{ item.plan_step_index }}</span>
+        <span v-if="item.attempt !== undefined" class="trace-meta">尝试 {{ item.attempt }}</span>
+        <span v-if="item.message" class="trace-message">{{ item.message }}</span>
       </div>
     </div>
 
@@ -46,6 +56,7 @@ watch(
         v-if="props.isStreaming"
         :content="props.streamingText"
         :waiting-first-chunk="props.streamingText.length === 0"
+        :mode="props.mode"
       />
     </div>
   </section>
@@ -75,12 +86,7 @@ watch(
   color: var(--accent);
 }
 
-.status-desc {
-  color: var(--ink-1);
-}
-
 .status-degraded {
-  margin-top: 6px;
   color: var(--accent-cool);
   font-weight: 600;
 }
@@ -93,5 +99,55 @@ watch(
   overflow-y: auto;
   padding-right: 4px;
   min-height: 0;
+}
+
+.trace-panel {
+  border: 1px solid rgba(27, 35, 32, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.trace-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.trace-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-1);
+}
+
+.trace-node {
+  font-weight: 600;
+}
+
+.trace-status {
+  border-radius: 999px;
+  padding: 0 8px;
+  background: rgba(27, 35, 32, 0.08);
+}
+
+.trace-status.completed {
+  background: rgba(55, 155, 92, 0.14);
+  color: #1e6d3f;
+}
+
+.trace-status.retrying,
+.trace-status.degraded,
+.trace-status.failed {
+  background: rgba(166, 30, 36, 0.12);
+  color: var(--accent);
+}
+
+.trace-meta,
+.trace-message {
+  color: var(--ink-2);
 }
 </style>

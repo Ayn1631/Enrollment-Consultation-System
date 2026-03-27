@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import type { HealthDependency } from '../types'
+import type { AgentStrategy, ChatMode, HealthDependency } from '../types'
 
 const props = defineProps<{
   open: boolean
   temperature: number
   topP: number
   model: string
-  strictCitation: boolean
+  mode: ChatMode
+  agentStrategy: AgentStrategy
   healthLoading: boolean
   reindexLoading: boolean
   compressLoading: boolean
@@ -23,7 +24,7 @@ const emit = defineEmits<{
   (e: 'update:temperature', value: number): void
   (e: 'update:topP', value: number): void
   (e: 'update:model', value: string): void
-  (e: 'update:strictCitation', value: boolean): void
+  (e: 'update:agentStrategy', value: AgentStrategy): void
   (e: 'refreshHealth'): void
   (e: 'reindex'): void
   (e: 'compressContext'): void
@@ -68,19 +69,32 @@ const emit = defineEmits<{
       <div class="control">
         <label>模型选择</label>
         <select :value="props.model" @change="emit('update:model', ($event.target as HTMLSelectElement).value)">
-          <option value="gpt-5.4-mini">gpt-5.4-mini</option>
-          <option value="gpt-5.1">gpt-5.1</option>
+          <!-- <option value="gpt-5.4-mini">gpt-5.4-mini</option> -->
+          <option value="gpt-5.4">gpt-5.4</option>
           <!-- <option value="zyit-pro">Zyit-Pro</option> -->
         </select>
       </div>
 
-      <div class="control toggle-control">
-        <label>严格引用模式</label>
-        <input
-          type="checkbox"
-          :checked="props.strictCitation"
-          @change="emit('update:strictCitation', ($event.target as HTMLInputElement).checked)"
-        />
+      <div v-if="props.mode === 'agent'" class="control">
+        <label>执行策略</label>
+        <div class="strategy-group">
+          <button
+            type="button"
+            class="strategy-btn"
+            :class="{ active: props.agentStrategy === 'speed' }"
+            @click="emit('update:agentStrategy', 'speed')"
+          >
+            速度优先
+          </button>
+          <button
+            type="button"
+            class="strategy-btn"
+            :class="{ active: props.agentStrategy === 'quality' }"
+            @click="emit('update:agentStrategy', 'quality')"
+          >
+            质量优先
+          </button>
+        </div>
       </div>
 
       <div class="note">提示：后端对接完成后，这些参数将实时影响模型响应。</div>
@@ -185,10 +199,25 @@ const emit = defineEmits<{
   border-radius: 10px;
 }
 
-.toggle-control {
+.strategy-group {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+}
+
+.strategy-btn {
+  flex: 1;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ink-1);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.strategy-btn.active {
+  border-color: rgba(166, 30, 36, 0.4);
+  background: rgba(166, 30, 36, 0.1);
+  color: var(--accent);
 }
 
 .note {

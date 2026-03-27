@@ -74,3 +74,71 @@ describe('api.postReindex', () => {
     })
   })
 })
+
+describe('api.startChatStream', () => {
+  test('可以解析 step、message、done 三类 SSE 事件', async () => {
+    const encoder = new TextEncoder()
+    const streamBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'event: step',
+              'data: {"id":"step-1","node":"load_memory","title":"加载会话记忆","status":"completed","strategy":"quality","timestamp":"2026-03-26T00:00:00Z"}',
+              '',
+              'event: message',
+              'data: {"delta":"最终回答片段"}',
+              '',
+              'event: done',
+              'data: {"finish_reason":"stop","status":"failed","agent_strategy":"quality","trace_id":"trace-001","error_message":"generation failure injected","tool_audit":["agent:error:RuntimeError"]}',
+              ''
+            ].join('\n')
+          )
+        )
+        controller.close()
+      }
+    })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        body: streamBody,
+        json: async () => ({})
+      } as Response)
+    )
+
+    const api = await loadApiModule('')
+    const deltas: string[] = []
+    const steps: Array<Record<string, unknown>> = []
+    const doneEvents: Array<Record<string, unknown>> = []
+    const errors: Error[] = []
+
+    await api.startChatStream(
+      {
+        session_id: 'session-1',
+        messages: [{ role: 'user', content: '你好' }],
+        features: ['rag'],
+        mode: 'agent',
+        stream: true,
+        agent_strategy: 'quality'
+      },
+      {
+        onDelta: (delta) => deltas.push(delta),
+        onStep: (event) => steps.push(event as unknown as Record<string, unknown>),
+        onDone: (event) => doneEvents.push(event as Record<string, unknown>),
+        onError: (error) => errors.push(error)
+      }
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(errors).toEqual([])
+    expect(deltas).toEqual(['最终回答片段'])
+    expect(steps[0]?.node).toBe('load_memory')
+    expect(doneEvents[0]?.agent_strategy).toBe('quality')
+    expect(doneEvents[0]?.trace_id).toBe('trace-001')
+    expect(doneEvents[0]?.error_message).toBe('generation failure injected')
+  })
+})

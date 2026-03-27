@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import textwrap
 import time
@@ -19,6 +20,8 @@ from app.contracts import (
     MemoryEntry,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class GenerationService:
     def __init__(self, settings: Settings):
@@ -27,9 +30,10 @@ class GenerationService:
         self._client = OpenAI(
             api_key=self.settings.resolve_llm_api_key() or "missing-api-key",
             base_url=self._resolve_openai_base_url(),
-            timeout=self.settings.request_timeout_seconds,
+            timeout=self.settings.llm_timeout_seconds,
             max_retries=0,
         )
+        print(f'~ LLM Client initialized with base URL: {self._client.base_url}, Key present: {self._client.api_key}')
 
     def close(self) -> None:
         self._client.close()
@@ -343,6 +347,8 @@ class GenerationService:
             },
         ]
         chunks: list[str] = []
+        stream_started_at = time.perf_counter()
+        first_token_logged = False
         stream = self._client.chat.completions.create(
             model=model,
             messages=messages,
@@ -357,10 +363,26 @@ class GenerationService:
             delta_content = choices[0].delta.content or ""
             if not delta_content:
                 continue
+            if not first_token_logged:
+                first_token_logged = True
+                logger.info(
+                    "llm stream first_token model=%s route=stream context_blocks=%d feature_notes=%d elapsed_ms=%.1f",
+                    model,
+                    len(context_blocks),
+                    len(feature_notes),
+                    (time.perf_counter() - stream_started_at) * 1000,
+                )
             delta = str(delta_content)
             chunks.append(delta)
             yield GenerationStreamChunk(delta=delta)
         text = "".join(chunks).strip()
+        logger.info(
+            "llm stream done model=%s route=stream first_token=%s elapsed_ms=%.1f output_chars=%d",
+            model,
+            first_token_logged,
+            (time.perf_counter() - stream_started_at) * 1000,
+            len(text),
+        )
         if not text:
             raise RuntimeError("generation stream content is empty")
         return text

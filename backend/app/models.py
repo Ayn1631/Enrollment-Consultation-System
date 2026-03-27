@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 Role = Literal["user", "assistant", "system"]
-ChatMode = Literal["chat", "plan", "guide", "agent"]
+ChatMode = Literal["chat", "rag", "plan", "guide", "agent"]
+AgentStrategy = Literal["speed", "quality"]
+AgentStepStatus = Literal["started", "completed", "retrying", "degraded", "failed"]
 
 FeatureFlag = Literal["rag", "web_search", "skill_exec", "use_saved_skill", "citation_guard"]
 LegacyToolMode = Literal["search", "react", "plan", "guide"]
@@ -17,6 +19,13 @@ FinishReason = Literal["stop", "length", "error"]
 
 
 DEFAULT_FEATURES: tuple[FeatureFlag, ...] = ("rag", "citation_guard")
+MODE_DEFAULT_FEATURES: dict[ChatMode, tuple[FeatureFlag, ...]] = {
+    "chat": (),
+    "rag": ("rag", "citation_guard"),
+    "agent": ("rag", "web_search", "skill_exec", "citation_guard"),
+    "plan": DEFAULT_FEATURES,
+    "guide": DEFAULT_FEATURES,
+}
 
 LEGACY_TO_FEATURE: dict[LegacyToolMode, FeatureFlag] = {
     "search": "web_search",
@@ -56,6 +65,19 @@ class ChatSource(BaseModel):
     url: str
 
 
+class AgentStepEvent(BaseModel):
+    id: str
+    node: str
+    title: str
+    status: AgentStepStatus
+    message: str | None = None
+    subproblem_id: str | None = None
+    plan_step_index: int | None = None
+    attempt: int | None = None
+    strategy: AgentStrategy
+    timestamp: str
+
+
 class ChatRequest(BaseModel):
     session_id: str
     messages: list[ChatMessageInput] = Field(default_factory=list)
@@ -68,6 +90,7 @@ class ChatRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     model: str | None = None
+    agent_strategy: AgentStrategy = "speed"
 
     @field_validator("features")
     @classmethod
@@ -84,7 +107,7 @@ class ChatRequest(BaseModel):
             if mapped and mapped not in normalized:
                 normalized.append(mapped)
         if not normalized:
-            normalized = list(DEFAULT_FEATURES)
+            normalized = list(MODE_DEFAULT_FEATURES.get(self.mode, DEFAULT_FEATURES))
         if self.strict_citation and "citation_guard" not in normalized:
             normalized.append("citation_guard")
         normalized = _expand_feature_dependencies(normalized)
@@ -108,6 +131,8 @@ class ChatStreamDone(BaseModel):
     sources: list[ChatSource] = Field(default_factory=list)
     trace_id: str = ""
     tool_audit: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    agent_strategy: AgentStrategy | None = None
 
 
 class FeatureMeta(BaseModel):
@@ -162,3 +187,5 @@ class SessionResult(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     finish_reason: FinishReason = "stop"
     error_message: str | None = None
+    agent_strategy: AgentStrategy | None = None
+    agent_trace: list[AgentStepEvent] = Field(default_factory=list)

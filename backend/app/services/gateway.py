@@ -5,11 +5,13 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any, Iterator
 from urllib.parse import quote
 
 from app.contracts import GenerationRequest, MemoryEntry
 from app.models import (
+    AgentStepEvent,
     ChatCreateResponse,
     ChatMessageInput,
     ChatRequest,
@@ -18,6 +20,8 @@ from app.models import (
     FeatureFlag,
     SessionResult,
 )
+from app.services.agent_graph import AgentGraphRunner
+from app.services.agent_runtime import AgentRuntime
 from app.services.service_client import ServiceClient
 from app.state import ServiceContainer
 from app.services.ai_stack import AgentExecutionResult, build_langchain_chat_model, build_langchain_mcp_runtime
@@ -80,18 +84,35 @@ class GatewayOrchestrator:
 
     def __init__(self, deps: GatewayDependencies):
         self.deps = deps
+        self.agent_runtime = AgentRuntime(self)
+        self.agent_graph = AgentGraphRunner(self.agent_runtime)
 
     def create_chat(self, request: ChatRequest, fail_features: set[str] | None = None) -> ChatCreateResponse:
         """网关主流程：按 Agent 规划顺序执行功能并统一处理降级。"""
         fail_features = fail_features or set()
+        started_at = perf_counter()
         if request.mode == "agent":
             return self._create_agent_chat(request=request, fail_features=fail_features)
+        prepare_started_at = perf_counter()
         prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
+        prepared_elapsed_ms = (perf_counter() - prepare_started_at) * 1000
+        self.logger.info(
+            "chat create prepared trace_id=%s session_id=%s mode=%s features=%s context_blocks=%d sources=%d degraded=%s elapsed_ms=%.1f",
+            prepared.trace_id,
+            request.session_id,
+            request.mode,
+            prepared.effective_features,
+            len(prepared.context_blocks),
+            len(prepared.sources),
+            prepared.degraded,
+            prepared_elapsed_ms,
+        )
         if prepared.blocked_reply is not None:
             session = self._build_blocked_session(prepared)
             self.deps.container.session_store.set(request.session_id, session)
             return self._to_create_response(session)
 
+        generation_started_at = perf_counter()
         generation_result = self.deps.container.isolation.execute(
             "generation-service",
             lambda: self._invoke_generation(
@@ -106,6 +127,15 @@ class GatewayOrchestrator:
             f"[Gateway] generation_result trace_id={prepared.trace_id} ok={generation_result.ok} "
             f"error={generation_result.error} degraded={generation_result.degraded} "
             f"context_blocks={len(prepared.context_blocks)} sources={len(prepared.sources)}"
+        )
+        self.logger.info(
+            "chat create generation_done trace_id=%s session_id=%s mode=%s ok=%s elapsed_ms=%.1f total_ms=%.1f",
+            prepared.trace_id,
+            request.session_id,
+            request.mode,
+            generation_result.ok and generation_result.value is not None,
+            (perf_counter() - generation_started_at) * 1000,
+            (perf_counter() - started_at) * 1000,
         )
         if not generation_result.ok or generation_result.value is None:
             self.logger.error(
@@ -132,10 +162,24 @@ class GatewayOrchestrator:
     def stream_chat(self, request: ChatRequest, fail_features: set[str] | None = None) -> Iterator[GatewayStreamEvent]:
         """单请求流式聊天：前置能力准备完成后，边生成边向前端输出增量。"""
         fail_features = fail_features or set()
+        started_at = perf_counter()
         if request.mode == "agent":
             yield from self._stream_agent_chat(request=request, fail_features=fail_features)
             return
+        prepare_started_at = perf_counter()
         prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
+        prepared_elapsed_ms = (perf_counter() - prepare_started_at) * 1000
+        self.logger.info(
+            "chat stream prepared trace_id=%s session_id=%s mode=%s features=%s context_blocks=%d sources=%d degraded=%s elapsed_ms=%.1f",
+            prepared.trace_id,
+            request.session_id,
+            request.mode,
+            prepared.effective_features,
+            len(prepared.context_blocks),
+            len(prepared.sources),
+            prepared.degraded,
+            prepared_elapsed_ms,
+        )
         if prepared.blocked_reply is not None:
             session = self._build_blocked_session(prepared)
             self.deps.container.session_store.set(request.session_id, session)
@@ -155,6 +199,8 @@ class GatewayOrchestrator:
 
         generation_output = None
         generation_error: str | None = None
+        generation_started_at = perf_counter()
+        first_delta_logged = False
         for item in self.deps.container.isolation.execute_stream(
             "generation-service",
             lambda: self._invoke_generation_stream(
@@ -175,9 +221,29 @@ class GatewayOrchestrator:
                 generation_output = chunk.response
                 continue
             if chunk.delta:
+                if not first_delta_logged:
+                    first_delta_logged = True
+                    self.logger.info(
+                        "chat stream first_delta trace_id=%s session_id=%s mode=%s prepare_ms=%.1f first_delta_ms=%.1f total_ms=%.1f",
+                        prepared.trace_id,
+                        request.session_id,
+                        request.mode,
+                        prepared_elapsed_ms,
+                        (perf_counter() - generation_started_at) * 1000,
+                        (perf_counter() - started_at) * 1000,
+                    )
                 emitted_parts.append(chunk.delta)
                 yield GatewayStreamEvent(event="message", data={"delta": chunk.delta})
 
+        self.logger.info(
+            "chat stream generation_done trace_id=%s session_id=%s mode=%s first_delta=%s stream_elapsed_ms=%.1f total_ms=%.1f",
+            prepared.trace_id,
+            request.session_id,
+            request.mode,
+            first_delta_logged,
+            (perf_counter() - generation_started_at) * 1000,
+            (perf_counter() - started_at) * 1000,
+        )
         if generation_output is None:
             failure_text = ""
             if not emitted_parts:
@@ -206,43 +272,70 @@ class GatewayOrchestrator:
         yield self._build_done_event(session)
 
     def _create_agent_chat(self, request: ChatRequest, fail_features: set[str]) -> ChatCreateResponse:
-        """Agent 模式入口：使用 LangChain Agent 决定工具调用链。"""
-        try:
-            session = self._run_agent_session(request=request, fail_features=fail_features)
-        except Exception as exc:  # noqa: BLE001
-            self.logger.exception("agent mode failed session_id=%s", request.session_id)
-            session = self._build_agent_failure_session(request=request, exc=exc)
-            self.deps.container.session_store.set(request.session_id, session)
-            return self._to_create_response(session)
+        """专家模式入口：委托 LangGraph 执行完整编排。"""
+        session = self.agent_graph.run_sync(request=request, fail_features=fail_features)
         self.deps.container.session_store.set(request.session_id, session)
         return self._to_create_response(session)
 
     def _stream_agent_chat(self, request: ChatRequest, fail_features: set[str]) -> Iterator[GatewayStreamEvent]:
-        """Agent 模式的流式兼容实现：先执行工具链，再按 SSE 块回放结果。"""
+        """专家模式流式实现：先实时输出步骤事件，再流式回放最终文本。"""
         try:
-            session = self._run_agent_session(request=request, fail_features=fail_features)
+            for event_name, data in self.agent_graph.run_stream(
+                request=request,
+                fail_features=fail_features,
+                text_chunker=self._yield_text_events,
+            ):
+                yield GatewayStreamEvent(event=event_name, data=data)
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("agent stream failed session_id=%s", request.session_id)
-            session = self._build_agent_failure_session(request=request, exc=exc)
-            self.deps.container.session_store.set(request.session_id, session)
-            yield from self._yield_text_events(session.text)
-            yield self._build_done_event(session)
+            failure_session = self._build_agent_failure_session(request=request, exc=exc)
+            self.deps.container.session_store.set(request.session_id, failure_session)
+            yield from self._yield_text_events(failure_session.text)
+            yield self._build_done_event(failure_session)
             return
-        self.deps.container.session_store.set(request.session_id, session)
-        yield from self._yield_text_events(session.text)
-        yield self._build_done_event(session)
+        session = self.agent_graph._last_stream_session
+        if session is not None:
+            self.deps.container.session_store.set(request.session_id, session)
 
     def _build_agent_failure_session(self, request: ChatRequest, exc: Exception) -> SessionResult:
         trace_id = uuid.uuid4().hex
         error_summary = self._summarize_exception(exc)
-        text = (
-            "当前智能体执行失败，未能完成可靠的外部工具链调用。\n"
-            "为避免误导，本轮不会自动回退成普通回答并假装已经使用了 MCP 或其他外部工具。\n\n"
-            f"失败原因：{error_summary}\n\n"
-            "建议：\n"
-            "1. 检查模型服务和外部 MCP 服务是否可用。\n"
-            "2. 如果只是想先拿到基础答案，可暂时关闭智能体模式后重试。"
-        )
+        normalized = error_summary.lower()
+        tool_audit = [
+            f"agent:error:{exc.__class__.__name__}",
+            f"agent:error_summary:{error_summary}",
+        ]
+        if any(token in normalized for token in ("timed out", "timeout", "circuit_open:generation-service")):
+            tool_audit.append("agent:generation_timeout")
+            text = (
+                "当前专家模式在最终生成阶段超时，前置检索或工具步骤可能已经部分完成。\n"
+                "这次失败的主因是模型服务响应太慢，不是前端本身抽风。\n\n"
+                f"失败原因：{error_summary}\n\n"
+                "建议：\n"
+                "1. 检查本地或远端模型服务是否可用、是否负载过高。\n"
+                "2. 适当调大 LLM 超时时间，例如 `LLM_TIMEOUT_SECONDS`。\n"
+                "3. 如果只是先拿基础答案，可切换“速度优先”或更快模型后重试。"
+            )
+        elif "mcp" in normalized:
+            tool_audit.append("agent:mcp_execution_not_confirmed")
+            text = (
+                "当前专家模式执行失败，未能完成可靠的外部工具链调用。\n"
+                "为避免误导，本轮不会自动回退成普通回答并假装已经使用了 MCP 或其他外部工具。\n\n"
+                f"失败原因：{error_summary}\n\n"
+                "建议：\n"
+                "1. 检查外部 MCP 服务是否可用。\n"
+                "2. 如果只是想先拿到基础答案，可暂时关闭专家模式后重试。"
+            )
+        else:
+            tool_audit.append("agent:execution_failed")
+            text = (
+                "当前专家模式执行失败。\n"
+                "为避免误导，本轮不会伪造已经完成的工具链结果。\n\n"
+                f"失败原因：{error_summary}\n\n"
+                "建议：\n"
+                "1. 检查后端日志与 trace_id。\n"
+                "2. 确认模型服务、RAG、技能和 MCP 配置是否正常。"
+            )
         return SessionResult(
             session_id=request.session_id,
             trace_id=trace_id,
@@ -250,13 +343,10 @@ class GatewayOrchestrator:
             status="failed",
             degraded_features=[],
             sources=[],
-            tool_audit=[
-                f"agent:error:{exc.__class__.__name__}",
-                f"agent:error_summary:{error_summary}",
-                "agent:mcp_execution_not_confirmed",
-            ],
+            tool_audit=tool_audit,
             finish_reason="error",
             error_message=error_summary,
+            agent_strategy=request.agent_strategy,
         )
 
     def _run_agent_session(self, request: ChatRequest, fail_features: set[str]) -> SessionResult:
@@ -312,7 +402,7 @@ class GatewayOrchestrator:
         final_text = agent_result.text
         if "citation_guard" in effective_features and (not sources or "citation_guard" in degraded):
             final_text = (
-                "当前智能体证据链不完整，以下内容仅供参考。\n"
+                "当前专家模式证据链不完整，以下内容仅供参考。\n"
                 "建议联系招生办电话 0371-67698700 / 67698712 / 67698674 进一步确认。\n\n"
                 f"{final_text}"
             )
@@ -559,7 +649,7 @@ class GatewayOrchestrator:
             [
                 (
                     "system",
-                    "你是中原工学院招生智能体。你必须优先使用工具收集证据，再给出结论。"
+                    "你是中原工学院招生专家。你必须优先使用工具收集证据，再给出结论。"
                     "可按需调用本地 RAG、联网搜索、技能执行、会话记忆与 MCP 风格工具路由。"
                     "如果存在外部 MCP 工具，它们的名字通常会带服务器别名前缀，例如 zut_mcp_xxx。"
                     "如果证据不足，必须明确说不确定并建议联系官方招生办。"
@@ -1084,6 +1174,8 @@ class GatewayOrchestrator:
                 "sources": [item.model_dump() for item in session.sources],
                 "trace_id": session.trace_id,
                 "tool_audit": session.tool_audit,
+                "error_message": session.error_message,
+                "agent_strategy": session.agent_strategy,
             },
         )
 

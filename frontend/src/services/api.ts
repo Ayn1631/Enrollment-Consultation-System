@@ -1,4 +1,5 @@
 import type {
+  AgentStepEvent,
   ChatRequest,
   ChatStreamEvent,
   FeatureMeta,
@@ -112,6 +113,7 @@ export async function startChatStream(
   request: ChatRequest,
   handlers: {
     onDelta: (delta: string) => void
+    onStep: (event: AgentStepEvent) => void
     onDone: (event: ChatStreamEvent) => void
     onError: (err: Error) => void
   }
@@ -156,6 +158,12 @@ export async function startChatStream(
   const dispatchBlock = (block: string) => {
     const parsed = parseSseBlock(block)
     if (!parsed) return
+    if (parsed.event === 'step') {
+      const data = JSON.parse(parsed.data) as AgentStepEvent
+      console.log('[api.startChatStream] step', data)
+      handlers.onStep(data)
+      return
+    }
     if (parsed.event === 'done') {
       const data = JSON.parse(parsed.data) as ChatStreamEvent
       console.log('[api.startChatStream] done', data)
@@ -224,6 +232,7 @@ export function openChatStream(
   sessionId: string,
   handlers: {
     onDelta: (delta: string) => void
+    onStep: (event: AgentStepEvent) => void
     onDone: (event: ChatStreamEvent) => void
     onError: (err: Error) => void
   }
@@ -242,6 +251,16 @@ export function openChatStream(
     } catch {
       console.log('[api.openChatStream] message(raw)', ev.data)
       handlers.onDelta(String(ev.data))
+    }
+  }
+
+  const handleStep = (ev: MessageEvent) => {
+    try {
+      const data = JSON.parse(ev.data) as AgentStepEvent
+      console.log('[api.openChatStream] step', data)
+      handlers.onStep(data)
+    } catch (error) {
+      console.error('[api.openChatStream] step parse error', error)
     }
   }
 
@@ -265,6 +284,7 @@ export function openChatStream(
   }
 
   source.addEventListener('message', handleMessage)
+  source.addEventListener('step', handleStep)
   source.addEventListener('done', handleDone)
   source.addEventListener('error', handleError)
 

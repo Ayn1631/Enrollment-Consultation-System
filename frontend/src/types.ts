@@ -1,8 +1,10 @@
 export type Role = 'user' | 'assistant' | 'system'
 export type FeatureFlag = 'rag' | 'web_search' | 'skill_exec' | 'use_saved_skill' | 'citation_guard'
 export type ToolMode = 'search' | 'react' | 'plan' | 'guide' // legacy compatibility
-export type ChatMode = 'chat' | 'plan' | 'guide' | 'agent'
+export type ChatMode = 'chat' | 'rag' | 'plan' | 'guide' | 'agent'
 export type ChatStatus = 'ok' | 'degraded' | 'failed'
+export type AgentStrategy = 'speed' | 'quality'
+export type AgentStepStatus = 'started' | 'completed' | 'retrying' | 'degraded' | 'failed'
 
 export interface ChatSource {
   title: string
@@ -45,6 +47,19 @@ export interface MemoryCompressionResponse {
   notes: string[]
 }
 
+export interface AgentStepEvent {
+  id: string
+  node: string
+  title: string
+  status: AgentStepStatus
+  message?: string
+  subproblem_id?: string
+  plan_step_index?: number
+  attempt?: number
+  strategy: AgentStrategy
+  timestamp: string
+}
+
 export interface ChatMessage {
   id: string
   role: Role
@@ -55,6 +70,9 @@ export interface ChatMessage {
   enabledFeatures?: FeatureFlag[]
   traceId?: string
   sources?: ChatSource[]
+  errorMessage?: string
+  toolAudit?: string[]
+  agentTrace?: AgentStepEvent[]
 }
 
 export interface ChatSession {
@@ -67,6 +85,7 @@ export interface ChatSession {
   streamingText: string
   isStreaming: boolean
   latestDegradedFeatures: FeatureFlag[]
+  currentAgentTrace: AgentStepEvent[]
 }
 
 export interface ChatRequest {
@@ -81,13 +100,26 @@ export interface ChatRequest {
   temperature?: number
   top_p?: number
   model?: string
+  agent_strategy?: AgentStrategy
 }
 
 export interface ChatStreamEvent {
   delta?: string
+  id?: string
+  node?: string
+  title?: string
+  message?: string
+  subproblem_id?: string
+  plan_step_index?: number
+  attempt?: number
+  strategy?: AgentStrategy
+  timestamp?: string
+  agent_strategy?: AgentStrategy
   status?: ChatStatus
   degraded_features?: FeatureFlag[]
   trace_id?: string
   sources?: ChatSource[]
+  tool_audit?: string[]
+  error_message?: string
   finish_reason?: 'stop' | 'length' | 'error'
 }

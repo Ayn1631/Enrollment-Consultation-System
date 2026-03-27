@@ -1,10 +1,23 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import MarkdownContent from './MarkdownContent.vue'
+import type { ChatMode } from '../types'
 
 const props = defineProps<{
   content: string
   waitingFirstChunk: boolean
+  mode: ChatMode
 }>()
+
+const loadingText = computed(() => {
+  if (props.mode === 'chat') {
+    return '正在生成回答，请稍等...'
+  }
+  if (props.mode === 'rag') {
+    return '正在检索资料并生成回答，请稍等...'
+  }
+  return '正在调用专家能力并生成回答，请稍等...'
+})
 </script>
 
 <template>
@@ -16,7 +29,7 @@ const props = defineProps<{
     <div class="content">
       <div v-if="props.waitingFirstChunk" class="loading-state" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
-        <span class="loading-text">正在检索资料并生成回答，请稍等...</span>
+        <span class="loading-text">{{ loadingText }}</span>
       </div>
       <template v-else>
         <MarkdownContent :content="props.content" />

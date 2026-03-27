@@ -47,3 +47,34 @@ def test_chat_request_requires_saved_skill_id():
     payload["features"] = ["use_saved_skill"]
     with pytest.raises(ValidationError):
         ChatRequest(**payload)
+
+
+def test_chat_request_agent_strategy_defaults_to_speed():
+    req = ChatRequest(**_base_request())
+    assert req.agent_strategy == "speed"
+
+
+def test_chat_request_accepts_quality_agent_strategy():
+    payload = _base_request()
+    payload["agent_strategy"] = "quality"
+    req = ChatRequest(**payload)
+    assert req.agent_strategy == "quality"
+
+
+def test_chat_mode_defaults_to_plain_dialogue_without_rag():
+    req = ChatRequest(**_base_request())
+    assert req.features == []
+
+
+def test_rag_mode_defaults_to_rag_and_citation_guard():
+    payload = _base_request()
+    payload["mode"] = "rag"
+    req = ChatRequest(**payload)
+    assert req.features == ["rag", "citation_guard"]
+
+
+def test_agent_mode_defaults_to_full_feature_chain():
+    payload = _base_request()
+    payload["mode"] = "agent"
+    req = ChatRequest(**payload)
+    assert req.features == ["rag", "web_search", "skill_exec", "citation_guard"]
