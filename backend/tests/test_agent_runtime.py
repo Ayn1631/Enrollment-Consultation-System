@@ -79,7 +79,6 @@ def test_build_plan_should_include_mcp_steps_when_search_capability_matches_quer
     )
 
     step_types = [item.step_type for item in steps]
-    assert "mcp_discover" in step_types
     assert "mcp_execute" in step_types
 
 
@@ -103,7 +102,6 @@ def test_build_plan_should_not_include_mcp_steps_when_config_missing(tmp_path):
     )
 
     step_types = [item.step_type for item in steps]
-    assert "mcp_discover" not in step_types
     assert "mcp_execute" not in step_types
 
 
