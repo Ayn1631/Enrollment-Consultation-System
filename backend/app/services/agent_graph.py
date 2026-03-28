@@ -315,7 +315,7 @@ class AgentGraphRunner:
             node="build_subproblem_plan",
             title="构建子问题计划",
             status="completed",
-            message="已为所有子问题生成独立 Plan",
+            message="已为所有子问题生成候选工具建议",
         )
         return state
 
@@ -374,22 +374,35 @@ class AgentGraphRunner:
         working.status = "pending"
         working.degraded = False
 
-        for idx, step in enumerate(working.plan_steps, start=1):
-            attempt = 0
-            while True:
-                self.runtime.emit_step(
-                    events=state["step_events"],
+        attempt = 0
+        while True:
+            self.runtime.emit_step(
+                events=state["step_events"],
+                sink=sink,
+                strategy=state["agent_strategy"],
+                node="react_agent",
+                title="ReAct 自主执行",
+                status="started",
+                message=f"候选工具数：{len(working.plan_steps)}",
+                subproblem_id=working.subproblem_id,
+                attempt=attempt + 1,
+            )
+            try:
+                result = self.runtime.run_subproblem_agent(
+                    subproblem=working,
+                    request=state["request"],
+                    fail_features=state["fail_features"],
+                    effective_features=state["effective_features"],
+                    memory_context_blocks=state["memory_context"],
+                    trace_id=state["trace_id"],
+                    route_label=state["route_label"],
+                    step_events=state["step_events"],
                     sink=sink,
-                    strategy=state["agent_strategy"],
-                    node=step.step_type,
-                    title=step.title,
-                    status="started",
-                    subproblem_id=working.subproblem_id,
-                    plan_step_index=idx,
                     attempt=attempt + 1,
                 )
+            except Exception as exc:  # noqa: BLE001
                 result = self.runtime.execute_plan_step(
-                    step=step,
+                    step=PlanStep("synthesize_step", "汇总当前子问题"),
                     subproblem=working,
                     request=state["request"],
                     fail_features=state["fail_features"],
@@ -397,92 +410,92 @@ class AgentGraphRunner:
                     memory_context_blocks=state["memory_context"],
                     trace_id=state["trace_id"],
                 )
-                review = self.runtime.review_step(step, result)
-                working.tool_audit.extend(result.tool_audit)
-                working.notes.extend(result.notes)
-                working.context_blocks.extend(result.context_blocks)
-                working.sources = self.runtime.dedupe_sources([*working.sources, *result.sources], limit=5)
-                if result.web_hits:
-                    working.web_hits = result.web_hits
-                if review.ok:
-                    working.step_outputs[step.step_type] = result.message
-                    self.runtime.emit_step(
-                        events=state["step_events"],
-                        sink=sink,
-                        strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
-                        status="completed",
-                        message=review.message,
-                        subproblem_id=working.subproblem_id,
-                        plan_step_index=idx,
-                        attempt=attempt + 1,
-                    )
-                    break
-                if attempt < max_retry:
-                    attempt += 1
-                    working.attempt_count += 1
-                    self.runtime.emit_step(
-                        events=state["step_events"],
-                        sink=sink,
-                        strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
-                        status="retrying",
-                        message=review.message,
-                        subproblem_id=working.subproblem_id,
-                        plan_step_index=idx,
-                        attempt=attempt,
-                    )
-                    continue
-                if state["agent_strategy"] == "quality" and working.replan_count < 1:
-                    working.status = "needs_replan"
-                    working.notes.append(review.message)
-                    self.runtime.emit_step(
-                        events=state["step_events"],
-                        sink=sink,
-                        strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
-                        status="retrying",
-                        message=f"准备重规划：{review.message}",
-                        subproblem_id=working.subproblem_id,
-                        plan_step_index=idx,
-                        attempt=attempt + 1,
-                    )
-                    return working
-                if state["agent_strategy"] == "speed":
-                    working.degraded = True
-                    working.notes.append(review.message)
-                    working.tool_audit.append(f"step:degraded:{step.step_type}")
-                    self.runtime.emit_step(
-                        events=state["step_events"],
-                        sink=sink,
-                        strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
-                        status="degraded",
-                        message=review.message,
-                        subproblem_id=working.subproblem_id,
-                        plan_step_index=idx,
-                        attempt=attempt + 1,
-                    )
-                    break
-                working.status = "failed"
+                result.ok = False
+                result.message = f"ReAct 子问题执行失败：{exc.__class__.__name__}: {exc}"
+                result.notes.append(result.message)
+            review = self.runtime.review_subproblem_result(route_label=state["route_label"], result=result)
+            working.tool_audit.extend(result.tool_audit)
+            working.notes.extend(result.notes)
+            working.context_blocks.extend(result.context_blocks)
+            working.sources = self.runtime.dedupe_sources([*working.sources, *result.sources], limit=5)
+            if result.web_hits:
+                working.web_hits = result.web_hits
+            if review.ok:
+                working.step_outputs["react_agent"] = result.message
+                self.runtime.emit_step(
+                    events=state["step_events"],
+                    sink=sink,
+                    strategy=state["agent_strategy"],
+                    node="react_agent",
+                    title="ReAct 自主执行",
+                    status="completed",
+                    message=review.message,
+                    subproblem_id=working.subproblem_id,
+                    attempt=attempt + 1,
+                )
+                working.status = "completed"
+                return working
+            if attempt < max_retry:
+                attempt += 1
+                working.attempt_count += 1
+                self.runtime.emit_step(
+                    events=state["step_events"],
+                    sink=sink,
+                    strategy=state["agent_strategy"],
+                    node="react_agent",
+                    title="ReAct 自主执行",
+                    status="retrying",
+                    message=review.message,
+                    subproblem_id=working.subproblem_id,
+                    attempt=attempt,
+                )
+                continue
+            if state["agent_strategy"] == "quality" and working.replan_count < 1:
+                working.status = "needs_replan"
                 working.notes.append(review.message)
                 self.runtime.emit_step(
                     events=state["step_events"],
                     sink=sink,
                     strategy=state["agent_strategy"],
-                    node=step.step_type,
-                    title=step.title,
-                    status="failed",
-                    message=review.message,
+                    node="react_agent",
+                    title="ReAct 自主执行",
+                    status="retrying",
+                    message=f"准备重规划：{review.message}",
                     subproblem_id=working.subproblem_id,
-                    plan_step_index=idx,
                     attempt=attempt + 1,
                 )
                 return working
+            if state["agent_strategy"] == "speed":
+                working.degraded = True
+                working.notes.append(review.message)
+                working.tool_audit.append("react_agent:degraded")
+                self.runtime.emit_step(
+                    events=state["step_events"],
+                    sink=sink,
+                    strategy=state["agent_strategy"],
+                    node="react_agent",
+                    title="ReAct 自主执行",
+                    status="degraded",
+                    message=review.message,
+                    subproblem_id=working.subproblem_id,
+                    attempt=attempt + 1,
+                )
+                working.status = "degraded"
+                return working
+            working.status = "failed"
+            working.notes.append(review.message)
+            self.runtime.emit_step(
+                events=state["step_events"],
+                sink=sink,
+                strategy=state["agent_strategy"],
+                node="react_agent",
+                title="ReAct 自主执行",
+                status="failed",
+                message=review.message,
+                subproblem_id=working.subproblem_id,
+                attempt=attempt + 1,
+            )
+            return working
 
         if working.status == "pending":
             working.status = "degraded" if working.degraded else "completed"
@@ -537,7 +550,7 @@ class AgentGraphRunner:
             node="retry_or_escalate",
             title="重试或重规划",
             status="completed",
-            message=f"已重规划 {len(replanned)} 个子问题",
+            message=f"已刷新 {len(replanned)} 个子问题的候选工具建议",
         )
         return state
 

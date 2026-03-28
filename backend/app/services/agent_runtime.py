@@ -152,16 +152,64 @@ class AgentRuntime:
                 [
                     SystemMessage(
                         content=(
-                            "你负责把用户问题改写成适合招生咨询工具链执行的单轮查询。"
-                            "只输出改写后的问题文本，不要解释。"
+                            "你是“招生咨询查询改写器”。"
+                            "你的任务是把用户当前这句话，改写成适合招生咨询工具链执行的单轮查询。"
+                            "你的输出会直接用于后续检索、RAG、技能执行、官方搜索或工具路由，因此改写结果必须清晰、完整、可检索、少歧义。"
+                            "你必须先在内部综合理解“执行策略、用户原问题、相关记忆”，再给出最终改写结果，但不要输出你的分析过程。"
+                            "你只能输出最终改写后的问题文本，不要输出解释、前缀、编号、引号、Markdown、多个候选版本或任何额外内容。"
+                            "改写目标如下："
+                            "第一，补全省略代词、指代对象、年份、省份、专业、费用项、流程对象等关键缺失信息，使问题变成可以独立理解的单轮查询。"
+                            "第二，尽量利用相关记忆补全上下文，但只能使用与当前问题直接相关、且可以高置信度承接的信息。"
+                            "第三，必须保持用户原意，不得编造新需求，不得扩写成用户没有表达过的目标。"
+                            "第四，如果记忆里存在多个可能指代对象且无法确定，就保持原问题核心意图并做最小保守补全，不要瞎猜。"
+                            "第五，不要回答问题本身，你的职责只是改写查询，不是提供结论。"
+                            "第六，输出必须是适合工具链理解的一条自然语言查询，而不是搜索语法、标签列表或问答摘要。"
+                            "第七，当用户问题已经足够清晰时，只做轻量规范化，不要过度改写。"
+                            "记忆使用规则："
+                            "只有在原问题出现“这个、那个、它、那、这、该专业、这个学费、今年、这类情况”等省略表达时，才优先用记忆补全。"
+                            "如果记忆与原问题无关，忽略记忆。"
+                            "如果记忆能明确定位用户当前追问对象，应直接替换省略指代，使改写结果可独立成立。"
+                            "如果记忆只能提供弱线索，宁可保守，也不要硬补。"
+                            "策略适配规则："
+                            "当执行策略是 speed 时，优先生成更短、更直接、最小必要补全的查询。"
+                            "当执行策略是 quality 时，在不改变原意的前提下，生成信息更完整、歧义更少、检索更稳定的查询。"
+                            "下面是示例："
+                            "示例1："
+                            "原问题：这个专业学费多少？"
+                            "相关记忆：用户前文持续咨询软件工程专业。"
+                            "输出：中原工学院软件工程专业学费多少？"
+                            "示例2："
+                            "原问题：那河南理科呢？"
+                            "相关记忆：用户前文在问中原工学院软件工程专业在河南理科的录取情况。"
+                            "输出：中原工学院软件工程专业在河南理科的录取情况如何？"
+                            "示例3："
+                            "原问题：今年报名流程是啥？"
+                            "相关记忆：用户正在咨询中原工学院专升本报考。"
+                            "输出：中原工学院今年专升本报名流程是什么？"
+                            "示例4："
+                            "原问题：住宿费呢"
+                            "相关记忆：用户前文已经明确在问 2026 年本科新生收费标准。"
+                            "输出：中原工学院 2026 年本科新生住宿费是多少？"
+                            "示例5："
+                            "原问题：这个学校怎么样"
+                            "相关记忆：无明确相关记忆。"
+                            "输出：中原工学院怎么样？"
                         )
                     ),
                     HumanMessage(
                         content=(
+                            "请执行一次招生咨询查询改写任务。\n\n"
                             f"执行策略：{strategy}\n"
                             f"用户原问题：{last_user}\n\n"
                             f"相关记忆：\n{memory_text}\n\n"
-                            "请补全省略代词、保持原意，不要编造新需求。"
+                            "输出要求：\n"
+                            "1. 只输出一条改写后的查询文本。\n"
+                            "2. 优先补全当前问题中的省略指代、时间范围、地区、专业、费用项、流程对象等关键缺失信息。\n"
+                            "3. 可以根据相关记忆替换“这个、那个、它、那、今年、该专业、这个费用”等模糊表达，但前提是记忆与当前问题直接相关且指向明确。\n"
+                            "4. 不要编造用户没有提出的新目标，不要把一个问题扩成多个问题。\n"
+                            "5. 不要输出解释，不要输出分析过程，不要输出多个候选版本。\n"
+                            "6. 如果原问题已经足够清晰，就做轻量规范化后直接输出。\n"
+                            "7. 如果记忆不足以安全替换代词，就保守改写，不要乱猜。"
                         )
                     ),
                 ]
@@ -191,26 +239,376 @@ class AgentRuntime:
         request: ChatRequest,
         strategy: AgentStrategy,
     ) -> list[PlanStep]:
-        steps: list[PlanStep] = [PlanStep("recall_memory", "读取会话记忆")]
+        steps: list[PlanStep] = []
         if "rag" in effective_features:
-            steps.append(PlanStep("local_rag_search", "本地 RAG 检索"))
+            steps.append(PlanStep("local_rag_search", "候选工具：本地 RAG 检索"))
         if self._should_use_mcp(query=query, route_label=route_label, strategy=strategy):
-            steps.append(PlanStep("mcp_discover", "查看 MCP 工具目录"))
-            steps.append(PlanStep("mcp_execute", "尝试执行 MCP 工具"))
+            steps.append(PlanStep("mcp_discover", "候选工具：查看 MCP 工具目录"))
+            steps.append(PlanStep("mcp_execute", "候选工具：调用 MCP 工具"))
         if route_label == "time_sensitive" and "web_search" in effective_features:
-            steps.append(PlanStep("official_web_search", "官方联网搜索"))
-            steps.append(PlanStep("official_web_read", "官方网页阅读"))
+            steps.append(PlanStep("official_web_search", "候选工具：官方联网搜索"))
+            steps.append(PlanStep("official_web_read", "候选工具：官方网页阅读"))
         elif strategy == "quality" and "web_search" in effective_features and self.gateway._is_time_sensitive_query(query):
-            steps.append(PlanStep("official_web_search", "官方联网搜索"))
+            steps.append(PlanStep("official_web_search", "候选工具：官方联网搜索"))
         if route_label == "process":
             if "use_saved_skill" in effective_features and request.saved_skill_id:
-                steps.append(PlanStep("saved_skill", "执行历史技能"))
+                steps.append(PlanStep("saved_skill", "候选工具：执行历史技能"))
             elif "skill_exec" in effective_features:
-                steps.append(PlanStep("general_skill", "执行通用技能"))
+                steps.append(PlanStep("general_skill", "候选工具：执行通用技能"))
         if "citation_guard" in effective_features:
-            steps.append(PlanStep("citation_guard", "引用校验"))
-        steps.append(PlanStep("synthesize_step", "汇总当前子问题"))
+            steps.append(PlanStep("citation_guard", "候选工具：引用校验"))
+        if not steps:
+            steps.append(PlanStep("synthesize_step", "候选策略：优先基于默认上下文直接回答"))
         return steps
+
+    def run_subproblem_agent(
+        self,
+        *,
+        subproblem: SubproblemState,
+        request: ChatRequest,
+        fail_features: set[str],
+        effective_features: list[FeatureFlag],
+        memory_context_blocks: list[str],
+        trace_id: str,
+        route_label: str,
+        step_events: list[AgentStepEvent],
+        sink: StepSink | None,
+        attempt: int,
+    ) -> StepExecutionResult:
+        llm = build_langchain_chat_model(
+            self.deps.services.settings,
+            model=request.model,
+            temperature=request.temperature,
+            top_p=request.top_p,
+        )
+        if llm is None:
+            raise RuntimeError("agent_llm_unavailable")
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+            from langchain_core.tools import Tool, tool
+            from langgraph.prebuilt import create_react_agent
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("react_agent_dependencies_unavailable") from exc
+
+        collector_context_blocks = list(subproblem.context_blocks)
+        collector_sources = list(subproblem.sources)
+        collector_notes = list(subproblem.notes)
+        collector_tool_audit: list[str] = []
+        collector_web_hits = list(subproblem.web_hits)
+        current_attempt = attempt
+
+        def emit_tool_step(*, node: str, title: str, status: str, message: str | None = None) -> None:
+            self.emit_step(
+                events=step_events,
+                sink=sink,
+                strategy=request.agent_strategy,
+                node=node,
+                title=title,
+                status=status,
+                message=message,
+                subproblem_id=subproblem.subproblem_id,
+                attempt=current_attempt,
+            )
+
+        def compact_preview(rows: list[str], *, limit: int = 2) -> str:
+            preview = [item.strip() for item in rows if item.strip()][:limit]
+            return "\n".join(preview) if preview else "工具未返回可用内容。"
+
+        @tool("local_rag_search")
+        def local_rag_search(tool_query: str) -> str:
+            """检索本地招生知识库，适合专业、学费、流程、政策、常见问答等校内资料问题。"""
+            emit_tool_step(node="local_rag_search", title="本地 RAG 检索", status="started", message=tool_query)
+            collector_tool_audit.append("agent_tool:local_rag_search")
+            if "rag" not in effective_features:
+                emit_tool_step(node="local_rag_search", title="本地 RAG 检索", status="degraded", message="当前会话未开启 rag 功能。")
+                return "当前会话未开启 rag 功能。"
+            rag_result = self.deps.container.isolation.execute(
+                "rag-agent-service",
+                lambda: self.gateway._invoke_rag(
+                    request.session_id,
+                    tool_query,
+                    fail_features,
+                    memory_context_blocks + collector_context_blocks,
+                ),
+            )
+            if not rag_result.ok or rag_result.value is None:
+                message = f"RAG 检索失败：{rag_result.error or 'unknown'}"
+                emit_tool_step(node="local_rag_search", title="本地 RAG 检索", status="failed", message=message)
+                return message
+            rag_output = rag_result.value
+            collector_context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
+            collector_sources[:] = self.dedupe_sources(
+                [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in rag_output.sources]],
+                limit=5,
+            )
+            if rag_output.degrade_reason:
+                collector_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
+            preview = compact_preview(rag_output.context_blocks, limit=3)
+            emit_tool_step(
+                node="local_rag_search",
+                title="本地 RAG 检索",
+                status="completed",
+                message=f"命中 {len(rag_output.context_blocks)} 条上下文",
+            )
+            return preview
+
+        @tool("official_web_search")
+        def official_web_search(tool_query: str) -> str:
+            """执行官方站点联网搜索，适合最新公告、时间敏感政策、官网通知类问题。"""
+            emit_tool_step(node="official_web_search", title="官方联网搜索", status="started", message=tool_query)
+            collector_tool_audit.append("agent_tool:official_web_search")
+            if "web_search" not in effective_features:
+                emit_tool_step(node="official_web_search", title="官方联网搜索", status="degraded", message="当前会话未开启 web_search 功能。")
+                return "当前会话未开启 web_search 功能。"
+            allowed, guarded_query, reason = self.gateway._guard_web_search(tool_query)
+            if not allowed:
+                message = f"联网搜索被拦截：{reason}"
+                collector_tool_audit.append(f"web_search:blocked:{reason}")
+                emit_tool_step(node="official_web_search", title="官方联网搜索", status="degraded", message=message)
+                return message
+            search_result = self.deps.container.isolation.execute(
+                "web-search-service",
+                lambda: self.gateway._invoke_web_search(guarded_query, fail_features),
+            )
+            if not search_result.ok or not search_result.value:
+                message = f"联网搜索失败：{search_result.error or 'unknown'}"
+                emit_tool_step(node="official_web_search", title="官方联网搜索", status="failed", message=message)
+                return message
+            hits = search_result.value
+            collector_web_hits[:] = [{"title": item.title, "url": item.url, "snippet": item.snippet} for item in hits]
+            collector_context_blocks.extend([f"联网搜索摘要：{item.title} | {item.snippet}" for item in hits])
+            collector_sources[:] = self.dedupe_sources(
+                [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in hits]],
+                limit=5,
+            )
+            collector_tool_audit.append("web_search:allowed:official_whitelist")
+            emit_tool_step(node="official_web_search", title="官方联网搜索", status="completed", message=f"命中 {len(hits)} 条官方结果")
+            return "\n".join(f"{item.title}: {item.snippet}" for item in hits[:2]) or "未获取到可用官方搜索摘要。"
+
+        @tool("official_web_read")
+        def official_web_read(tool_query: str) -> str:
+            """读取已命中的官方网页内容，适合在搜索后进一步核对原文细节。"""
+            emit_tool_step(node="official_web_read", title="官方网页阅读", status="started", message=tool_query)
+            collector_tool_audit.append("agent_tool:official_web_read")
+            if not collector_web_hits:
+                emit_tool_step(node="official_web_read", title="官方网页阅读", status="degraded", message="当前没有可读的官方网页结果。")
+                return "当前没有可读的官方网页结果。"
+            hits = [self.gateway.WebSearchHit(**item) for item in collector_web_hits] if hasattr(self.gateway, "WebSearchHit") else []
+            if not hits:
+                hits = [type("Hit", (), item) for item in collector_web_hits]
+            read_result = self.deps.container.isolation.execute(
+                "web-read-service",
+                lambda: self.gateway._invoke_web_read(query=tool_query, hits=hits, fail_features=fail_features),
+            )
+            if not read_result.ok or not read_result.value:
+                message = f"网页阅读失败：{read_result.error or 'unknown'}"
+                collector_tool_audit.append("web_read:degraded:official_whitelist")
+                emit_tool_step(node="official_web_read", title="官方网页阅读", status="failed", message=message)
+                return message
+            collector_context_blocks.extend(read_result.value)
+            collector_tool_audit.append("web_read:allowed:official_whitelist")
+            emit_tool_step(node="official_web_read", title="官方网页阅读", status="completed", message=f"已读取 {len(read_result.value)} 条网页片段")
+            return compact_preview(read_result.value)
+
+        @tool("general_skill")
+        def general_skill(tool_query: str) -> str:
+            """执行通用流程技能，适合报到、申请、材料准备、办理步骤等流程问题。"""
+            emit_tool_step(node="general_skill", title="执行通用技能", status="started", message=tool_query)
+            collector_tool_audit.append("agent_tool:general_skill")
+            if "skill_exec" not in effective_features:
+                emit_tool_step(node="general_skill", title="执行通用技能", status="degraded", message="当前会话未开启 skill_exec 功能。")
+                return "当前会话未开启 skill_exec 功能。"
+            allowed, reason = self.gateway._guard_skill_request(query=tool_query, saved_skill_id=None)
+            if not allowed:
+                message = f"技能执行被拦截：{reason}"
+                collector_tool_audit.append(f"skill_exec:blocked:{reason}")
+                emit_tool_step(node="general_skill", title="执行通用技能", status="degraded", message=message)
+                return message
+            skill_result = self.deps.container.isolation.execute(
+                "skill-service",
+                lambda: self.gateway._invoke_skill(tool_query, request.session_id, None, fail_features),
+            )
+            if not skill_result.ok or not skill_result.value:
+                message = f"技能执行失败：{skill_result.error or 'unknown'}"
+                emit_tool_step(node="general_skill", title="执行通用技能", status="failed", message=message)
+                return message
+            collector_context_blocks.append(f"[skill] {skill_result.value}")
+            collector_tool_audit.append(f"skill_exec:allowed:{reason}")
+            emit_tool_step(node="general_skill", title="执行通用技能", status="completed", message="技能执行成功")
+            return str(skill_result.value)
+
+        @tool("saved_skill")
+        def saved_skill(tool_query: str) -> str:
+            """执行已保存技能，仅在会话提供了 saved_skill_id 时可用。"""
+            emit_tool_step(node="saved_skill", title="执行历史技能", status="started", message=tool_query)
+            collector_tool_audit.append("agent_tool:saved_skill")
+            if "use_saved_skill" not in effective_features or not request.saved_skill_id:
+                emit_tool_step(node="saved_skill", title="执行历史技能", status="degraded", message="当前没有可用的历史技能。")
+                return "当前没有可用的历史技能。"
+            allowed, reason = self.gateway._guard_skill_request(query=tool_query, saved_skill_id=request.saved_skill_id)
+            if not allowed:
+                message = f"历史技能调用被拦截：{reason}"
+                collector_tool_audit.append(f"use_saved_skill:blocked:{reason}")
+                emit_tool_step(node="saved_skill", title="执行历史技能", status="degraded", message=message)
+                return message
+            skill_result = self.deps.container.isolation.execute(
+                "saved-skill-service",
+                lambda: self.gateway._invoke_skill(tool_query, request.session_id, request.saved_skill_id, fail_features),
+            )
+            if not skill_result.ok or not skill_result.value:
+                message = f"历史技能执行失败：{skill_result.error or 'unknown'}"
+                emit_tool_step(node="saved_skill", title="执行历史技能", status="failed", message=message)
+                return message
+            collector_context_blocks.append(f"[saved-skill] {skill_result.value}")
+            collector_tool_audit.append(f"use_saved_skill:allowed:{reason}")
+            emit_tool_step(node="saved_skill", title="执行历史技能", status="completed", message="历史技能执行成功")
+            return str(skill_result.value)
+
+        @tool("citation_guard")
+        def citation_guard() -> str:
+            """对当前已收集来源做引用校验，判断证据是否足够支撑结论。"""
+            emit_tool_step(node="citation_guard", title="引用校验", status="started")
+            collector_tool_audit.append("agent_tool:citation_guard")
+            guard_result = self.deps.container.isolation.execute(
+                "citation-guard",
+                lambda: self.gateway._invoke_citation_guard(self.dedupe_sources(collector_sources, 5), fail_features),
+            )
+            if guard_result.ok and guard_result.value:
+                emit_tool_step(node="citation_guard", title="引用校验", status="completed", message="引用校验通过")
+                return "引用校验通过。"
+            emit_tool_step(node="citation_guard", title="引用校验", status="degraded", message="引用校验失败或证据不足。")
+            return "引用校验失败或证据不足。"
+
+        @tool("mcp_tools_catalog")
+        def mcp_tools_catalog() -> str:
+            """查看当前可用 MCP 工具目录，适合先了解有哪些外部工具可以调用。"""
+            emit_tool_step(node="mcp_discover", title="查看 MCP 工具目录", status="started")
+            collector_tool_audit.append("agent_tool:mcp_tools_catalog")
+            runtime = self.get_mcp_runtime(trace_id)
+            if runtime.notes:
+                collector_notes.extend(runtime.notes)
+            if runtime.tools:
+                emit_tool_step(node="mcp_discover", title="查看 MCP 工具目录", status="completed", message=f"可用 MCP 工具 {len(runtime.tools)} 个")
+                return "\n".join(
+                    f"- {getattr(item, 'name', 'unknown_tool')}: {getattr(item, 'description', '')}"
+                    for item in runtime.tools[:10]
+                )
+            if runtime.servers:
+                emit_tool_step(node="mcp_discover", title="查看 MCP 工具目录", status="degraded", message="MCP 服务已配置但工具不可用。")
+                return "MCP 服务已配置但工具不可用。"
+            emit_tool_step(node="mcp_discover", title="查看 MCP 工具目录", status="degraded", message="当前未配置 MCP 工具。")
+            return "当前未配置 MCP 工具。"
+
+        @tool("mcp_tool_router")
+        def mcp_tool_router(tool_name: str, tool_input: str) -> str:
+            """调用指定 MCP 工具。tool_name 可填目录里的精确名称，tool_input 为传入该工具的查询内容。"""
+            normalized = tool_name.strip()
+            emit_tool_step(node="mcp_execute", title="调用 MCP 工具", status="started", message=f"{normalized}: {tool_input}")
+            collector_tool_audit.append(f"agent_tool:mcp_tool_router:{normalized or 'empty'}")
+            runtime = self.get_mcp_runtime(trace_id)
+            if not runtime.tools:
+                emit_tool_step(node="mcp_execute", title="调用 MCP 工具", status="degraded", message="当前没有可执行的 MCP 工具。")
+                return "当前没有可执行的 MCP 工具。"
+            tool_obj = next((item for item in runtime.tools if getattr(item, "name", "") == normalized), None)
+            if tool_obj is None:
+                tool_obj = self._select_mcp_tool(runtime.tools, tool_input or subproblem.query)
+            with self._get_mcp_runtime_lock(trace_id):
+                try:
+                    result = asyncio.run(self._invoke_mcp_tool(tool_obj, tool_input))
+                except Exception as exc:
+                    message = f"MCP 工具执行失败：{exc.__class__.__name__}"
+                    emit_tool_step(node="mcp_execute", title="调用 MCP 工具", status="failed", message=message)
+                    return message
+            result_text = str(result).strip() or "MCP 工具未返回内容。"
+            if str(result).strip():
+                collector_context_blocks.append(f"[mcp:{getattr(tool_obj, 'name', 'unknown_tool')}] {result_text}")
+            collector_tool_audit.append(f"agent_tool:mcp_execute:{getattr(tool_obj, 'name', 'unknown_tool')}")
+            emit_tool_step(node="mcp_execute", title="调用 MCP 工具", status="completed", message=getattr(tool_obj, "name", "unknown_tool"))
+            return result_text
+
+        tools: list[Any] = [local_rag_search, official_web_search, official_web_read, general_skill, saved_skill, mcp_tools_catalog, mcp_tool_router, citation_guard]
+        runtime = self.get_mcp_runtime(trace_id)
+        if runtime.notes:
+            collector_notes.extend(runtime.notes)
+        if runtime.tools:
+            collector_tool_audit.append("agent_tool:mcp_runtime:" + ",".join(item.alias for item in runtime.servers))
+            for mcp_tool in runtime.tools:
+                tool_name = str(getattr(mcp_tool, "name", "") or "unknown_mcp_tool")
+                tool_description = str(getattr(mcp_tool, "description", "") or f"MCP 工具 {tool_name}")
+                tools.append(
+                    Tool(
+                        name=tool_name,
+                        description=tool_description,
+                        func=lambda tool_input, _tool=mcp_tool, _tool_name=tool_name: mcp_tool_router.invoke(
+                            {"tool_name": _tool_name, "tool_input": tool_input}
+                        ),
+                    )
+                )
+        elif runtime.servers:
+            collector_tool_audit.append("agent_tool:mcp_runtime_unavailable:" + ",".join(item.alias for item in runtime.servers))
+
+        history_messages = self.gateway._build_langchain_history_messages(request.messages[:-1])
+        memory_text = "\n".join(memory_context_blocks[:8]) if memory_context_blocks else "当前没有可用记忆。"
+        prior_evidence = "\n".join(collector_context_blocks[:8]) if collector_context_blocks else "当前没有已有证据。"
+        candidate_tools = "\n".join(f"- {item.step_type}: {item.title}" for item in subproblem.plan_steps) or "由你自行选择合适工具。"
+        strategy_hint = "速度优先，尽量少调工具、快拿证据。" if request.agent_strategy == "speed" else "质量优先，允许更充分地调用工具交叉验证。"
+        system_prompt = (
+            "你是中原工学院招生专家模式下的子问题执行智能体。"
+            "你必须使用 ReAct 方式自主决定是否调用工具，但记忆已经作为默认上下文直接提供，不需要先额外读取记忆工具。"
+            "你的目标是先拿到可靠证据，再给出这个子问题的简短结论。"
+            "除非问题非常低风险且上下文已足够，否则不要空想。"
+            "如果涉及最新、费用、流程、政策、联系方式，优先考虑调用相关工具。"
+            "如果证据不足，要明确说明不确定，不得编造来源。"
+        )
+        human_prompt = (
+            f"执行策略：{request.agent_strategy}（{strategy_hint}）\n"
+            f"问题路由：{route_label}\n"
+            f"子问题：{subproblem.query}\n\n"
+            "默认记忆上下文：\n"
+            f"{memory_text}\n\n"
+            "当前已拿到的历史证据：\n"
+            f"{prior_evidence}\n\n"
+            "候选工具建议（仅供参考，不是固定流程）：\n"
+            f"{candidate_tools}\n\n"
+            "请你自主决定是否调用工具，完成该子问题。"
+            "最终只需给出这个子问题的结论性回答，必要时简述依据与不确定性。"
+        )
+
+        agent = create_react_agent(llm, tools)
+        result = asyncio.run(
+            agent.ainvoke(
+                {
+                    "messages": [
+                        SystemMessage(content=system_prompt),
+                        *history_messages,
+                        HumanMessage(content=human_prompt),
+                    ]
+                }
+            )
+        )
+        output = self._extract_agent_output_text(result)
+        if not output:
+            raise RuntimeError("subproblem_agent_output_empty")
+        collector_context_blocks.append(f"[subproblem-answer] {output}")
+        return StepExecutionResult(
+            ok=True,
+            message=output,
+            context_blocks=collector_context_blocks,
+            sources=self.dedupe_sources(collector_sources, limit=5),
+            tool_audit=collector_tool_audit,
+            notes=list(dict.fromkeys(collector_notes)),
+            web_hits=collector_web_hits,
+        )
+
+    def review_subproblem_result(self, *, route_label: str, result: StepExecutionResult) -> StepReviewResult:
+        if not result.ok:
+            return StepReviewResult(ok=False, message=result.message or "智能体未返回有效结果。")
+        if not (result.message or "").strip():
+            return StepReviewResult(ok=False, message="智能体输出为空。")
+        needs_evidence = route_label in {"faq", "policy", "process", "time_sensitive"}
+        if needs_evidence and not result.context_blocks and not result.sources:
+            return StepReviewResult(ok=False, message="智能体未拿到可用证据。")
+        return StepReviewResult(ok=True, message="智能体已完成子问题。")
 
     def execute_plan_step(
         self,
@@ -577,6 +975,30 @@ class AgentRuntime:
             return normalized
         keep = normalized[: limit_chars - 3].rstrip(" ，。；;,:：")
         return f"{keep}..."
+
+    def _extract_agent_output_text(self, result: Any) -> str:
+        messages = list(result.get("messages") or []) if isinstance(result, dict) else []
+        for message in reversed(messages):
+            if getattr(message, "type", "") != "ai":
+                continue
+            content = getattr(message, "content", "")
+            if isinstance(content, str):
+                normalized = content.strip()
+                if normalized:
+                    return normalized
+                continue
+            if isinstance(content, list):
+                rows: list[str] = []
+                for item in content:
+                    if isinstance(item, str):
+                        rows.append(item.strip())
+                        continue
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        rows.append(str(item.get("text", "")).strip())
+                normalized = "\n".join(item for item in rows if item)
+                if normalized.strip():
+                    return normalized.strip()
+        return ""
 
     def _should_use_mcp(self, *, query: str, route_label: str, strategy: AgentStrategy) -> bool:
         servers, _ = load_mcp_server_configs(self.deps.services.settings)
