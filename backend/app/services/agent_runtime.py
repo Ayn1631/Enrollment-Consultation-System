@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import threading
@@ -219,16 +220,254 @@ class AgentRuntime:
         except Exception:
             return self._rule_rewrite_query(last_user=last_user, memory_text=memory_text, strategy=strategy)
 
-    def split_query(self, query: str, strategy: AgentStrategy) -> list[str]:
+    def split_query(
+        self,
+        query: str,
+        strategy: AgentStrategy,
+        request: ChatRequest | None = None,
+    ) -> list[str]:
         normalized = re.sub(r"\s+", " ", query).strip()
         if not normalized:
             return []
-        parts = [item.strip(" ，。；;？?！!") for item in re.split(r"[；;。]|(?:并且)|(?:以及)|(?:同时)|(?:另外)", normalized)]
-        parts = [item for item in parts if item]
-        if not parts:
-            return [normalized]
-        max_subproblems = 2 if strategy == "speed" else 4
-        return parts[:max_subproblems]
+        max_subproblems = 5 if strategy == "speed" else 20
+        llm = build_langchain_chat_model(
+            self.deps.services.settings,
+            model=request.model if request is not None else None,
+            temperature=request.temperature if request is not None else None,
+            top_p=request.top_p if request is not None else None,
+        )
+        if llm is None:
+            return self._rule_split_query(normalized, max_subproblems=max_subproblems)
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+        except Exception:
+            return self._rule_split_query(normalized, max_subproblems=max_subproblems)
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(
+                        content=(
+                            '''
+你是“招生咨询系统子问题拆分器”。
+
+你的任务是把用户的招生咨询问题，拆分成一组“可独立求解、合起来又能覆盖原始意图”的子问题列表，用于后续检索、工具调用、流程分析、政策核验和答案综合。
+
+你的工作不是回答问题，而是为后续工具链生成高质量的求解子任务。
+你必须先在内部充分理解原问题的真实目标、约束条件、隐含前置依赖、可能需要深化的维度，再输出最终结果。
+但不要输出你的思考过程，只输出最终 JSON 数组。
+
+【一、领域约束】
+当前任务领域是“招生咨询系统”。
+你处理的问题通常涉及：
+- 招生政策
+- 报考条件
+- 专业信息
+- 学费与住宿费
+- 奖助学金与资助
+- 分数线、位次、录取规则
+- 报名、报到、转专业、专升本等流程
+- 学校、学院、专业对比
+- 时间敏感的年度招生信息
+
+因此，你拆分出来的子问题必须适合招生咨询场景，不要泛化成空洞问题，也不要偏离用户在招生上的真实关注点。
+
+【二、核心目标】
+拆分后的子问题必须满足以下目标：
+1. 每个子问题都能被单独检索、单独分析、单独求解。
+2. 所有子问题合起来，能够覆盖用户原问题的主要意图。
+3. 不能编造用户没有提出的新问题。
+4. 不能把一个本来只适合整体回答的问题硬拆碎。
+5. 对于复杂问题，要识别“前置问题”和“深化问题”。
+
+【三、前置问题与深化问题】
+你必须理解这两个概念：
+
+1. 前置问题
+指为了正确回答主问题，必须先确认的基础问题、限定条件或判断依据。
+例如：
+- 用户问“我能不能报这个专业”，前置问题可能是该专业的报考条件、选科要求、分数要求。
+- 用户问“学费贵不贵”，前置问题可能是具体专业、学历层次、年份、收费标准。
+
+2. 深化问题
+指在主问题已经基本成立后，进一步展开的关键细分问题。
+例如：
+- 用户问“这个专业值不值得报”，深化问题可能是就业、课程设置、学费、录取难度。
+- 用户问“怎么申请助学金”，深化问题可能是申请条件、材料、流程、时间节点。
+
+拆分时，你需要先判断：
+- 原问题是否包含隐含前置依赖
+- 原问题是否天然包含多个需要展开的深化维度
+
+如果有，就拆出来；
+如果没有，就不要为了显得聪明硬拆。
+
+【四、拆分原则】
+你必须严格遵守以下原则：
+
+1. 保持原意
+所有子问题都必须忠实于用户原问题，不得扩展出用户没有表达或明显暗示的新目标。
+
+2. 保留硬约束
+如果原问题里有年份、省份、专业、批次、分数、金额、身份、对象、条件、否定词等约束，拆分后必须尽可能保留在相关子问题中。
+
+3. 子问题要“独立可求解”
+每个子问题都应当是后续系统可以单独处理的一条清晰任务，不要写成半截话、代词指代不清的话、或必须依赖别的子问题才能理解的话。
+
+4. 先前置，后深化
+如果需要拆出前置问题和深化问题，优先把前置问题放前面，再放深化问题，保持求解顺序合理。
+
+5. 去掉伪拆分
+不要把同一句话换个说法当成两个子问题。
+不要把一个问题机械拆成字面近义重复项。
+
+6. 控制数量
+speed 策略时拆分更保守，只拆最必要的部分。
+quality 策略时可以拆得更细，但仍然必须克制，不要超过最大上限，不要为了凑数量而拆。
+
+7. 单问题不乱拆
+如果原问题本身就是单一问题，或者拆开反而损失上下文，就返回只包含一个元素的数组。
+
+【五、适合拆分的典型情况】
+以下情况通常适合拆分：
+- 明确包含多个并列意图
+- 一个主问题依赖若干前置判断
+- 一个抽象问题需要拆成多个评价维度
+- 一个流程问题天然包含条件、材料、步骤、时间等多个子面向
+- 一个比较问题天然包含多个对比维度
+
+【六、不适合拆分的典型情况】
+以下情况通常不适合硬拆：
+- 单一事实问答
+- 明确的单点费用问题
+- 单一联系方式问题
+- 单一时间节点问题
+- 非常短且语义单一的问题
+- 拆开后会造成大量重复、歧义或信息割裂的问题
+
+【七、输出要求】
+你必须严格遵守以下输出规则：
+1. 只输出 JSON 数组。
+2. 数组元素必须是字符串。
+3. 不要输出 Markdown。
+4. 不要输出解释、分析、标题、前后缀、代码块。
+5. 不要输出对象数组，不要输出带字段的结构。
+6. 每个字符串都必须是一个完整、自然、可独立求解的子问题。
+7. 如果只需要一个子问题，就返回只含一个元素的数组。
+
+【八、质量标准】
+在输出前，默默检查：
+- 有没有偏离用户原意
+- 有没有凭空新增需求
+- 有没有漏掉关键约束
+- 有没有把前置问题和深化问题顺序搞反
+- 有没有重复子问题
+- 有没有拆得过细或过粗
+- 每个子问题是否都能单独求解
+
+【九、示例】
+
+示例1：单一问题，不应硬拆
+用户问题：
+“中原工学院招生办电话是多少？”
+
+输出：
+["中原工学院招生办电话是多少？"]
+
+示例2：并列意图，直接拆分
+用户问题：
+“中原工学院软件工程专业学费多少，住宿费多少，奖学金好申请吗？”
+
+输出：
+["中原工学院软件工程专业学费是多少？","中原工学院住宿费标准是多少？","中原工学院奖学金申请难度和基本条件如何？"]
+
+示例3：包含前置问题和深化问题
+用户问题：
+“我这个分数报中原工学院计算机类希望大吗？”
+
+输出：
+["中原工学院计算机类专业近年录取分数或位次要求如何？","我的分数是否达到报考中原工学院计算机类专业的基本范围？","如果达到基本范围，报考中原工学院计算机类专业的录取把握如何？"]
+
+示例4：流程问题，需要拆成前置+步骤
+用户问题：
+“中原工学院助学金怎么申请？”
+
+输出：
+["中原工学院助学金申请的基本条件是什么？","中原工学院助学金申请需要准备哪些材料？","中原工学院助学金申请流程和时间节点是什么？"]
+
+示例5：抽象评价问题，需要拆出深化维度
+用户问题：
+“中原工学院软件工程专业值得报吗？”
+
+输出：
+["中原工学院软件工程专业的培养内容和课程设置如何？","中原工学院软件工程专业的就业方向和就业情况如何？","中原工学院软件工程专业的录取难度和学费情况如何？"]
+
+示例6：比较问题，拆出对比维度
+用户问题：
+“中原工学院和河南工程学院哪个更适合学机械？”
+
+输出：
+["中原工学院机械相关专业情况如何？","河南工程学院机械相关专业情况如何？","中原工学院和河南工程学院在机械专业培养、就业和录取难度上如何对比？"]
+
+示例7：quality 策略下可适当细化
+用户问题：
+“专升本报名需要注意什么？”
+
+输出：
+["中原工学院专升本报名的基本条件是什么？","中原工学院专升本报名需要准备哪些材料？","中原工学院专升本报名流程是什么？","中原工学院专升本报名有哪些常见限制或注意事项？"]
+
+示例8：不要编造不存在的需求
+用户问题：
+“学费贵吗？”
+
+错误拆分：
+["中原工学院学费是多少？","中原工学院宿舍怎么样？","中原工学院就业率高吗？"]
+
+正确输出：
+["中原工学院相关专业学费是多少？","中原工学院学费在同类院校中处于什么水平？"]
+
+现在开始执行任务时，你必须先准确判断这个问题是否值得拆、该拆成几步、哪些是前置问题、哪些是深化问题，然后只输出最终 JSON 数组。
+
+                            '''
+                            )
+                    ),
+                    HumanMessage(
+                        content=(
+                            f'''
+执行策略：{strategy}
+最大子问题数：{max_subproblems}
+原问题：{normalized}
+
+请根据上面的约束拆分子问题。
+要求：
+1. 只返回 JSON 数组。
+2. 每个元素都是可独立求解的字符串子问题。
+3. 如有必要，优先输出前置问题，再输出深化问题。
+4. 不要编造新问题，不要遗漏关键约束。
+5. 如果原问题不适合拆分，就返回单元素数组。
+
+示例格式：
+["子问题1", "子问题2"]
+
+                            '''
+                        )
+                    ),
+                ]
+            )
+            raw_content = str(getattr(response, "content", "") or "").strip()
+            parsed = json.loads(raw_content)
+            if not isinstance(parsed, list):
+                return self._rule_split_query(normalized, max_subproblems=max_subproblems)
+            parts = [
+                re.sub(r"\s+", " ", str(item)).strip(" \t\r\n，。；;？?！!")
+                for item in parsed
+                if str(item).strip()
+            ]
+            parts = [item for item in parts if item]
+            if not parts:
+                return self._rule_split_query(normalized, max_subproblems=max_subproblems)
+            return parts[:max_subproblems]
+        except Exception:
+            return self._rule_split_query(normalized, max_subproblems=max_subproblems)
 
     def build_plan(
         self,
@@ -239,18 +478,89 @@ class AgentRuntime:
         request: ChatRequest,
         strategy: AgentStrategy,
     ) -> list[PlanStep]:
-        steps: list[PlanStep] = []
+        allowed_step_types: list[PlanStepType] = []
         if "rag" in effective_features:
-            steps.append(PlanStep("local_rag_search", "候选工具：本地 RAG 检索"))
+            allowed_step_types.append("local_rag_search")
         if self._should_use_mcp(query=query, route_label=route_label, strategy=strategy):
-            steps.append(PlanStep("mcp_execute", "候选工具：MCP 外部工具"))
-        if not steps:
-            steps.append(PlanStep("synthesize_step", "候选策略：优先基于默认上下文直接回答"))
-        return steps
+            allowed_step_types.append("mcp_execute")
+        allowed_step_types.append("synthesize_step")
+
+        llm = build_langchain_chat_model(
+            self.deps.services.settings,
+            model=request.model,
+            temperature=request.temperature,
+            top_p=request.top_p,
+        )
+        if llm is None:
+            return self._rule_build_plan(allowed_step_types)
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+        except Exception:
+            return self._rule_build_plan(allowed_step_types)
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "你是一个子问题执行计划制定器。"
+                            "你需要先理解当前子问题，再输出一个按顺序执行的计划。"
+                            "同一子问题内计划节点顺序执行，不同子问题之间会并发执行。"
+                            "计划中的每个节点后续都会交给 ReAct Agent 单独执行。"
+                            "因此你要优先安排证据收集，再安排结论综合。"
+                            "你只能使用允许的 step_type，不得发明新类型。"
+                            "最后一步必须是 synthesize_step。"
+                            "只输出 JSON 数组，每个元素必须是对象，包含 step_type、title、instruction 三个字段。"
+                        )
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"执行策略：{strategy}\n"
+                            f"问题路由：{route_label}\n"
+                            f"子问题：{query}\n"
+                            f"允许的 step_type：{json.dumps(allowed_step_types, ensure_ascii=False)}\n\n"
+                            "请给出顺序计划。\n"
+                            "要求：\n"
+                            "1. 只返回 JSON 数组。\n"
+                            "2. 步骤数量尽量精简但有效。\n"
+                            "3. title 要短，instruction 要明确说明该步骤要完成什么。\n"
+                            "4. 如果需要先检索校内资料，再调用 MCP 外部工具，再汇总结论，就按这个顺序输出。\n"
+                            '示例：[{"step_type":"local_rag_search","title":"检索校内资料","instruction":"检索与该子问题直接相关的校内资料，提取可用证据。"},{"step_type":"synthesize_step","title":"综合结论","instruction":"基于已有证据给出当前子问题结论，并明确不确定性。"}]'
+                        )
+                    ),
+                ]
+            )
+            raw_content = str(getattr(response, "content", "") or "").strip()
+            parsed = json.loads(raw_content)
+            if not isinstance(parsed, list):
+                return self._rule_build_plan(allowed_step_types)
+            steps: list[PlanStep] = []
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                step_type = str(item.get("step_type", "")).strip()
+                if step_type not in allowed_step_types:
+                    continue
+                title = str(item.get("title", "")).strip() or self._default_plan_step_title(step_type)
+                instruction = str(item.get("instruction", "")).strip() or self._default_plan_step_instruction(step_type)
+                steps.append(PlanStep(step_type=step_type, title=title, instruction=instruction))
+            if not steps:
+                return self._rule_build_plan(allowed_step_types)
+            if steps[-1].step_type != "synthesize_step":
+                steps.append(
+                    PlanStep(
+                        step_type="synthesize_step",
+                        title=self._default_plan_step_title("synthesize_step"),
+                        instruction=self._default_plan_step_instruction("synthesize_step"),
+                    )
+                )
+            return steps
+        except Exception:
+            return self._rule_build_plan(allowed_step_types)
 
     def run_subproblem_agent(
         self,
         *,
+        step: PlanStep,
         subproblem: SubproblemState,
         request: ChatRequest,
         fail_features: set[str],
@@ -298,7 +608,7 @@ class AgentRuntime:
 
         @tool("local_rag_search")
         def local_rag_search(tool_query: str) -> str:
-            """检索本地招生知识库。"""
+            """检索中原工学院本地知识库。"""
             collector_tool_audit.append("agent_tool:local_rag_search")
             if "rag" not in effective_features:
                 return "当前会话未开启 rag 功能。"
@@ -327,35 +637,39 @@ class AgentRuntime:
         if runtime.notes:
             collector_notes.extend(runtime.notes)
         tools: list[Any] = []
-        if "rag" in effective_features:
+        if step.step_type == "local_rag_search" and "rag" in effective_features:
             tools.append(local_rag_search)
-        if runtime.tools:
+        if step.step_type == "mcp_execute" and runtime.tools:
             tools.extend(runtime.tools)
             collector_tool_audit.append("agent_tool:mcp_runtime:" + ",".join(item.alias for item in runtime.servers))
-        elif runtime.servers:
+        elif step.step_type == "mcp_execute" and runtime.servers:
             collector_tool_audit.append("agent_tool:mcp_runtime_unavailable:" + ",".join(item.alias for item in runtime.servers))
 
         history_messages = self.gateway._build_langchain_history_messages(request.messages[:-1])
         memory_text = "\n".join(memory_context_blocks[:8]) if memory_context_blocks else "当前没有可用记忆。"
         prior_evidence = "\n".join(collector_context_blocks[:8]) if collector_context_blocks else "当前没有已有证据。"
-        available_tools = "\n".join(f"- {item.title}" for item in subproblem.plan_steps) or "当前没有额外工具。"
+        available_tools = "\n".join(f"- {getattr(item, 'name', step.step_type)}" for item in tools) if tools else "当前步骤不提供额外工具。"
         prompt = (
-            "你是中原工学院招生专家模式下的 ReAct 智能体。"
-            "记忆已经直接提供给你，不需要再去读取记忆。"
-            "你只能按需使用当前提供的工具：本地 RAG 检索工具和 MCP 工具。"
+            "你是中原工学院招生专家模式下负责执行单个计划节点的 ReAct 智能体。"
+            "你只能使用当前计划节点允许的工具。"
             "如果默认上下文已经足够，可以不调工具直接回答。"
+            "你的回答必须聚焦当前计划节点，而不是一次性回答整个子问题。"
             "如果证据不足，明确说不确定，不要编造来源。"
         )
         human_prompt = (
             f"执行策略：{request.agent_strategy}\n"
+            f"问题路由：{route_label}\n"
             f"子问题：{subproblem.query}\n\n"
+            f"当前计划节点：{step.title}\n"
+            f"当前计划节点目标：{step.instruction or step.title}\n\n"
             "默认记忆上下文：\n"
             f"{memory_text}\n\n"
             "当前已拿到的历史证据：\n"
             f"{prior_evidence}\n\n"
             "当前可用工具：\n"
             f"{available_tools}\n\n"
-            "请使用 ReAct 方式自主决定是否调用工具，并完成这个子问题。"
+            "请使用 ReAct 方式执行当前计划节点。"
+            "只输出本步骤的执行结果。"
         )
 
         agent = create_react_agent(llm, tools, prompt=prompt, version="v2")
@@ -383,7 +697,7 @@ class AgentRuntime:
         output = self._extract_agent_output_text(result)
         if not output:
             raise RuntimeError("subproblem_agent_output_empty")
-        collector_context_blocks.append(f"[subproblem-answer] {output}")
+        collector_context_blocks.append(f"[plan-step:{step.step_type}] {output}")
         return StepExecutionResult(
             ok=True,
             message=output,
@@ -403,6 +717,57 @@ class AgentRuntime:
         if needs_evidence and not result.context_blocks and not result.sources:
             return StepReviewResult(ok=False, message="智能体未拿到可用证据。")
         return StepReviewResult(ok=True, message="智能体已完成子问题。")
+
+    def _rule_build_plan(self, allowed_step_types: list[PlanStepType]) -> list[PlanStep]:
+        steps: list[PlanStep] = []
+        for step_type in allowed_step_types:
+            if step_type == "synthesize_step":
+                continue
+            steps.append(
+                PlanStep(
+                    step_type=step_type,
+                    title=self._default_plan_step_title(step_type),
+                    instruction=self._default_plan_step_instruction(step_type),
+                )
+            )
+        steps.append(
+            PlanStep(
+                step_type="synthesize_step",
+                title=self._default_plan_step_title("synthesize_step"),
+                instruction=self._default_plan_step_instruction("synthesize_step"),
+            )
+        )
+        return steps
+
+    def _default_plan_step_title(self, step_type: PlanStepType) -> str:
+        title_map: dict[PlanStepType, str] = {
+            "recall_memory": "读取会话记忆",
+            "local_rag_search": "检索校内资料",
+            "official_web_search": "官方联网搜索",
+            "official_web_read": "阅读官方网页",
+            "general_skill": "执行通用技能",
+            "saved_skill": "执行历史技能",
+            "mcp_discover": "查看 MCP 工具目录",
+            "mcp_execute": "调用 MCP 外部工具",
+            "citation_guard": "引用校验",
+            "synthesize_step": "综合当前结论",
+        }
+        return title_map.get(step_type, step_type)
+
+    def _default_plan_step_instruction(self, step_type: PlanStepType) -> str:
+        instruction_map: dict[PlanStepType, str] = {
+            "recall_memory": "基于默认记忆上下文澄清与当前子问题相关的历史信息。",
+            "local_rag_search": "检索与当前子问题直接相关的校内资料，并提取可用证据。",
+            "official_web_search": "搜索与当前子问题相关的官方公开信息。",
+            "official_web_read": "阅读已命中的官方网页并提取关键信息。",
+            "general_skill": "调用通用技能处理当前子问题中的流程或结构化任务。",
+            "saved_skill": "调用已保存技能处理当前子问题。",
+            "mcp_discover": "查看可用的 MCP 工具目录，确认外部工具能力。",
+            "mcp_execute": "调用合适的 MCP 外部工具补充当前子问题所需证据。",
+            "citation_guard": "检查当前证据是否足以支撑回答。",
+            "synthesize_step": "基于前面步骤获得的证据，给出当前子问题结论并说明不确定性。",
+        }
+        return instruction_map.get(step_type, step_type)
 
     def execute_plan_step(
         self,
@@ -618,8 +983,6 @@ class AgentRuntime:
             ),
             replan_count=subproblem.replan_count + 1,
         )
-        if all(step.step_type != "official_web_read" for step in replanned.plan_steps) and "web_search" in request.features:
-            replanned.plan_steps.insert(-1, PlanStep("official_web_read", "补充官方网页阅读"))
         return replanned
 
     def build_final_session(
@@ -769,6 +1132,13 @@ class AgentRuntime:
             return normalized
         keep = normalized[: limit_chars - 3].rstrip(" ，。；;,:：")
         return f"{keep}..."
+
+    def _rule_split_query(self, query: str, *, max_subproblems: int) -> list[str]:
+        parts = [item.strip(" ，。；;？?！!") for item in re.split(r"[；;。]|(?:并且)|(?:以及)|(?:同时)|(?:另外)", query)]
+        parts = [item for item in parts if item]
+        if not parts:
+            return [query]
+        return parts[:max_subproblems]
 
     def _extract_agent_output_text(self, result: Any) -> str:
         messages = list(result.get("messages") or []) if isinstance(result, dict) else []

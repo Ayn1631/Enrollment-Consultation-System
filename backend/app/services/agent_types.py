@@ -27,6 +27,7 @@ SubproblemStatus = Literal["pending", "completed", "degraded", "failed", "needs_
 class PlanStep:
     step_type: PlanStepType
     title: str
+    instruction: str = ""
 
 
 @dataclass(slots=True)

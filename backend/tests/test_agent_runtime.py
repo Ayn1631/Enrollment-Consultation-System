@@ -139,3 +139,55 @@ def test_get_mcp_runtime_should_cache_per_trace(monkeypatch):
     runtime.release_mcp_runtime("trace-1")
 
     assert build_calls[0].close_calls == 1
+
+
+def test_split_query_should_prefer_llm_result(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+
+    class _FakeResponse:
+        content = '["中原工学院学费是多少", "中原工学院住宿费是多少"]'
+
+    class _FakeLlm:
+        def invoke(self, _messages):
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+
+    parts = runtime.split_query("中原工学院学费和住宿费分别是多少", "quality")
+
+    assert parts == ["中原工学院学费是多少", "中原工学院住宿费是多少"]
+
+
+def test_build_plan_should_prefer_llm_result(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s3",
+        messages=[{"role": "user", "content": "中原工学院软件工程专业值得报吗"}],
+        mode="agent",
+        features=["rag"],
+    )
+
+    class _FakeResponse:
+        content = (
+            '[{"step_type":"local_rag_search","title":"检索专业资料","instruction":"检索软件工程专业的培养、就业、录取和学费信息。"},'
+            '{"step_type":"synthesize_step","title":"综合结论","instruction":"基于前面证据判断该专业是否值得报考。"}]'
+        )
+
+    class _FakeLlm:
+        def invoke(self, _messages):
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+
+    steps = runtime.build_plan(
+        query="中原工学院软件工程专业值得报吗",
+        effective_features=request.features,
+        route_label="policy",
+        request=request,
+        strategy="quality",
+    )
+
+    assert [item.step_type for item in steps] == ["local_rag_search", "synthesize_step"]
+    assert steps[0].instruction == "检索软件工程专业的培养、就业、录取和学费信息。"
