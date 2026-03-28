@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+import threading
 import uuid
 from datetime import datetime
+from time import perf_counter
 from typing import Any, Callable
 
 from app.models import AgentStepEvent, AgentStrategy, ChatRequest, ChatSource, FeatureFlag, SessionResult
-from app.services.ai_stack import build_langchain_chat_model, build_langchain_mcp_runtime, load_mcp_server_configs
+from app.services.ai_stack import (
+    McpToolRuntime,
+    build_langchain_chat_model,
+    build_langchain_mcp_runtime,
+    load_mcp_server_configs,
+)
 from app.services.agent_types import (
     PlanStep,
     PlanStepType,
@@ -23,6 +31,10 @@ StepSink = Callable[[AgentStepEvent], None]
 class AgentRuntime:
     def __init__(self, gateway: Any):
         self.gateway = gateway
+        self.logger = logging.getLogger(__name__)
+        self._mcp_runtime_cache: dict[str, McpToolRuntime] = {}
+        self._mcp_runtime_locks: dict[str, threading.RLock] = {}
+        self._mcp_runtime_guard = threading.RLock()
 
     @property
     def deps(self):
@@ -209,6 +221,7 @@ class AgentRuntime:
         fail_features: set[str],
         effective_features: list[FeatureFlag],
         memory_context_blocks: list[str],
+        trace_id: str,
     ) -> StepExecutionResult:
         step_type = step.step_type
         if step_type == "recall_memory":
@@ -320,46 +333,41 @@ class AgentRuntime:
                 tool_audit=[f"use_saved_skill:allowed:{reason}"],
             )
         if step_type == "mcp_discover":
-            runtime = asyncio.run(build_langchain_mcp_runtime(self.deps.services.settings))
-            try:
-                notes = list(runtime.notes)
-                if runtime.tools:
-                    message = "\n".join(f"- {getattr(tool, 'name', 'unknown_tool')}" for tool in runtime.tools[:8])
-                    return StepExecutionResult(
-                        ok=True,
-                        message=message or "当前没有可用的 MCP 工具。",
-                        tool_audit=[f"agent_tool:mcp_runtime:{','.join(item.alias for item in runtime.servers)}"],
-                        notes=notes,
-                    )
-                if runtime.servers:
-                    return StepExecutionResult(
-                        ok=False,
-                        message="MCP 服务已配置但工具不可用。",
-                        tool_audit=[f"agent_tool:mcp_runtime_unavailable:{','.join(item.alias for item in runtime.servers)}"],
-                        notes=notes,
-                    )
-                return StepExecutionResult(ok=False, message="当前未配置 MCP 工具。", notes=notes)
-            finally:
-                asyncio.run(runtime.aclose())
+            runtime = self.get_mcp_runtime(trace_id)
+            notes = list(runtime.notes)
+            if runtime.tools:
+                message = "\n".join(f"- {getattr(tool, 'name', 'unknown_tool')}" for tool in runtime.tools[:8])
+                return StepExecutionResult(
+                    ok=True,
+                    message=message or "当前没有可用的 MCP 工具。",
+                    tool_audit=[f"agent_tool:mcp_runtime:{','.join(item.alias for item in runtime.servers)}"],
+                    notes=notes,
+                )
+            if runtime.servers:
+                return StepExecutionResult(
+                    ok=False,
+                    message="MCP 服务已配置但工具不可用。",
+                    tool_audit=[f"agent_tool:mcp_runtime_unavailable:{','.join(item.alias for item in runtime.servers)}"],
+                    notes=notes,
+                )
+            return StepExecutionResult(ok=False, message="当前未配置 MCP 工具。", notes=notes)
         if step_type == "mcp_execute":
-            runtime = asyncio.run(build_langchain_mcp_runtime(self.deps.services.settings))
-            try:
-                if not runtime.tools:
-                    return StepExecutionResult(ok=False, message="当前没有可执行的 MCP 工具。", notes=runtime.notes)
-                tool = self._select_mcp_tool(runtime.tools, subproblem.query)
+            runtime = self.get_mcp_runtime(trace_id)
+            if not runtime.tools:
+                return StepExecutionResult(ok=False, message="当前没有可执行的 MCP 工具。", notes=runtime.notes)
+            tool = self._select_mcp_tool(runtime.tools, subproblem.query)
+            with self._get_mcp_runtime_lock(trace_id):
                 try:
                     result = asyncio.run(self._invoke_mcp_tool(tool, subproblem.query))
                 except Exception as exc:
                     return StepExecutionResult(ok=False, message=f"MCP 工具执行失败：{exc.__class__.__name__}", notes=runtime.notes)
-                return StepExecutionResult(
-                    ok=bool(str(result).strip()),
-                    message=str(result).strip() or "MCP 工具未返回内容。",
-                    context_blocks=[f"[mcp] {str(result).strip()}"] if str(result).strip() else [],
-                    tool_audit=[f"agent_tool:mcp_execute:{getattr(tool, 'name', 'unknown_tool')}"],
-                    notes=runtime.notes,
-                )
-            finally:
-                asyncio.run(runtime.aclose())
+            return StepExecutionResult(
+                ok=bool(str(result).strip()),
+                message=str(result).strip() or "MCP 工具未返回内容。",
+                context_blocks=[f"[mcp] {str(result).strip()}"] if str(result).strip() else [],
+                tool_audit=[f"agent_tool:mcp_execute:{getattr(tool, 'name', 'unknown_tool')}"],
+                notes=runtime.notes,
+            )
         if step_type == "citation_guard":
             guard_result = self.deps.container.isolation.execute(
                 "citation-guard",
@@ -600,6 +608,59 @@ class AgentRuntime:
         if has_fetch_capability and any(token in query for token in ("网页", "页面", "链接", "抓取", "读取", "打开")):
             return True
         return strategy == "quality" and route_label == "time_sensitive" and (has_search_capability or has_fetch_capability)
+
+    def get_mcp_runtime(self, trace_id: str) -> McpToolRuntime:
+        with self._mcp_runtime_guard:
+            cached = self._mcp_runtime_cache.get(trace_id)
+            if cached is not None:
+                self.logger.info("[agent.mcp] trace=%s cache_hit tools=%s", trace_id, len(cached.tools))
+                return cached
+
+        started_at = perf_counter()
+        runtime = asyncio.run(build_langchain_mcp_runtime(self.deps.services.settings))
+        elapsed_ms = int((perf_counter() - started_at) * 1000)
+        self.logger.info(
+            "[agent.mcp] trace=%s runtime_ready elapsed_ms=%s tools=%s servers=%s",
+            trace_id,
+            elapsed_ms,
+            len(runtime.tools),
+            len(runtime.servers),
+        )
+        with self._mcp_runtime_guard:
+            cached = self._mcp_runtime_cache.get(trace_id)
+            if cached is not None:
+                started_at = perf_counter()
+                asyncio.run(runtime.aclose())
+                close_elapsed_ms = int((perf_counter() - started_at) * 1000)
+                self.logger.info(
+                    "[agent.mcp] trace=%s duplicate_runtime_closed elapsed_ms=%s",
+                    trace_id,
+                    close_elapsed_ms,
+                )
+                return cached
+            self._mcp_runtime_cache[trace_id] = runtime
+            self._mcp_runtime_locks.setdefault(trace_id, threading.RLock())
+            return runtime
+
+    def release_mcp_runtime(self, trace_id: str) -> None:
+        runtime: McpToolRuntime | None = None
+        with self._mcp_runtime_guard:
+            runtime = self._mcp_runtime_cache.pop(trace_id, None)
+            self._mcp_runtime_locks.pop(trace_id, None)
+        if runtime is None:
+            return
+        started_at = perf_counter()
+        asyncio.run(runtime.aclose())
+        elapsed_ms = int((perf_counter() - started_at) * 1000)
+        self.logger.info("[agent.mcp] trace=%s runtime_released elapsed_ms=%s", trace_id, elapsed_ms)
+
+    def _get_mcp_runtime_lock(self, trace_id: str) -> threading.RLock:
+        with self._mcp_runtime_guard:
+            lock = self._mcp_runtime_locks.get(trace_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._mcp_runtime_locks[trace_id] = lock
+            return lock
 
     def _select_mcp_tool(self, tools: list[Any], query: str) -> Any:
         if len(tools) == 1:

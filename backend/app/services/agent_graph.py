@@ -85,34 +85,37 @@ class AgentGraphRunner:
         }
 
         try:
-            final_state = self._graph.invoke(
-                {
-                    **initial_state,
-                    "_step_sink": step_sink,
-                }
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self.runtime.build_failure_session(request=request, exc=exc, step_events=step_events)
+            try:
+                final_state = self._graph.invoke(
+                    {
+                        **initial_state,
+                        "_step_sink": step_sink,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                return self.runtime.build_failure_session(request=request, exc=exc, step_events=step_events)
 
-        if final_state.get("failure_reason") and not final_state.get("final_text"):
-            return self.runtime.build_failure_session(
+            if final_state.get("failure_reason") and not final_state.get("final_text"):
+                return self.runtime.build_failure_session(
+                    request=request,
+                    exc=RuntimeError(str(final_state["failure_reason"])),
+                    step_events=step_events,
+                )
+
+            return self.runtime.build_final_session(
                 request=request,
-                exc=RuntimeError(str(final_state["failure_reason"])),
-                step_events=step_events,
+                trace_id=trace_id,
+                last_user=last_user,
+                final_text=str(final_state["final_text"]),
+                sources=list(final_state["sources"]),
+                tool_audit=list(final_state["tool_audit"]),
+                degraded_features=list(final_state["degraded_features"]),
+                step_events=list(final_state["step_events"]),
+                status_override=final_state.get("status"),
+                error_message=final_state.get("failure_reason"),
             )
-
-        return self.runtime.build_final_session(
-            request=request,
-            trace_id=trace_id,
-            last_user=last_user,
-            final_text=str(final_state["final_text"]),
-            sources=list(final_state["sources"]),
-            tool_audit=list(final_state["tool_audit"]),
-            degraded_features=list(final_state["degraded_features"]),
-            step_events=list(final_state["step_events"]),
-            status_override=final_state.get("status"),
-            error_message=final_state.get("failure_reason"),
-        )
+        finally:
+            self.runtime.release_mcp_runtime(trace_id)
 
     def run_stream(
         self,
@@ -392,6 +395,7 @@ class AgentGraphRunner:
                     fail_features=state["fail_features"],
                     effective_features=state["effective_features"],
                     memory_context_blocks=state["memory_context"],
+                    trace_id=state["trace_id"],
                 )
                 review = self.runtime.review_step(step, result)
                 working.tool_audit.extend(result.tool_audit)

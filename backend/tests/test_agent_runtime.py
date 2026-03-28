@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 from app.config import Settings
 from app.models import ChatRequest
+from app.services.ai_stack import McpServerConfig
 from app.services.agent_runtime import AgentRuntime
+import app.services.agent_runtime as agent_runtime_module
 
 
 class _GatewayStub:
@@ -21,6 +23,24 @@ class _FakeTool:
     def __init__(self, name: str, description: str = ""):
         self.name = name
         self.description = description
+
+
+class _FakeMcpRuntime:
+    def __init__(self):
+        self.tools = [_FakeTool("bing_search_web", "search the web with bing")]
+        self.servers = [
+            McpServerConfig(
+                alias="bing_search",
+                original_name="bing-search",
+                transport="stdio",
+                command="npx",
+            )
+        ]
+        self.notes = ["MCP 外部工具已接入"]
+        self.close_calls = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
 
 def _write_mcp_config(path: Path, payload: dict) -> None:
@@ -98,3 +118,26 @@ def test_select_mcp_tool_should_prefer_search_tool_for_search_query():
     selected = runtime._select_mcp_tool(tools, "请搜索最新招生公告")
 
     assert selected.name == "bing_search_web"
+
+
+def test_get_mcp_runtime_should_cache_per_trace(monkeypatch):
+    settings = Settings(MCP_ENABLED=True)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    build_calls: list[_FakeMcpRuntime] = []
+
+    async def _fake_build_langchain_mcp_runtime(_settings):
+        fake_runtime = _FakeMcpRuntime()
+        build_calls.append(fake_runtime)
+        return fake_runtime
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_mcp_runtime", _fake_build_langchain_mcp_runtime)
+
+    first = runtime.get_mcp_runtime("trace-1")
+    second = runtime.get_mcp_runtime("trace-1")
+
+    assert first is second
+    assert len(build_calls) == 1
+
+    runtime.release_mcp_runtime("trace-1")
+
+    assert build_calls[0].close_calls == 1
