@@ -187,7 +187,13 @@ def create_chat_stream(request: ChatRequest, x_fail_features: str | None = Heade
                 request.session_id,
             )
             yield f"event: message\ndata: {json.dumps({'delta': '当前流式生成异常，请稍后重试。'}, ensure_ascii=False)}\n\n"
-            done = ChatStreamDone(finish_reason="error", status="failed", trace_id=trace_id)
+            done = ChatStreamDone(
+                finish_reason="error",
+                status="failed",
+                trace_id=trace_id,
+                error_message="create_chat_stream unexpected failure",
+                agent_strategy=request.agent_strategy,
+            )
             yield f"event: done\ndata: {done.model_dump_json()}\n\n"
 
     return StreamingResponse(event_iter(), media_type="text/event-stream")
@@ -214,6 +220,11 @@ def stream_chat(session_id: str):
         )
 
     def event_iter() -> Iterator[str]:
+        for step in session.agent_trace:
+            yield (
+                "event: step\n"
+                f"data: {json.dumps(step.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+            )
         yield from _sse_stream(session.text, settings.stream_chunk_size)
         done = ChatStreamDone(
             finish_reason=session.finish_reason,
@@ -222,6 +233,8 @@ def stream_chat(session_id: str):
             sources=session.sources,
             trace_id=session.trace_id,
             tool_audit=session.tool_audit,
+            error_message=session.error_message,
+            agent_strategy=session.agent_strategy,
         )
         yield f"event: done\ndata: {done.model_dump_json()}\n\n"
 

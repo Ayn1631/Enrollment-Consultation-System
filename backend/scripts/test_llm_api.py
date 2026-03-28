@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 
 from dotenv import load_dotenv
+import httpx
 from openai import OpenAI
 
 
@@ -24,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.85)
+    parser.add_argument("--skip-models", action="store_true")
+    parser.add_argument("--stream", action="store_true")
     return parser
 
 
@@ -54,6 +57,24 @@ def write_report(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def probe_models(*, base_url: str, api_key: str, timeout: float) -> dict:
+    started = time.perf_counter()
+    headers = {"Authorization": f"Bearer {api_key}"}
+    with httpx.Client(timeout=timeout, trust_env=False) as client:
+        response = client.get(f"{base_url}/models", headers=headers)
+    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+    payload = {
+        "latency_ms": latency_ms,
+        "status_code": response.status_code,
+    }
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001
+        body = response.text
+    payload["body"] = body
+    return payload
+
+
 def main() -> int:
     args = build_parser().parse_args()
     runtime = load_runtime_config()
@@ -68,6 +89,9 @@ def main() -> int:
         "system": args.system,
         "temperature": args.temperature,
         "top_p": args.top_p,
+        "models_probe": None,
+        "completion": None,
+        "stream": None,
     }
 
     if not runtime["endpoint"]:
@@ -82,6 +106,12 @@ def main() -> int:
         return 1
 
     try:
+        if not args.skip_models:
+            report["models_probe"] = probe_models(
+                base_url=report["base_url"],
+                api_key=runtime["api_key"],
+                timeout=args.timeout,
+            )
         client = OpenAI(
             api_key=runtime["api_key"],
             base_url=resolve_base_url(runtime["endpoint"]),
@@ -101,13 +131,42 @@ def main() -> int:
         )
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         answer = response.choices[0].message.content if response.choices else ""
-        report["result"] = {
+        report["completion"] = {
             "latency_ms": latency_ms,
             "id": response.id,
             "response_model": getattr(response, "model", runtime["model"]),
             "usage": response.usage.model_dump() if getattr(response, "usage", None) else {},
             "answer": answer,
         }
+        if args.stream:
+            stream_started = time.perf_counter()
+            first_delta_latency_ms = None
+            chunks: list[str] = []
+            stream = client.chat.completions.create(
+                model=runtime["model"],
+                messages=[
+                    {"role": "system", "content": args.system},
+                    {"role": "user", "content": args.prompt},
+                ],
+                temperature=args.temperature,
+                top_p=args.top_p,
+                stream=True,
+            )
+            for part in stream:
+                choices = list(part.choices or [])
+                if not choices:
+                    continue
+                delta_content = choices[0].delta.content or ""
+                if not delta_content:
+                    continue
+                if first_delta_latency_ms is None:
+                    first_delta_latency_ms = round((time.perf_counter() - stream_started) * 1000, 2)
+                chunks.append(str(delta_content))
+            report["stream"] = {
+                "latency_ms": round((time.perf_counter() - stream_started) * 1000, 2),
+                "first_delta_latency_ms": first_delta_latency_ms,
+                "answer": "".join(chunks),
+            }
         client.close()
     except Exception as exc:  # noqa: BLE001
         report["error"] = {

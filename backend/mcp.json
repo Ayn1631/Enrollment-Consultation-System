@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "bing-search": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "bing-cn-mcp"
+      ]
+    },
+    
+    "fetch": {
+    "command": "python",
+    "args": ["-m", "mcp_server_fetch"]
+  }
+  }
+}

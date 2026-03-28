@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from app.config import Settings
@@ -142,3 +143,30 @@ def test_format_exception_summary_should_flatten_exception_group():
     assert "ExceptionGroup" in summary
     assert "ConnectionError: dns failed" in summary
     assert "RuntimeError: tool unavailable" in summary
+
+
+def test_load_mcp_server_configs_should_log_notes(caplog, tmp_path):
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "broken-http": {
+                        "type": "http",
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(MCP_ENABLED=True, MCP_CONFIG_PATH=str(config_path))
+
+    with caplog.at_level(logging.INFO, logger="app.services.ai_stack"):
+        servers, notes = load_mcp_server_configs(settings)
+
+    assert servers == []
+    assert any("MCP 配置已加载" in note for note in notes)
+    assert any("MCP 服务 broken-http 缺少 url/serverUrl，已跳过。" in note for note in notes)
+    assert any("[ai_stack.note] MCP 配置已加载" in record.message for record in caplog.records)
+    assert any("MCP 服务 broken-http 缺少 url/serverUrl，已跳过。" in record.message for record in caplog.records)

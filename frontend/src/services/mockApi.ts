@@ -3,9 +3,8 @@ import type { ChatRequest } from '../types'
 const demoText = `中原工学院欢迎你！这里是招生咨询系统的演示流式输出。
 
 你可以：
-- 开启“联网搜索”获取最新招生动态
-- 使用“规划执行”让系统分步骤完成任务
-- 使用“指引模式”进行流程化咨询
+- 使用“RAG问答模式”基于校内资料进行问答
+- 使用“专家模式”获取更完整的工具增强答案
 
 示例问题：
 1) 2025年招生章程有哪些关键时间点？
@@ -16,6 +15,14 @@ export function startMockStream(
   request: ChatRequest,
   handlers: {
     onDelta: (delta: string) => void
+    onStep?: (event: {
+      id: string
+      node: string
+      title: string
+      status: 'started' | 'completed' | 'retrying' | 'degraded' | 'failed'
+      strategy: 'speed' | 'quality'
+      timestamp: string
+    }) => void
     onDone: (event: {
       finish_reason: 'stop'
       status?: 'ok' | 'degraded'
@@ -25,6 +32,14 @@ export function startMockStream(
     }) => void
   }
 ): () => void {
+  handlers.onStep?.({
+    id: `mock-step-${Date.now()}`,
+    node: 'mock_agent',
+    title: '演示步骤',
+    status: 'completed',
+    strategy: request.agent_strategy ?? 'speed',
+    timestamp: new Date().toISOString()
+  })
   const tokens = demoText.split('')
   let index = 0
 

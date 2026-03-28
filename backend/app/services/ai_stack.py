@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,8 @@ import httpx
 
 from app.config import Settings
 from app.models import ChatSource, FeatureFlag
+
+logger = logging.getLogger(__name__)
 
 
 # 关键变量：定义 Agent 功能执行优先级，保证引用校验在 RAG 后执行。
@@ -223,6 +226,23 @@ def _format_exception_summary(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
 
 
+def _note_level(message: str) -> int:
+    normalized = message.lower()
+    if any(token in normalized for token in ("失败", "无效", "不可用", "不存在", "缺少", "已跳过", "关闭")):
+        return logging.WARNING
+    return logging.INFO
+
+
+def _append_note(notes: list[str], message: str) -> None:
+    notes.append(message)
+    logger.log(_note_level(message), "[ai_stack.note] %s", message)
+
+
+def _single_note(message: str) -> list[str]:
+    logger.log(_note_level(message), "[ai_stack.note] %s", message)
+    return [message]
+
+
 def _normalize_stdio_command(command: str) -> tuple[str, str | None]:
     """对 Windows 上常见 MCP 命令做兼容处理，减少子进程启动失败。"""
     normalized = command.strip()
@@ -273,32 +293,32 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
     """读取类似 Cline 的 mcpServers 配置，并归一化为官方 SDK 可消费格式。"""
     notes: list[str] = []
     if not settings.mcp_enabled:
-        return [], ["MCP 已被 MCP_ENABLED=false 关闭。"]
+        return [], _single_note("MCP 已被 MCP_ENABLED=false 关闭。")
 
     config_path = settings.resolve_mcp_config_path()
     if config_path is None:
-        return [], ["未找到 MCP 配置文件，已跳过外部 MCP 工具接入。"]
+        return [], _single_note("未找到 MCP 配置文件，已跳过外部 MCP 工具接入。")
     if not config_path.exists():
-        return [], [f"MCP 配置文件不存在：{config_path}"]
+        return [], _single_note(f"MCP 配置文件不存在：{config_path}")
 
     try:
         payload = json.loads(config_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        return [], [f"MCP 配置文件读取失败：{config_path} ({exc.__class__.__name__})"]
+        return [], _single_note(f"MCP 配置文件读取失败：{config_path} ({exc.__class__.__name__})")
 
     raw_servers = payload.get("mcpServers") if isinstance(payload, dict) else None
     if not isinstance(raw_servers, dict):
-        return [], [f"MCP 配置格式无效：{config_path} 缺少 mcpServers 对象。"]
+        return [], _single_note(f"MCP 配置格式无效：{config_path} 缺少 mcpServers 对象。")
 
-    notes.append(f"MCP 配置已加载：{config_path}")
+    _append_note(notes, f"MCP 配置已加载：{config_path}")
     servers: list[McpServerConfig] = []
     alias_counts: dict[str, int] = {}
     for original_name, raw in raw_servers.items():
         if not isinstance(raw, dict):
-            notes.append(f"MCP 服务 {original_name} 配置不是对象，已跳过。")
+            _append_note(notes, f"MCP 服务 {original_name} 配置不是对象，已跳过。")
             continue
         if bool(raw.get("disabled", False)):
-            notes.append(f"MCP 服务 {original_name} 已禁用。")
+            _append_note(notes, f"MCP 服务 {original_name} 已禁用。")
             continue
 
         alias_base = _safe_server_alias(str(original_name))
@@ -316,10 +336,10 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
             raw_command = _expand_text_value(str(raw.get("command") or ""))
             command, command_note = _normalize_stdio_command(raw_command)
             if not command:
-                notes.append(f"MCP 服务 {original_name} 缺少 command，已跳过。")
+                _append_note(notes, f"MCP 服务 {original_name} 缺少 command，已跳过。")
                 continue
             if command_note:
-                notes.append(f"MCP 服务 {original_name}：{command_note}")
+                _append_note(notes, f"MCP 服务 {original_name}：{command_note}")
             args = [_expand_text_value(str(item)) for item in list(raw.get("args") or [])]
             extra_env = {
                 str(key): _expand_text_value(str(value))
@@ -331,7 +351,7 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
                 config_dir=config_path.parent,
             )
             if env_note:
-                notes.append(f"MCP 服务 {original_name}：{env_note}")
+                _append_note(notes, f"MCP 服务 {original_name}：{env_note}")
             servers.append(
                 McpServerConfig(
                     alias=alias,
@@ -348,7 +368,7 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
         if transport in {"http", "sse"}:
             url = _expand_text_value(str(raw.get("url") or raw.get("serverUrl") or raw.get("endpoint") or ""))
             if not url:
-                notes.append(f"MCP 服务 {original_name} 缺少 url/serverUrl，已跳过。")
+                _append_note(notes, f"MCP 服务 {original_name} 缺少 url/serverUrl，已跳过。")
                 continue
             headers = {
                 str(key): _expand_text_value(str(value))
@@ -366,7 +386,7 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
             )
             continue
 
-        notes.append(f"MCP 服务 {original_name} 使用了未支持的 transport={transport}，已跳过。")
+        _append_note(notes, f"MCP 服务 {original_name} 使用了未支持的 transport={transport}，已跳过。")
     return servers, notes
 
 
@@ -379,7 +399,7 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
     except Exception as exc:  # noqa: BLE001
-        notes.append(f"langchain-mcp-adapters 不可用：{exc.__class__.__name__}")
+        _append_note(notes, f"langchain-mcp-adapters 不可用：{exc.__class__.__name__}")
         return McpToolRuntime(client=None, tools=[], servers=servers, notes=notes)
 
     connections: dict[str, dict[str, Any]] = {}
@@ -413,7 +433,7 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
                 result = close_method()
                 if hasattr(result, "__await__"):
                     await result
-        notes.append(f"MCP 工具加载失败：{_format_exception_summary(exc)}")
+        _append_note(notes, f"MCP 工具加载失败：{_format_exception_summary(exc)}")
         return McpToolRuntime(client=None, tools=[], servers=servers, notes=notes)
 
     configured_tools: list[Any] = []
@@ -428,9 +448,10 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
             tool = tool.with_config({"timeout": timeout_ms})
         configured_tools.append(tool)
 
-    notes.append(
+    _append_note(
+        notes,
         "MCP 外部工具已接入："
-        + ", ".join(f"{item.original_name}->{item.alias}" for item in servers)
+        + ", ".join(f"{item.original_name}->{item.alias}" for item in servers),
     )
     return McpToolRuntime(client=client, tools=configured_tools, servers=servers, notes=notes)
 
@@ -461,6 +482,6 @@ def build_langchain_chat_model(
         api_key=llm_api_key,
         base_url=base_url,
         temperature=0.2 if temperature is None else temperature,
-        timeout=settings.request_timeout_seconds,
+        timeout=settings.llm_timeout_seconds,
         model_kwargs=model_kwargs,
     )

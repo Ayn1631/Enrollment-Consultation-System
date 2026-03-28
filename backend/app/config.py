@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     admin_api_token: str = Field(default="", alias="ADMIN_API_TOKEN")
     agent_stack: str = Field(default="langgraph", alias="AGENT_STACK")
     request_timeout_seconds: float = Field(default=6.0, alias="REQUEST_TIMEOUT_SECONDS")
+    llm_timeout_seconds: float = Field(default=20.0, alias="LLM_TIMEOUT_SECONDS")
     stream_chunk_size: int = Field(default=24, alias="STREAM_CHUNK_SIZE")
     generation_light_model: str = Field(default="gpt-4o-mini", alias="GENERATION_LIGHT_MODEL")
     generation_main_model: str = Field(default="gpt-4.1", alias="GENERATION_MAIN_MODEL")

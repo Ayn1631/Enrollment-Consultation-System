@@ -8,6 +8,60 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.main import app
+from app.contracts import GenerationResponse
+
+
+@pytest.fixture(autouse=True)
+def _stub_generation_and_agent_dependencies(monkeypatch: pytest.MonkeyPatch):
+    from app import main as main_module
+    import app.services.agent_runtime as agent_runtime_module
+
+    main_module.container.session_store._sessions.clear()  # noqa: SLF001
+    main_module.container.isolation._states.clear()  # noqa: SLF001
+    generation_cache: dict[str, str] = {}
+
+    def _fake_generate(request) -> GenerationResponse:
+        cache_key = json.dumps(
+            {
+                "user_query": request.user_query,
+                "model": request.model or "auto",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        cache_hit = cache_key in generation_cache
+        if cache_hit:
+            text = generation_cache[cache_key]
+        else:
+            context_text = "；".join(request.context_blocks[:6]) or "未命中可靠证据"
+            note_text = "；".join(request.feature_notes[:6]) or "未启用额外增强功能"
+            text = f"问题：{request.user_query}\n依据：{context_text}\n备注：{note_text}"
+            generation_cache[cache_key] = text
+        return GenerationResponse(
+            text=text,
+            model="test-generator",
+            route="light",
+            cache_hit=cache_hit,
+        )
+
+    async def _fake_mcp_runtime(_settings):
+        class _Runtime:
+            client = None
+            tools: list[Any] = []
+            servers: list[Any] = []
+            notes = ["test_mcp_runtime"]
+
+            async def aclose(self) -> None:
+                return None
+
+        return _Runtime()
+
+    monkeypatch.setattr(main_module.service_client, "generate", _fake_generate)
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_mcp_runtime", _fake_mcp_runtime)
+    yield
+    main_module.container.session_store._sessions.clear()  # noqa: SLF001
+    main_module.container.isolation._states.clear()  # noqa: SLF001
 
 
 def _base_payload() -> dict:
@@ -23,7 +77,9 @@ def _base_payload() -> dict:
 
 def _parse_sse_body(body: str) -> dict[str, Any]:
     messages: list[str] = []
+    steps: list[dict[str, Any]] = []
     done_payload: dict[str, Any] = {}
+    event_order: list[str] = []
     current_event = ""
     for block in body.split("\n\n"):
         block = block.strip()
@@ -36,13 +92,18 @@ def _parse_sse_body(body: str) -> dict[str, Any]:
             if not line.startswith("data: "):
                 continue
             payload = json.loads(line.removeprefix("data: ").strip())
+            event_order.append(current_event or "message")
+            if current_event == "step":
+                steps.append(payload)
             if current_event == "message":
                 messages.append(str(payload.get("delta", "")))
             elif current_event == "done":
                 done_payload = payload
     return {
         "text": "".join(messages),
+        "steps": steps,
         "done": done_payload,
+        "event_order": event_order,
     }
 
 
@@ -124,7 +185,10 @@ def test_agent_mode_request_should_be_accepted():
     session_id = data["session_id"]
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
-    assert stream_res.text.strip()
+    parsed = _parse_sse_body(stream_res.text)
+    assert parsed["text"].strip()
+    assert parsed["done"]["agent_strategy"] == "speed"
+    assert parsed["steps"]
 
 
 def test_agent_mode_failure_should_not_fallback_to_plain_chat():
@@ -141,8 +205,39 @@ def test_agent_mode_failure_should_not_fallback_to_plain_chat():
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
     parsed = _parse_sse_body(stream_res.text)
-    assert "未能完成可靠的外部工具链调用" in parsed["text"]
-    assert "agent:mcp_execution_not_confirmed" in stream_res.text
+    assert "当前智能体执行失败" in parsed["text"]
+    assert "不会伪造已经完成的工具链结果" in parsed["text"]
+    assert "agent:execution_failed" in stream_res.text
+    assert parsed["done"]["error_message"]
+
+
+def test_agent_mode_generation_timeout_should_degrade_with_rule_based_summary(monkeypatch: pytest.MonkeyPatch):
+    from app import main as main_module
+
+    client = TestClient(app)
+    original_generate = main_module.service_client.generate
+
+    def _timeout_generate(request):
+        if request.user_query == "请说明学费和住宿费":
+            raise RuntimeError("Request timed out.")
+        return original_generate(request)
+
+    monkeypatch.setattr(main_module.service_client, "generate", _timeout_generate)
+    payload = _base_payload()
+    payload["mode"] = "agent"
+    payload["messages"] = [{"role": "user", "content": "请说明学费和住宿费"}]
+
+    res = client.post("/api/chat", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "degraded"
+
+    stream_res = client.get(f"/api/chat/stream?session_id={data['session_id']}")
+    assert stream_res.status_code == 200
+    parsed = _parse_sse_body(stream_res.text)
+    assert "当前最终生成阶段超时" in parsed["text"]
+    assert "generation:fallback:rule_based" in stream_res.text
+    assert any(step["status"] == "degraded" and step["node"] == "generate_final_answer" for step in parsed["steps"])
 
 
 def test_use_saved_skill_requires_id():
@@ -224,6 +319,22 @@ def test_generation_failure_should_fail_request():
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "failed"
+
+
+def test_failed_stream_done_event_contains_error_details():
+    client = TestClient(app)
+    res = client.post("/api/chat", json=_base_payload(), headers={"x-fail-features": "generation"})
+    assert res.status_code == 200
+    session_id = res.json()["session_id"]
+
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    parsed = _parse_sse_body(stream_res.text)
+
+    assert parsed["done"]["status"] == "failed"
+    assert parsed["done"]["trace_id"]
+    assert parsed["done"]["error_message"]
+    assert isinstance(parsed["done"]["tool_audit"], list)
 
 
 def test_stream_done_event_contains_status_and_trace():
@@ -400,9 +511,9 @@ def test_gateway_persists_special_and_long_memory_into_followup_context():
 
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
-    body = stream_res.text
-    assert "偏好简短回答" in body
-    assert "用户关注" in body
+    parsed = _parse_sse_body(stream_res.text)
+    assert "偏好简短回答" in parsed["text"]
+    assert "用户关注" in parsed["text"]
 
 
 def test_stream_done_event_contains_tool_audit():
@@ -418,7 +529,7 @@ def test_stream_done_event_contains_tool_audit():
     body = stream_res.text
     assert "tool_audit" in body
     assert "web_search:blocked:not_time_sensitive" in body
-    assert "generation:mock:mock-generator:cache_" in body
+    assert "generation:light:test-generator:cache_" in body
 
 
 def test_followup_query_auto_disables_web_search():
@@ -468,7 +579,7 @@ def test_generation_audit_reports_cache_hit_on_followup_request():
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
     body = stream_res.text
-    assert "generation:mock:mock-generator:cache_hit" in body
+    assert "generation:light:test-generator:cache_hit" in body
 
 
 def test_sensitive_prompt_leak_request_should_be_blocked():
@@ -483,9 +594,9 @@ def test_sensitive_prompt_leak_request_should_be_blocked():
     session_id = data["session_id"]
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
-    body = stream_res.text
-    assert "系统提示词" in body
-    assert "safety_audit:input_blocked:prompt_leak_request" in body
+    parsed = _parse_sse_body(stream_res.text)
+    assert "系统提示词" in parsed["text"]
+    assert "safety_audit:input_blocked:prompt_leak_request" in stream_res.text
 
 
 def test_sensitive_generation_output_should_be_sanitized(monkeypatch):
@@ -508,7 +619,30 @@ def test_sensitive_generation_output_should_be_sanitized(monkeypatch):
     session_id = data["session_id"]
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
-    body = stream_res.text
-    assert "输出安全审查" in body
-    assert "敏感信息" in body
-    assert "safety_audit:output_sanitized:prompt_leak_output" in body
+    parsed = _parse_sse_body(stream_res.text)
+    assert "输出安全审查" in parsed["text"]
+    assert "敏感信息" in parsed["text"]
+    assert "safety_audit:output_sanitized:prompt_leak_output" in stream_res.text
+
+
+def test_agent_stream_replay_should_emit_step_then_message_then_done():
+    client = TestClient(app)
+    payload = _base_payload()
+    payload["mode"] = "agent"
+    payload["agent_strategy"] = "quality"
+    payload["messages"] = [{"role": "user", "content": "请分别说明学费、住宿费，并给出办理流程"}]
+
+    post_res = client.post("/api/chat", json=payload)
+    assert post_res.status_code == 200
+
+    session_id = post_res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    parsed = _parse_sse_body(stream_res.text)
+
+    assert parsed["steps"]
+    assert parsed["done"]["agent_strategy"] == "quality"
+    assert parsed["text"].strip()
+    assert parsed["event_order"][0] == "step"
+    assert parsed["event_order"][-1] == "done"
+    assert "message" in parsed["event_order"]
