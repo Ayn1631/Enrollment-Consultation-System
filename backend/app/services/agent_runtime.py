@@ -1212,37 +1212,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                     return normalized.strip()
         return ""
 
-    def _should_use_mcp(self, *, query: str, route_label: str, strategy: AgentStrategy) -> bool:
-        servers, _ = load_mcp_server_configs(self.deps.services.settings)
-        if not servers:
-            return False
-
-        normalized = query.lower()
-        if any(token in normalized for token in ("mcp", "外部工具", "模型上下文协议", "bing", "fetch")):
-            return True
-
-        capability_text = " ".join(
-            " ".join(
-                [
-                    item.alias,
-                    item.original_name,
-                    item.command,
-                    *item.args,
-                    item.url,
-                ]
-            ).lower()
-            for item in servers
-        )
-        has_search_capability = any(token in capability_text for token in ("search", "bing", "serp", "query"))
-        has_fetch_capability = any(token in capability_text for token in ("fetch", "crawl", "read", "browser", "web"))
-        if has_search_capability and (
-            route_label == "time_sensitive" or any(token in query for token in ("搜索", "查询", "查一下", "搜一下", "最新", "公告", "官网", "官方"))
-        ):
-            return True
-        if has_fetch_capability and any(token in query for token in ("网页", "页面", "链接", "抓取", "读取", "打开")):
-            return True
-        return strategy == "quality" and route_label == "time_sensitive" and (has_search_capability or has_fetch_capability)
-
     def get_mcp_runtime(self, trace_id: str) -> McpToolRuntime:
         with self._mcp_runtime_guard:
             cached = self._mcp_runtime_cache.get(trace_id)
