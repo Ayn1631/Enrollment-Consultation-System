@@ -966,17 +966,10 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             runtime = self.get_mcp_runtime(trace_id)
             if not runtime.tools:
                 return StepExecutionResult(ok=False, message="当前没有可执行的 MCP 工具。", notes=runtime.notes)
-            tool = self._select_mcp_tool(runtime.tools, subproblem.query)
-            with self._get_mcp_runtime_lock(trace_id):
-                try:
-                    result = asyncio.run(self._invoke_mcp_tool(tool, subproblem.query))
-                except Exception as exc:
-                    return StepExecutionResult(ok=False, message=f"MCP 工具执行失败：{exc.__class__.__name__}", notes=runtime.notes)
             return StepExecutionResult(
-                ok=bool(str(result).strip()),
-                message=str(result).strip() or "MCP 工具未返回内容。",
-                context_blocks=[f"[mcp] {str(result).strip()}"] if str(result).strip() else [],
-                tool_audit=[f"agent_tool:mcp_execute:{getattr(tool, 'name', 'unknown_tool')}"],
+                ok=False,
+                message="直接 MCP 单工具路由已停用，请通过 ReAct 智能体执行 mcp_execute，让智能体自行选择工具。",
+                tool_audit=[f"agent_tool:mcp_execute_delegated:{','.join(getattr(tool, 'name', 'unknown_tool') for tool in runtime.tools[:8])}"],
                 notes=runtime.notes,
             )
         if step_type == "citation_guard":
@@ -1302,28 +1295,3 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 lock = threading.RLock()
                 self._mcp_runtime_locks[trace_id] = lock
             return lock
-
-    def _select_mcp_tool(self, tools: list[Any], query: str) -> Any:
-        if len(tools) == 1:
-            return tools[0]
-
-        normalized_query = query.lower()
-        query_prefers_search = any(token in query for token in ("搜索", "查询", "查一下", "搜一下", "最新", "公告", "官网", "官方"))
-        query_prefers_fetch = any(token in query for token in ("网页", "页面", "链接", "抓取", "读取", "打开"))
-
-        def _score(tool: Any) -> tuple[int, str]:
-            name = str(getattr(tool, "name", "") or "").lower()
-            description = str(getattr(tool, "description", "") or "").lower()
-            haystack = f"{name} {description}"
-            score = 0
-            if "search" in normalized_query or query_prefers_search:
-                if any(token in haystack for token in ("search", "bing", "query", "web_search")):
-                    score += 3
-            if query_prefers_fetch:
-                if any(token in haystack for token in ("fetch", "read", "crawl", "browser", "web_read")):
-                    score += 3
-            if "mcp" in haystack:
-                score += 1
-            return score, name
-
-        return max(tools, key=_score)

@@ -105,19 +105,6 @@ def test_build_plan_should_not_include_mcp_steps_when_config_missing(tmp_path):
     assert "mcp_execute" not in step_types
 
 
-def test_select_mcp_tool_should_prefer_search_tool_for_search_query():
-    settings = Settings(MCP_ENABLED=False)
-    runtime = AgentRuntime(_GatewayStub(settings))
-    tools = [
-        _FakeTool("fetch_read_page", "read fetched web page"),
-        _FakeTool("bing_search_web", "search the web with bing"),
-    ]
-
-    selected = runtime._select_mcp_tool(tools, "请搜索最新招生公告")
-
-    assert selected.name == "bing_search_web"
-
-
 def test_get_mcp_runtime_should_cache_per_trace(monkeypatch):
     settings = Settings(MCP_ENABLED=True)
     runtime = AgentRuntime(_GatewayStub(settings))
