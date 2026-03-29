@@ -83,13 +83,15 @@ const roleLabel = computed(() => {
 
     <details v-if="shouldShowAgentTrace" class="trace-card">
       <summary>专家轨迹</summary>
-      <div class="trace-row" v-for="item in props.message.agentTrace" :key="item.id">
-        <span class="trace-title">{{ item.title }}</span>
-        <span class="trace-status" :class="item.status">{{ item.status }}</span>
-        <span v-if="item.subproblem_id" class="trace-meta">{{ item.subproblem_id }}</span>
-        <span v-if="item.plan_step_index !== undefined" class="trace-meta">步骤 {{ item.plan_step_index }}</span>
-        <span v-if="item.attempt !== undefined" class="trace-meta">尝试 {{ item.attempt }}</span>
-        <span v-if="item.message" class="trace-message">{{ item.message }}</span>
+      <div class="trace-scroll">
+        <div class="trace-row" v-for="item in props.message.agentTrace" :key="item.id">
+          <span class="trace-title">{{ item.title }}</span>
+          <span class="trace-status" :class="item.status">{{ item.status }}</span>
+          <span v-if="item.subproblem_id" class="trace-meta">{{ item.subproblem_id }}</span>
+          <span v-if="item.plan_step_index !== undefined" class="trace-meta">步骤 {{ item.plan_step_index }}</span>
+          <span v-if="item.attempt !== undefined" class="trace-meta">尝试 {{ item.attempt }}</span>
+          <span v-if="item.message" class="trace-message">{{ item.message }}</span>
+        </div>
       </div>
     </details>
   </div>
@@ -211,6 +213,12 @@ a {
   margin-top: 8px;
   font-size: 12px;
   color: var(--ink-1);
+}
+
+.trace-scroll {
+  max-height: min(32vh, 280px);
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .trace-title {

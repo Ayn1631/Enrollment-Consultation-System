@@ -40,13 +40,15 @@ watch(
 
     <div v-if="props.mode === 'agent' && props.currentAgentTrace.length" class="trace-panel">
       <div class="trace-title">当前执行轨迹</div>
-      <div class="trace-item" v-for="item in props.currentAgentTrace" :key="item.id">
-        <span class="trace-node">{{ item.title }}</span>
-        <span class="trace-status" :class="item.status">{{ item.status }}</span>
-        <span v-if="item.subproblem_id" class="trace-meta">{{ item.subproblem_id }}</span>
-        <span v-if="item.plan_step_index !== undefined" class="trace-meta">步骤 {{ item.plan_step_index }}</span>
-        <span v-if="item.attempt !== undefined" class="trace-meta">尝试 {{ item.attempt }}</span>
-        <span v-if="item.message" class="trace-message">{{ item.message }}</span>
+      <div class="trace-list">
+        <div class="trace-item" v-for="item in props.currentAgentTrace" :key="item.id">
+          <span class="trace-node">{{ item.title }}</span>
+          <span class="trace-status" :class="item.status">{{ item.status }}</span>
+          <span v-if="item.subproblem_id" class="trace-meta">{{ item.subproblem_id }}</span>
+          <span v-if="item.plan_step_index !== undefined" class="trace-meta">步骤 {{ item.plan_step_index }}</span>
+          <span v-if="item.attempt !== undefined" class="trace-meta">尝试 {{ item.attempt }}</span>
+          <span v-if="item.message" class="trace-message">{{ item.message }}</span>
+        </div>
       </div>
     </div>
 
@@ -108,6 +110,16 @@ watch(
   padding: 10px 12px;
   display: grid;
   gap: 8px;
+  max-height: min(36vh, 320px);
+  min-height: 0;
+}
+
+.trace-list {
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
 }
 
 .trace-title {
