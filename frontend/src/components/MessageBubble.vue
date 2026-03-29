@@ -248,6 +248,11 @@ a {
   color: var(--ink-2);
 }
 
+.trace-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .audit-list {
   display: grid;
   gap: 6px;

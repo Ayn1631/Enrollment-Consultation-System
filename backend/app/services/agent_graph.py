@@ -255,7 +255,10 @@ class AgentGraphRunner:
             node="preprocess_query",
             title="前处理与路由",
             status="completed",
-            message=f"{route_decision.route_label}:{route_decision.reason}",
+            message=(
+                f"路由：{route_decision.route_label}:{route_decision.reason}\n"
+                f"改写：{state['rewritten_query']}"
+            ),
         )
         return state
 
@@ -281,6 +284,7 @@ class AgentGraphRunner:
             SubproblemState(subproblem_id=f"sp-{idx + 1}", query=item)
             for idx, item in enumerate(subproblems)
         ]
+        subproblem_lines = [f"{item.subproblem_id}: {item.query}" for item in state["subproblems"]]
         self.runtime.emit_step(
             events=state["step_events"],
             sink=sink,
@@ -288,7 +292,7 @@ class AgentGraphRunner:
             node="split_query",
             title="拆分子问题",
             status="completed",
-            message=f"共 {len(state['subproblems'])} 个子问题",
+            message=f"共 {len(state['subproblems'])} 个子问题\n" + "\n".join(subproblem_lines),
         )
         return state
 

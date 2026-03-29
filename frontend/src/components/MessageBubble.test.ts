@@ -72,4 +72,41 @@ describe('MessageBubble', () => {
     expect(wrapper.text()).not.toContain('执行详情与追踪')
     expect(wrapper.text()).not.toContain('专家轨迹')
   })
+
+  test('专家轨迹显示多行改写与子问题列表', async () => {
+    const wrapper = mountBubble({
+      status: 'ok',
+      enabledFeatures: ['rag'],
+      agentTrace: [
+        {
+          id: 'step-1',
+          node: 'preprocess_query',
+          title: '前处理与路由',
+          status: 'completed',
+          message: '路由：policy:default_policy\n改写：我在贵州高考350分，物化生，本科，可以报什么专业？',
+          strategy: 'quality',
+          timestamp: '2026-03-27T00:00:00.000Z'
+        },
+        {
+          id: 'step-2',
+          node: 'split_query',
+          title: '拆分子问题',
+          status: 'completed',
+          message: '共 2 个子问题\nsp-1: 贵州物化生 350 分可报考哪些专业？\nsp-2: 是否建议报考中原工学院相关专业？',
+          strategy: 'quality',
+          timestamp: '2026-03-27T00:00:01.000Z'
+        }
+      ]
+    })
+
+    const traceDetails = wrapper.findAll('details').at(-1)
+    expect(traceDetails?.exists()).toBe(true)
+    traceDetails?.element.setAttribute('open', 'true')
+    await wrapper.vm.$nextTick()
+
+    const traceText = wrapper.text()
+    expect(traceText).toContain('改写：我在贵州高考350分')
+    expect(traceText).toContain('sp-1: 贵州物化生 350 分可报考哪些专业？')
+    expect(traceText).toContain('sp-2: 是否建议报考中原工学院相关专业？')
+  })
 })

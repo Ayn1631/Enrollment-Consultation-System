@@ -162,4 +162,9 @@ watch(
 .trace-message {
   color: var(--ink-2);
 }
+
+.trace-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 </style>
