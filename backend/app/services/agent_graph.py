@@ -381,7 +381,6 @@ class AgentGraphRunner:
         working.context_blocks = list(subproblem.context_blocks)
         working.sources = list(subproblem.sources)
         working.tool_audit = list(subproblem.tool_audit)
-        working.web_hits = list(subproblem.web_hits)
         working.status = "pending"
         working.degraded = False
 
@@ -422,8 +421,6 @@ class AgentGraphRunner:
                 working.notes.extend(result.notes)
                 working.context_blocks.extend(result.context_blocks)
                 working.sources = self.runtime.dedupe_sources([*working.sources, *result.sources], limit=5)
-                if result.web_hits:
-                    working.web_hits = result.web_hits
                 if review.ok:
                     working.step_outputs[f"{idx}:{step.step_type}"] = result.message
                     working.current_step_index = idx

@@ -14,7 +14,7 @@ def test_build_bucket_summary_groups_cases_by_category():
     cases = [
         EvalCase("policy_ok", "招生政策", "请总结招生政策", ["rag"], "", False),
         EvalCase("policy_fail", "招生政策", "请总结招生政策", ["rag"], "", True),
-        EvalCase("notice_ok", "时效公告", "请给我最新公告", ["rag", "web_search"], "", False),
+        EvalCase("notice_ok", "时效公告", "请给我最新公告", ["rag"], "", False),
     ]
     rows = [
         {"name": "policy_ok", "ok": True, "status": "ok"},

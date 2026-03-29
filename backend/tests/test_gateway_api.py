@@ -156,11 +156,10 @@ def test_mcp_tools_endpoint_returns_controlled_catalog():
     assert res.status_code == 200
     body = res.json()
     ids = {item["id"] for item in body}
-    assert "web_search" in ids
-    assert "web_read" in ids
-    web_search = next(item for item in body if item["id"] == "web_search")
-    assert web_search["requires_time_sensitive"] is True
-    assert "zsc.zut.edu.cn" in web_search["allowed_domains"]
+    assert "local_rag" in ids
+    assert "mcp_tools_catalog" in ids
+    assert "web_search" not in ids
+    assert "web_read" not in ids
 
 
 def test_create_chat_defaults_to_ok_or_degraded():
@@ -205,7 +204,7 @@ def test_agent_mode_failure_should_not_fallback_to_plain_chat():
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
     parsed = _parse_sse_body(stream_res.text)
-    assert "当前智能体执行失败" in parsed["text"]
+    assert "当前专家模式执行失败" in parsed["text"]
     assert "不会伪造已经完成的工具链结果" in parsed["text"]
     assert "agent:execution_failed" in stream_res.text
     assert parsed["done"]["error_message"]
@@ -249,30 +248,7 @@ def test_use_saved_skill_requires_id():
     assert res.status_code == 422
 
 
-def test_web_search_failure_should_degrade_not_fail():
-    client = TestClient(app)
-    payload = _base_payload()
-    payload["features"] = ["rag", "web_search", "citation_guard"]
-    res = client.post("/api/chat", json=payload, headers={"x-fail-features": "web_search"})
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "degraded"
-    assert "web_search" in data["degraded_features"]
-
-
-def test_web_search_should_be_blocked_for_non_time_sensitive_query():
-    client = TestClient(app)
-    payload = _base_payload()
-    payload["features"] = ["rag", "web_search", "citation_guard"]
-    payload["messages"] = [{"role": "user", "content": "学校地址是什么"}]
-    res = client.post("/api/chat", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "degraded"
-    assert "web_search" in data["degraded_features"]
-
-
-def test_time_sensitive_query_auto_enables_web_search():
+def test_time_sensitive_query_should_not_emit_local_web_search_audit():
     client = TestClient(app)
     payload = _base_payload()
     payload["features"] = ["rag", "citation_guard"]
@@ -283,8 +259,8 @@ def test_time_sensitive_query_auto_enables_web_search():
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
     body = stream_res.text
-    assert "query_router:auto_enable:web_search" in body
-    assert "web_search:allowed:official_whitelist" in body
+    assert "web_search" not in body
+    assert "web_read" not in body
 
 
 def test_skill_exec_failure_should_degrade_not_fail():
@@ -339,7 +315,7 @@ def test_failed_stream_done_event_contains_error_details():
 
 def test_stream_done_event_contains_status_and_trace():
     client = TestClient(app)
-    post_res = client.post("/api/chat", json=_base_payload(), headers={"x-fail-features": "web_search"})
+    post_res = client.post("/api/chat", json=_base_payload(), headers={"x-fail-features": "skill_exec"})
     assert post_res.status_code == 200
     session_id = post_res.json()["session_id"]
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
@@ -519,7 +495,7 @@ def test_gateway_persists_special_and_long_memory_into_followup_context():
 def test_stream_done_event_contains_tool_audit():
     client = TestClient(app)
     payload = _base_payload()
-    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["features"] = ["rag", "citation_guard"]
     payload["messages"] = [{"role": "user", "content": "学校地址是什么"}]
     post_res = client.post("/api/chat", json=payload)
     assert post_res.status_code == 200
@@ -528,14 +504,14 @@ def test_stream_done_event_contains_tool_audit():
     assert stream_res.status_code == 200
     body = stream_res.text
     assert "tool_audit" in body
-    assert "web_search:blocked:not_time_sensitive" in body
+    assert "web_search" not in body
     assert "generation:light:test-generator:cache_" in body
 
 
-def test_followup_query_auto_disables_web_search():
+def test_followup_query_should_not_emit_removed_web_search_audit():
     client = TestClient(app)
     payload = _base_payload()
-    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["features"] = ["rag", "citation_guard"]
     payload["messages"] = [{"role": "user", "content": "那还需要准备什么"}]
     post_res = client.post("/api/chat", json=payload)
     assert post_res.status_code == 200
@@ -543,15 +519,14 @@ def test_followup_query_auto_disables_web_search():
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
     body = stream_res.text
-    assert "query_router:auto_disable:web_search" in body
-    assert "web_search:allowed:official_whitelist" not in body
-    assert "web_search:blocked:not_time_sensitive" not in body
+    assert "web_search" not in body
+    assert "web_read" not in body
 
 
-def test_time_sensitive_web_search_chain_contains_web_read_audit():
+def test_time_sensitive_query_should_not_emit_removed_web_read_audit():
     client = TestClient(app)
     payload = _base_payload()
-    payload["features"] = ["rag", "web_search", "citation_guard"]
+    payload["features"] = ["rag", "citation_guard"]
     payload["messages"] = [{"role": "user", "content": "请给我最新招生公告"}]
     post_res = client.post("/api/chat", json=payload)
     assert post_res.status_code == 200
@@ -559,8 +534,8 @@ def test_time_sensitive_web_search_chain_contains_web_read_audit():
     stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
     assert stream_res.status_code == 200
     body = stream_res.text
-    assert "web_search:allowed:official_whitelist" in body
-    assert "web_read:allowed:official_whitelist" in body
+    assert "web_search" not in body
+    assert "web_read" not in body
 
 
 def test_generation_audit_reports_cache_hit_on_followup_request():

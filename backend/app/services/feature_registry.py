@@ -6,7 +6,6 @@ from app.models import FeatureMeta, SavedSkill, ToolMeta
 def feature_catalog() -> list[FeatureMeta]:
     return [
         FeatureMeta(id="rag", label="本地RAG检索", default_enabled=True),
-        FeatureMeta(id="web_search", label="联网搜索增强", default_enabled=False),
         FeatureMeta(id="skill_exec", label="通用技能执行", default_enabled=False),
         FeatureMeta(
             id="use_saved_skill",
@@ -19,7 +18,6 @@ def feature_catalog() -> list[FeatureMeta]:
 
 
 def tool_catalog() -> list[ToolMeta]:
-    official_domains = ["zsc.zut.edu.cn", "zut.edu.cn"]
     return [
         ToolMeta(
             id="local_rag",
@@ -29,28 +27,6 @@ def tool_catalog() -> list[ToolMeta]:
             retry_attempts=1,
             max_query_length=200,
             audit_scope="rag",
-        ),
-        ToolMeta(
-            id="web_search",
-            label="官方站点联网搜索",
-            kind="remote",
-            timeout_seconds=0.8,
-            retry_attempts=1,
-            max_query_length=120,
-            requires_time_sensitive=True,
-            allowed_domains=official_domains,
-            audit_scope="web_search",
-        ),
-        ToolMeta(
-            id="web_read",
-            label="官方网页阅读",
-            kind="remote",
-            timeout_seconds=1.0,
-            retry_attempts=1,
-            max_query_length=240,
-            requires_time_sensitive=True,
-            allowed_domains=official_domains,
-            audit_scope="web_read",
         ),
         ToolMeta(
             id="skill_exec",

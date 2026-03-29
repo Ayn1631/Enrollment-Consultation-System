@@ -30,7 +30,7 @@ class EvalCase:
 
 CASES = [
     EvalCase("default_rag", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "", False, False),
-    EvalCase("web_search_degrade", "时效公告", "请给我最新招生公告", ["rag", "web_search", "citation_guard"], "web_search", False, True),
+    EvalCase("time_sensitive_notice", "时效公告", "请给我最新招生公告", ["rag", "citation_guard"], "", False, True),
     EvalCase("skill_degrade", "费用资助", "请解释学费和资助政策", ["rag", "skill_exec", "citation_guard"], "skill_exec", False, False),
     EvalCase("saved_skill_missing", "流程咨询", "请说明报到流程", ["rag", "use_saved_skill", "citation_guard"], "", True, True),
     EvalCase("generation_fail", "招生政策", "请总结招生政策重点", ["rag", "citation_guard"], "generation", True, True),

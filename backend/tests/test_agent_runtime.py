@@ -204,21 +204,21 @@ def test_build_plan_should_prefer_llm_result(monkeypatch):
     assert "长期记忆：用户明确想报本科理工类专业。" in str(captured_messages["messages"][1].content)
 
 
-def test_build_plan_should_allow_optional_web_search_steps(monkeypatch):
+def test_build_plan_should_allow_optional_mcp_steps_from_llm(monkeypatch):
     settings = Settings(MCP_ENABLED=False)
     runtime = AgentRuntime(_GatewayStub(settings))
+    monkeypatch.setattr(runtime, "_has_mcp_servers", lambda: True)
     request = ChatRequest(
         session_id="s4",
         messages=[{"role": "user", "content": "帮我看 2025 年招生录取情况"}],
         mode="agent",
-        features=["rag", "web_search"],
+        features=["rag"],
     )
 
     class _FakeResponse:
         content = (
             '[{"step_type":"local_rag_search","title":"先查校内资料","instruction":"先看校内已有的招生章程和专业资料。"},'
-            '{"step_type":"official_web_search","title":"补充官网线索","instruction":"如果校内资料不足，再搜索官方近年录取或招生公告。"},'
-            '{"step_type":"official_web_read","title":"阅读官方页面","instruction":"阅读搜索命中的官网页面并提取录取相关细节。"},'
+            '{"step_type":"mcp_execute","title":"补充外部线索","instruction":"如果校内资料不足，再调用 MCP 搜索或抓取工具补充近年录取或招生公告。"},'
             '{"step_type":"synthesize_step","title":"综合判断","instruction":"结合校内外证据给出保守结论。"}]'
         )
 
@@ -238,7 +238,6 @@ def test_build_plan_should_allow_optional_web_search_steps(monkeypatch):
 
     assert [item.step_type for item in steps] == [
         "local_rag_search",
-        "official_web_search",
-        "official_web_read",
+        "mcp_execute",
         "synthesize_step",
     ]

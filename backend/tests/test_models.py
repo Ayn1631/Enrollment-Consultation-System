@@ -77,4 +77,4 @@ def test_agent_mode_defaults_to_full_feature_chain():
     payload = _base_request()
     payload["mode"] = "agent"
     req = ChatRequest(**payload)
-    assert req.features == ["rag", "web_search", "skill_exec", "citation_guard"]
+    assert req.features == ["rag", "skill_exec", "citation_guard"]

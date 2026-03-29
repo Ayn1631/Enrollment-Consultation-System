@@ -9,8 +9,6 @@ from app.models import AgentStepEvent, AgentStrategy, ChatRequest, ChatSource, F
 PlanStepType = Literal[
     "recall_memory",
     "local_rag_search",
-    "official_web_search",
-    "official_web_read",
     "general_skill",
     "saved_skill",
     "mcp_discover",
@@ -44,7 +42,6 @@ class SubproblemState:
     context_blocks: list[str] = field(default_factory=list)
     sources: list[ChatSource] = field(default_factory=list)
     tool_audit: list[str] = field(default_factory=list)
-    web_hits: list[dict[str, str]] = field(default_factory=list)
     replan_count: int = 0
 
 
@@ -56,7 +53,6 @@ class StepExecutionResult:
     sources: list[ChatSource] = field(default_factory=list)
     tool_audit: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
-    web_hits: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

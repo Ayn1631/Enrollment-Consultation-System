@@ -22,7 +22,7 @@ DEFAULT_FEATURES: tuple[FeatureFlag, ...] = ("rag", "citation_guard")
 MODE_DEFAULT_FEATURES: dict[ChatMode, tuple[FeatureFlag, ...]] = {
     "chat": (),
     "rag": ("rag", "citation_guard"),
-    "agent": ("rag", "web_search", "skill_exec", "citation_guard"),
+    "agent": ("rag", "skill_exec", "citation_guard"),
     "plan": DEFAULT_FEATURES,
     "guide": DEFAULT_FEATURES,
 }

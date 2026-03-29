@@ -511,8 +511,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         allowed_step_types: list[PlanStepType] = []
         if "rag" in effective_features:
             allowed_step_types.append("local_rag_search")
-        if "web_search" in effective_features:
-            allowed_step_types.extend(["official_web_search", "official_web_read"])
         if self._has_mcp_servers():
             allowed_step_types.append("mcp_execute")
         allowed_step_types.append("synthesize_step")
@@ -553,9 +551,9 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             "10. instruction 应体现招生场景中的关键约束，例如年份、省份、专业、费用项、流程条件、官方性、证据充分性和不确定性处理。"
                             "11. 计划应优先服务于“拿证据并形成可核验结论”，而不是堆步骤。"
                             "12. 如果允许列表里没有某种理想步骤，就不能暗示使用它，只能在现有 step_type 中做最优安排。"
-                            "13. official_web_search / official_web_read / mcp_execute 都是可选步骤，不是必选步骤。"
-                            "14. 只有当子问题涉及最新公告、当年或近年分省录取、位次、分数线、招生计划、官网核验、外部搜索或本地资料明显不足时，才考虑加入 official_web_search、official_web_read 或 mcp_execute。"
-                            "15. 如果本地 RAG 已足够回答，就不要为了显得复杂而强行加入联网搜索或 MCP。"
+                            "13. mcp_execute 是可选步骤，不是必选步骤。"
+                            "14. 只有当子问题涉及最新公告、当年或近年分省录取、位次、分数线、招生计划、官网核验、外部搜索或本地资料明显不足时，才考虑加入 mcp_execute。"
+                            "15. 如果本地 RAG 已足够回答，就不要为了显得复杂而强行加入 MCP。"
                             "你需要特别理解“前置步骤”和“深化步骤”："
                             "前置步骤是为了回答当前子问题，先确认必要事实、检索必要资料、核验基础证据；"
                             "深化步骤是在已有证据后进一步补强，例如增加外部工具验证、补充官方信息或进行引用校验；"
@@ -597,8 +595,8 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             "3. 计划步骤数量尽量精简但必须有效，避免重复和空步骤。\n"
                             "4. 必须先考虑前置证据步骤，再考虑证据补强或外部验证，最后以 synthesize_step 收束。\n"
                             "5. 必须结合相关记忆理解当前子问题，必要时在 instruction 中保留记忆提供的省份、科类、年份、专业、层次等约束。\n"
-                            "6. official_web_search、official_web_read、mcp_execute 仅在确有必要时才选，不要机械加入。\n"
-                            "7. 如果问题是最新公告、2025/25年录取、分省分专业计划、分数线、位次或需要官网核验，可考虑联网或 MCP。\n"
+                            "6. mcp_execute 仅在确有必要时才选，不要机械加入。\n"
+                            "7. 如果问题是最新公告、2025/25年录取、分省分专业计划、分数线、位次或需要官网核验，可考虑 MCP 外部搜索或抓取。\n"
                             "8. title 要短，instruction 要明确说明该步骤的目标、证据重点和预期产出。\n"
                             "9. 不得使用允许列表之外的 step_type。\n"
                             "10. 如果只允许很少的 step_type，就输出最小可行计划，不要硬凑复杂流程。\n"
@@ -671,8 +669,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         collector_sources = list(subproblem.sources)
         collector_notes = list(subproblem.notes)
         collector_tool_audit: list[str] = []
-        collector_web_hits = list(subproblem.web_hits)
-        cached_web_hits: list[Any] = []
         rag_document_catalog = self._get_rag_document_catalog_text()
 
         def normalize_content(content: Any) -> str:
@@ -721,75 +717,12 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             f"当前知识库已收录的文档包括：{rag_document_catalog}"
         )
 
-        def run_official_web_search(tool_query: str) -> tuple[str, str]:
-            collector_tool_audit.append("agent_tool:official_web_search")
-            if "web_search" not in effective_features:
-                return "当前会话未开启 web_search 功能。", ""
-            allowed, guarded_query, reason = self.gateway._guard_web_search(tool_query)
-            collector_tool_audit.append(f"agent_tool:web_search:{reason}")
-            if not allowed:
-                return f"联网搜索被拦截：{reason}", ""
-            search_result = self.deps.container.isolation.execute(
-                "web-search-service",
-                lambda: self.gateway._invoke_web_search(guarded_query, fail_features),
-            )
-            if not search_result.ok or not search_result.value:
-                return f"联网搜索失败：{search_result.error or 'unknown'}", guarded_query
-            hits = search_result.value
-            cached_web_hits[:] = hits
-            collector_web_hits[:] = [
-                {"title": item.title, "url": item.url, "snippet": item.snippet}
-                for item in hits
-            ]
-            collector_sources[:] = self.dedupe_sources(
-                [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in hits]],
-                limit=5,
-            )
-            collector_context_blocks.extend(
-                [f"[official-search][title={item.title}][url={item.url}] {item.snippet}" for item in hits[:3]]
-            )
-            summary = "\n".join(f"{item.title}: {item.snippet}" for item in hits[:2]).strip()
-            return summary or "官方联网搜索未返回可用摘要。", guarded_query
-
-        @tool("official_web_search")
-        def official_web_search(tool_query: str) -> str:
-            """执行官方站点联网搜索，适合最新公告、近年录取、分省计划和官网核验。"""
-            summary, _ = run_official_web_search(tool_query)
-            return summary
-
-        @tool("official_web_read")
-        def official_web_read(tool_query: str) -> str:
-            """阅读官方搜索结果网页正文，适合在已找到官网线索后补充细节证据。"""
-            collector_tool_audit.append("agent_tool:official_web_read")
-            if "web_search" not in effective_features:
-                return "当前会话未开启 web_search 功能。"
-            read_query = tool_query
-            if not cached_web_hits:
-                search_summary, guarded_query = run_official_web_search(tool_query)
-                if not cached_web_hits:
-                    return search_summary
-                if guarded_query:
-                    read_query = guarded_query
-            read_result = self.deps.container.isolation.execute(
-                "web-read-service",
-                lambda: self.gateway._invoke_web_read(read_query, cached_web_hits, fail_features),
-            )
-            if not read_result.ok or not read_result.value:
-                return f"官方网页阅读失败：{read_result.error or 'unknown'}"
-            blocks = list(read_result.value)
-            collector_context_blocks.extend(blocks[:3])
-            return "\n".join(blocks[:2]).strip() or "官方网页未提取到可用正文。"
-
         runtime = self.get_mcp_runtime(trace_id)
         if runtime.notes:
             collector_notes.extend(runtime.notes)
         tools: list[Any] = []
         if step.step_type == "local_rag_search" and "rag" in effective_features:
             tools.append(local_rag_search)
-        if step.step_type == "official_web_search" and "web_search" in effective_features:
-            tools.append(official_web_search)
-        if step.step_type == "official_web_read" and "web_search" in effective_features:
-            tools.extend([official_web_search, official_web_read])
         if step.step_type == "mcp_execute" and runtime.tools:
             tools.extend(runtime.tools)
             collector_tool_audit.append("agent_tool:mcp_runtime:" + ",".join(item.alias for item in runtime.servers))
@@ -814,8 +747,10 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "你的回答必须聚焦当前计划节点，而不是一次性回答整个子问题。"
             "如果证据不足，明确说不确定，不要编造来源。"
             "你必须把短期记忆、长期记忆、特殊记忆都当作真实可用上下文，并在整个推理过程中持续参考。"
-            "如果当前步骤提供了官方联网搜索、官方网页阅读或 MCP，那说明计划阶段认为这些能力可能有帮助，但是否真的调用仍由你基于证据缺口自行判断。"
+            "如果当前步骤提供了 MCP，那说明计划阶段认为外部工具可能有帮助，但是否真的调用仍由你基于证据缺口自行判断。"
             "不要机械调用工具；只有当本地资料不足、问题要求最新信息、需要官网核验或需要外部搜索时才调用。"
+            "你应该尽可能完成任务, 当本地RAG检索不到结果时, 你应该优先尝试合适的 MCP 搜索工具来补充证据!"
+            "你做事非常负责, 你会尽可能找到信息, 哪怕进行深度思考与多轮无上限次数的工具调用!"
         )
         human_prompt = (
             f"执行策略：{request.agent_strategy}\n"
@@ -832,7 +767,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "当前可用工具：\n"
             f"{available_tools}\n\n"
             "补充判断规则：\n"
-            "1. 如果问题涉及最新公告、近年录取、分省计划、分数线、位次或官网通知，而当前证据不足，可考虑联网搜索、网页阅读或 MCP。\n"
+            "1. 如果问题涉及最新公告、近年录取、分省计划、分数线、位次或官网通知，而当前证据不足，可优先考虑 MCP 搜索或抓取工具。\n"
             "2. 如果本地知识库文档已经足够支撑当前步骤，就不要硬调外部工具。\n"
             "3. 如果需要调用 local_rag_search，可优先参考工具描述中的文档清单来判断本地库是否可能命中。\n\n"
             "请使用 ReAct 方式执行当前计划节点。"
@@ -857,7 +792,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             content = normalize_content(getattr(message, "content", ""))
             if not content:
                 continue
-            if tool_name in {"local_rag_search", "official_web_search", "official_web_read"}:
+            if tool_name == "local_rag_search":
                 continue
             collector_context_blocks.append(f"[mcp:{tool_name or 'tool'}] {content}")
             collector_tool_audit.append(f"agent_tool:mcp_execute:{tool_name or 'unknown_tool'}")
@@ -872,7 +807,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             sources=self.dedupe_sources(collector_sources, limit=5),
             tool_audit=collector_tool_audit,
             notes=list(dict.fromkeys(collector_notes)),
-            web_hits=collector_web_hits or subproblem.web_hits,
         )
 
     def review_subproblem_result(self, *, route_label: str, result: StepExecutionResult) -> StepReviewResult:
@@ -910,8 +844,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         title_map: dict[PlanStepType, str] = {
             "recall_memory": "读取会话记忆",
             "local_rag_search": "检索校内资料",
-            "official_web_search": "官方联网搜索",
-            "official_web_read": "阅读官方网页",
             "general_skill": "执行通用技能",
             "saved_skill": "执行历史技能",
             "mcp_discover": "查看 MCP 工具目录",
@@ -925,8 +857,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         instruction_map: dict[PlanStepType, str] = {
             "recall_memory": "基于默认记忆上下文澄清与当前子问题相关的历史信息。",
             "local_rag_search": "检索与当前子问题直接相关的校内资料，并提取可用证据。",
-            "official_web_search": "搜索与当前子问题相关的官方公开信息。",
-            "official_web_read": "阅读已命中的官方网页并提取关键信息。",
             "general_skill": "调用通用技能处理当前子问题中的流程或结构化任务。",
             "saved_skill": "调用已保存技能处理当前子问题。",
             "mcp_discover": "查看可用的 MCP 工具目录，确认外部工具能力。",
@@ -978,49 +908,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                     limit=5,
                 ),
                 notes=notes,
-            )
-        if step_type == "official_web_search":
-            if "web_search" not in effective_features:
-                return StepExecutionResult(ok=False, message="当前会话未开启 web_search 功能。")
-            allowed, guarded_query, reason = self.gateway._guard_web_search(subproblem.query)
-            if not allowed:
-                return StepExecutionResult(ok=False, message=f"联网搜索被拦截：{reason}", tool_audit=[f"web_search:blocked:{reason}"])
-            search_result = self.deps.container.isolation.execute(
-                "web-search-service",
-                lambda: self.gateway._invoke_web_search(guarded_query, fail_features),
-            )
-            if not search_result.ok or not search_result.value:
-                return StepExecutionResult(ok=False, message=f"联网搜索失败：{search_result.error or 'unknown'}")
-            hits = search_result.value
-            return StepExecutionResult(
-                ok=True,
-                message="\n".join(f"{item.title}: {item.snippet}" for item in hits[:2]),
-                context_blocks=[f"联网搜索摘要：{item.title} | {item.snippet}" for item in hits],
-                sources=self.dedupe_sources([ChatSource(title=item.title, url=item.url) for item in hits], limit=5),
-                tool_audit=["web_search:allowed:official_whitelist"],
-                web_hits=[{"title": item.title, "url": item.url, "snippet": item.snippet} for item in hits],
-            )
-        if step_type == "official_web_read":
-            if not subproblem.web_hits:
-                return StepExecutionResult(ok=False, message="当前没有可读的官方网页结果。")
-            hits = [self.gateway.WebSearchHit(**item) for item in subproblem.web_hits] if hasattr(self.gateway, "WebSearchHit") else []
-            if not hits:
-                hits = [type("Hit", (), item) for item in subproblem.web_hits]
-            read_result = self.deps.container.isolation.execute(
-                "web-read-service",
-                lambda: self.gateway._invoke_web_read(query=subproblem.query, hits=hits, fail_features=fail_features),
-            )
-            if not read_result.ok or not read_result.value:
-                return StepExecutionResult(
-                    ok=False,
-                    message=f"网页阅读失败：{read_result.error or 'unknown'}",
-                    tool_audit=["web_read:degraded:official_whitelist"],
-                )
-            return StepExecutionResult(
-                ok=True,
-                message="\n".join(read_result.value[:2]),
-                context_blocks=read_result.value,
-                tool_audit=["web_read:allowed:official_whitelist"],
             )
         if step_type == "general_skill":
             allowed, reason = self.gateway._guard_skill_request(query=subproblem.query, saved_skill_id=None)
@@ -1128,7 +1015,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
     def review_step(self, step: PlanStep, result: StepExecutionResult) -> StepReviewResult:
         if not result.ok:
             return StepReviewResult(ok=False, message=result.message or "步骤执行未返回有效结果。")
-        if step.step_type in {"local_rag_search", "official_web_search", "official_web_read"} and not result.context_blocks:
+        if step.step_type in {"local_rag_search", "mcp_execute"} and not result.context_blocks:
             return StepReviewResult(ok=False, message="步骤缺少可用证据。")
         if step.step_type == "citation_guard" and "通过" not in result.message:
             return StepReviewResult(ok=False, message=result.message or "引用校验失败。")
