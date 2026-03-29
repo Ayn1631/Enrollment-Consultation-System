@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from app.config import Settings
 from app.models import ChatRequest
 from app.services.ai_stack import McpServerConfig
+from app.services.agent_types import PlanStep, StepExecutionResult
 from app.services.agent_runtime import AgentRuntime
 import app.services.agent_runtime as agent_runtime_module
 
@@ -228,3 +229,61 @@ def test_build_plan_should_allow_optional_mcp_steps_from_llm(monkeypatch):
         "mcp_execute",
         "synthesize_step",
     ]
+
+
+def test_build_plan_prompt_should_surface_open_fact_and_rag_catalog_guidance(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    monkeypatch.setattr(runtime, "_has_mcp_servers", lambda: True)
+    monkeypatch.setattr(runtime, "_get_rag_document_catalog_text", lambda: "04-学院与专业概览.md；学校概况.md")
+    request = ChatRequest(
+        session_id="s5",
+        messages=[{"role": "user", "content": "人工智能学院的院长是谁"}],
+        mode="agent",
+        features=["rag"],
+    )
+    captured_messages = {}
+
+    class _FakeResponse:
+        content = (
+            '[{"step_type":"local_rag_search","title":"先查校内资料","instruction":"先看本地资料。"},'
+            '{"step_type":"mcp_execute","title":"补充公开网页事实","instruction":"如果本地资料没有明确答案，再查公开网页。"},'
+            '{"step_type":"synthesize_step","title":"综合结论","instruction":"综合证据给出结论。"}]'
+        )
+
+    class _FakeLlm:
+        def invoke(self, messages):
+            captured_messages["messages"] = messages
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+
+    runtime.build_plan(
+        query="人工智能学院的院长是谁",
+        effective_features=request.features,
+        route_label="policy",
+        request=request,
+        strategy="quality",
+    )
+
+    system_prompt = str(captured_messages["messages"][0].content)
+    human_prompt = str(captured_messages["messages"][1].content)
+    assert "院系领导" in system_prompt
+    assert "开放网页事实查询" in system_prompt
+    assert "本地知识库文档清单" in human_prompt
+    assert "04-学院与专业概览.md" in human_prompt
+
+
+def test_review_step_should_request_more_evidence_when_synthesis_uncertain_without_mcp(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    monkeypatch.setattr(runtime, "_has_mcp_servers", lambda: True)
+
+    review = runtime.review_step(
+        PlanStep("synthesize_step", "综合结论"),
+        StepExecutionResult(ok=True, message="目前不能据此确定人工智能学院院长是谁。"),
+        accumulated_tool_audit=["agent_tool:local_rag_search"],
+    )
+
+    assert review.ok is False
+    assert "尚未使用 MCP 外部工具补强" in review.message

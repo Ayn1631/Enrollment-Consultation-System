@@ -515,6 +515,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             allowed_step_types.append("mcp_execute")
         allowed_step_types.append("synthesize_step")
         allowed_step_types = list(dict.fromkeys(allowed_step_types))
+        rag_document_catalog = self._get_rag_document_catalog_text()
 
         llm = build_langchain_chat_model(
             self.deps.services.settings,
@@ -552,8 +553,10 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             "11. 计划应优先服务于“拿证据并形成可核验结论”，而不是堆步骤。"
                             "12. 如果允许列表里没有某种理想步骤，就不能暗示使用它，只能在现有 step_type 中做最优安排。"
                             "13. mcp_execute 是可选步骤，不是必选步骤。"
-                            "14. 只有当子问题涉及最新公告、当年或近年分省录取、位次、分数线、招生计划、公开网页核验、外部搜索或本地资料明显不足时，才考虑加入 mcp_execute。"
+                            "14. 当子问题涉及最新公告、当年或近年分省录取、位次、分数线、招生计划、公开网页核验、开放网页事实查询或本地资料明显不足时，应认真考虑加入 mcp_execute。"
                             "15. 如果本地 RAG 已足够回答，就不要为了显得复杂而强行加入 MCP。"
+                            "16. 所谓“开放网页事实查询”，包括但不限于人物身份、现任职务、院系领导、部门负责人、联系电话、邮箱、办公地点、学院主页栏目内容等这类本地知识库未必完整覆盖、但公开网页可能存在明确答案的问题。"
+                            "17. 如果本地知识库文档清单里看不出明显覆盖该事实，或者该事实明显依赖学院/部门页面而不是通用招生资料，就应把 mcp_execute 视为高优先级候选步骤。"
                             "你需要特别理解“前置步骤”和“深化步骤”："
                             "前置步骤是为了回答当前子问题，先确认必要事实、检索必要资料、核验基础证据；"
                             "深化步骤是在已有证据后进一步补强，例如增加外部工具验证、补充公开信息或进行引用校验；"
@@ -579,6 +582,11 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             "允许的 step_type：[\"local_rag_search\",\"mcp_execute\",\"synthesize_step\"]"
                             "输出："
                             "[{\"step_type\":\"local_rag_search\",\"title\":\"检索录取依据\",\"instruction\":\"检索与河南理科考生报考中原工学院计算机类专业相关的录取资料，重点提取年份、省份、科类、专业范围、分数或位次等证据。\"},{\"step_type\":\"mcp_execute\",\"title\":\"补强录取判断\",\"instruction\":\"在本地证据基础上补充外部工具核验，优先确认是否存在更新的录取参考信息或公开规则，以提高判断可靠性。\"},{\"step_type\":\"synthesize_step\",\"title\":\"综合报考判断\",\"instruction\":\"结合已有录取证据对当前子问题给出保守判断，明确依据、适用范围和不确定性，不得脱离证据直接下结论。\"}]"
+                            "示例4："
+                            "子问题：中原工学院人工智能学院的院长是谁？"
+                            "允许的 step_type：[\"local_rag_search\",\"mcp_execute\",\"synthesize_step\"]"
+                            "输出："
+                            "[{\"step_type\":\"local_rag_search\",\"title\":\"先查校内资料\",\"instruction\":\"先检索本地知识库中是否存在人工智能学院领导、学院概况或院系页面相关资料，确认本地证据是否足以回答该人物身份问题。\"},{\"step_type\":\"mcp_execute\",\"title\":\"补充公开网页事实\",\"instruction\":\"如果本地资料没有明确给出人工智能学院院长姓名或只提供泛化学院介绍，则使用合适的 MCP 搜索或网页抓取工具补充学院领导栏目、学院主页或其他公开网页中的明确信息。\"},{\"step_type\":\"synthesize_step\",\"title\":\"综合身份结论\",\"instruction\":\"综合本地与外部公开证据给出院长姓名；若仍不能确认，明确缺口在哪里，不得把未知说成已知。\"}]"
                         )
                     ),
                     HumanMessage(
@@ -587,6 +595,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             f"问题路由：{route_label}\n"
                             f"子问题：{query}\n"
                             f"相关记忆：\n{memory_text or '当前没有可用记忆。'}\n"
+                            f"本地知识库文档清单：\n{rag_document_catalog}\n"
                             f"允许的 step_type：{json.dumps(allowed_step_types, ensure_ascii=False)}\n\n"
                             "请为这个子问题生成顺序执行计划。\n"
                             "要求：\n"
@@ -597,10 +606,12 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             "5. 必须结合相关记忆理解当前子问题，必要时在 instruction 中保留记忆提供的省份、科类、年份、专业、层次等约束。\n"
                             "6. mcp_execute 仅在确有必要时才选，不要机械加入。\n"
                             "7. 如果问题是最新公告、2025/25年录取、分省分专业计划、分数线、位次或需要公开网页核验，可考虑 MCP 外部搜索或抓取。\n"
-                            "8. title 要短，instruction 要明确说明该步骤的目标、证据重点和预期产出。\n"
-                            "9. 不得使用允许列表之外的 step_type。\n"
-                            "10. 如果只允许很少的 step_type，就输出最小可行计划，不要硬凑复杂流程。\n"
-                            "11. 计划必须贴合招生咨询场景，保留问题中的关键约束，不要写成泛泛的“查询信息”“处理问题”这种废话。\n"
+                            "8. 如果问题在问某个人是谁、某个职务由谁担任、某学院/部门负责人是谁、某联系电话或邮箱是什么，而本地知识库文档清单看起来未明显覆盖该事实，应优先考虑把 mcp_execute 作为补强步骤。\n"
+                            "9. 如果本地知识库更像招生章程、概览、FAQ 之类通用资料，而问题要求学院页面上的细粒度字段，也应认真考虑 mcp_execute。\n"
+                            "10. title 要短，instruction 要明确说明该步骤的目标、证据重点和预期产出。\n"
+                            "11. 不得使用允许列表之外的 step_type。\n"
+                            "12. 如果只允许很少的 step_type，就输出最小可行计划，不要硬凑复杂流程。\n"
+                            "13. 计划必须贴合招生咨询场景，保留问题中的关键约束，不要写成泛泛的“查询信息”“处理问题”这种废话。\n"
                             '输出示例：[{"step_type":"local_rag_search","title":"检索校内资料","instruction":"检索与该子问题直接相关的校内资料，提取可用证据。"},{"step_type":"synthesize_step","title":"综合结论","instruction":"基于已有证据给出当前子问题结论，并明确不确定性。"}]'
                         )
                     ),
@@ -748,7 +759,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "如果证据不足，明确说不确定，不要编造来源。"
             "你必须把短期记忆、长期记忆、特殊记忆都当作真实可用上下文，并在整个推理过程中持续参考。"
             "如果当前步骤提供了 MCP，那说明计划阶段认为外部工具可能有帮助，但是否真的调用仍由你基于证据缺口自行判断。"
-            "不要机械调用工具；只有当本地资料不足、问题要求最新信息、需要公开网页核验或需要外部搜索时才调用。"
+            "不要机械调用工具；只有当本地资料不足、问题要求最新信息、需要公开网页核验、需要外部搜索，或当前问题在询问人物身份、现任职务、院系领导、部门负责人、联系方式等开放网页事实时才调用。"
             "你应该尽可能完成任务, 当本地RAG检索不到结果时, 你应该优先尝试合适的 MCP 搜索工具来补充证据!"
             "你做事非常负责, 你会尽可能找到信息, 哪怕进行深度思考与多轮无上限次数的工具调用!"
         )
@@ -768,8 +779,9 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             f"{available_tools}\n\n"
             "补充判断规则：\n"
             "1. 如果问题涉及最新公告、近年录取、分省计划、分数线、位次或公开通知，而当前证据不足，可优先考虑 MCP 搜索或抓取工具。\n"
-            "2. 如果本地知识库文档已经足够支撑当前步骤，就不要硬调外部工具。\n"
-            "3. 如果需要调用 local_rag_search，可优先参考工具描述中的文档清单来判断本地库是否可能命中。\n\n"
+            "2. 如果问题在问某个人是谁、某个职务由谁担任、院系领导或部门负责人是谁、联系电话/邮箱/办公地点是什么，而当前证据不足，也应优先考虑 MCP 搜索或抓取工具。\n"
+            "3. 如果本地知识库文档已经足够支撑当前步骤，就不要硬调外部工具。\n"
+            "4. 如果需要调用 local_rag_search，可优先参考工具描述中的文档清单来判断本地库是否可能命中。\n\n"
             "请使用 ReAct 方式执行当前计划节点。"
             "只输出本步骤的执行结果。"
         )
@@ -1005,7 +1017,12 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 return tool.invoke({"query": query})
         raise RuntimeError("mcp_tool_not_invokable")
 
-    def review_step(self, step: PlanStep, result: StepExecutionResult) -> StepReviewResult:
+    def review_step(
+        self,
+        step: PlanStep,
+        result: StepExecutionResult,
+        accumulated_tool_audit: list[str] | None = None,
+    ) -> StepReviewResult:
         if not result.ok:
             return StepReviewResult(ok=False, message=result.message or "步骤执行未返回有效结果。")
         if step.step_type in {"local_rag_search", "mcp_execute"} and not result.context_blocks:
@@ -1014,6 +1031,23 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             return StepReviewResult(ok=False, message=result.message or "引用校验失败。")
         if not (result.message or "").strip():
             return StepReviewResult(ok=False, message="步骤执行结果为空。")
+        if step.step_type == "synthesize_step":
+            normalized = (result.message or "").strip()
+            unresolved_markers = (
+                "不能据此确定",
+                "无法确认",
+                "目前无法确认",
+                "暂未获得可靠依据",
+                "不能确定",
+                "暂时无法确认",
+                "证据不足",
+            )
+            used_mcp = any(
+                item.startswith("agent_tool:mcp_execute:")
+                for item in [*(accumulated_tool_audit or []), *result.tool_audit]
+            )
+            if self._has_mcp_servers() and not used_mcp and any(marker in normalized for marker in unresolved_markers):
+                return StepReviewResult(ok=False, message="当前结论仍未确认，且尚未使用 MCP 外部工具补强。")
         return StepReviewResult(ok=True, message="步骤满足要求。")
 
     def replan_subproblem(self, subproblem: SubproblemState, request: ChatRequest, memory_text: str = "") -> SubproblemState:

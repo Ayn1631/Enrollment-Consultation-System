@@ -416,7 +416,11 @@ class AgentGraphRunner:
                     )
                 except Exception as exc:  # noqa: BLE001
                     result = StepExecutionResult(ok=False, message=f"计划节点执行失败：{exc.__class__.__name__}: {exc}", notes=[f"计划节点执行失败：{exc.__class__.__name__}: {exc}"])
-                review = self.runtime.review_step(step, result)
+                review = self.runtime.review_step(
+                    step,
+                    result,
+                    accumulated_tool_audit=working.tool_audit,
+                )
                 working.tool_audit.extend(result.tool_audit)
                 working.notes.extend(result.notes)
                 working.context_blocks.extend(result.context_blocks)
