@@ -1,0 +1,4 @@
+interface:
+  display_name: "提示词编写助手"
+  short_description: "把模糊任务整理成稳定、可复用、好测试的高质量提示词"
+  default_prompt: "Use $prompt-writing-assistant to turn a rough idea into a reusable prompt with variables, constraints, and a quick test."
