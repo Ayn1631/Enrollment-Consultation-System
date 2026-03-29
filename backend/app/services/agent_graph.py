@@ -63,6 +63,7 @@ class AgentGraphRunner:
             "route_label": "policy",
             "route_reason": "default_policy",
             "memory_context": [],
+            "memory_text": "",
             "rewritten_query": last_user,
             "subproblems": [],
             "current_subproblems": [],
@@ -210,9 +211,10 @@ class AgentGraphRunner:
         )
         context_blocks, memory_text, notes = self.runtime.load_memory_context(state["session_id"])
         state["memory_context"] = context_blocks
+        state["memory_text"] = memory_text if memory_text.strip() else "当前没有可用记忆。"
         state["notes"].extend(notes)
         state["tool_audit"].append("agent_tool:memory_recall")
-        state["notes"].append(memory_text if memory_text.strip() else "当前没有可用记忆。")
+        state["notes"].append(state["memory_text"])
         self.runtime.emit_step(
             events=state["step_events"],
             sink=sink,
@@ -240,11 +242,10 @@ class AgentGraphRunner:
         state["route_reason"] = route_decision.reason
         state["tool_audit"].extend(route_decision.audit)
         state["notes"].extend(route_decision.notes)
-        memory_text = next((item for item in state["notes"] if "记忆" in item), "")
         state["rewritten_query"] = self.runtime.rewrite_query(
             request=state["request"],
             last_user=state["last_user"],
-            memory_text=memory_text,
+            memory_text=state["memory_text"],
             strategy=state["agent_strategy"],
         )
         self.runtime.emit_step(
@@ -272,6 +273,7 @@ class AgentGraphRunner:
             state["rewritten_query"],
             state["agent_strategy"],
             state["request"],
+            state["memory_text"],
         )
         if not subproblems:
             subproblems = [state["rewritten_query"]]
@@ -308,6 +310,7 @@ class AgentGraphRunner:
                 route_label=state["route_label"],
                 request=state["request"],
                 strategy=state["agent_strategy"],
+                memory_text=state["memory_text"],
             )
             built.append(subproblem)
         state["subproblems"] = built
@@ -401,6 +404,7 @@ class AgentGraphRunner:
                         fail_features=state["fail_features"],
                         effective_features=state["effective_features"],
                         memory_context_blocks=state["memory_context"],
+                        memory_text=state["memory_text"],
                         trace_id=state["trace_id"],
                         route_label=state["route_label"],
                         step_events=state["step_events"],
@@ -540,7 +544,7 @@ class AgentGraphRunner:
         )
         replanned: list[SubproblemState] = []
         for item in state["pending_retries"]:
-            new_item = self.runtime.replan_subproblem(item, state["request"])
+            new_item = self.runtime.replan_subproblem(item, state["request"], state["memory_text"])
             replanned.append(new_item)
         state["current_subproblems"] = replanned
         self.runtime.emit_step(
@@ -594,14 +598,28 @@ class AgentGraphRunner:
 
     def _generate_final_answer(self, state: dict) -> dict:
         sink = state.get("_step_sink")
-        generation_context_blocks = self.runtime.compact_generation_context(
-            context_blocks=state["generation_context_blocks"] or state["memory_context"],
-            strategy=state["agent_strategy"],
-        )
-        generation_notes = self.runtime.compact_feature_notes(
-            notes=state["notes"],
-            strategy=state["agent_strategy"],
-        )
+        generation_context_blocks: list[str] = []
+        seen_context: set[str] = set()
+        for item in [*state["memory_context"], *state["generation_context_blocks"]]:
+            normalized = str(item or "").strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen_context:
+                continue
+            seen_context.add(key)
+            generation_context_blocks.append(normalized)
+        generation_notes: list[str] = []
+        seen_notes: set[str] = set()
+        for item in [state["memory_text"], *state["notes"]]:
+            normalized = str(item or "").strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen_notes:
+                continue
+            seen_notes.add(key)
+            generation_notes.append(normalized)
         state["generation_context_blocks"] = generation_context_blocks
         state["generation_notes"] = generation_notes
         context_chars = sum(len(item) for item in generation_context_blocks)

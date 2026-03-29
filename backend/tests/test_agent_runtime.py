@@ -144,19 +144,26 @@ def test_get_mcp_runtime_should_cache_per_trace(monkeypatch):
 def test_split_query_should_prefer_llm_result(monkeypatch):
     settings = Settings(MCP_ENABLED=False)
     runtime = AgentRuntime(_GatewayStub(settings))
+    captured_messages = {}
 
     class _FakeResponse:
         content = '["中原工学院学费是多少", "中原工学院住宿费是多少"]'
 
     class _FakeLlm:
-        def invoke(self, _messages):
+        def invoke(self, messages):
+            captured_messages["messages"] = messages
             return _FakeResponse()
 
     monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
 
-    parts = runtime.split_query("中原工学院学费和住宿费分别是多少", "quality")
+    parts = runtime.split_query(
+        "中原工学院学费和住宿费分别是多少",
+        "quality",
+        memory_text="短期记忆：用户上一轮在问本科收费标准。",
+    )
 
     assert parts == ["中原工学院学费是多少", "中原工学院住宿费是多少"]
+    assert "短期记忆：用户上一轮在问本科收费标准。" in str(captured_messages["messages"][1].content)
 
 
 def test_build_plan_should_prefer_llm_result(monkeypatch):
@@ -168,6 +175,7 @@ def test_build_plan_should_prefer_llm_result(monkeypatch):
         mode="agent",
         features=["rag"],
     )
+    captured_messages = {}
 
     class _FakeResponse:
         content = (
@@ -176,7 +184,8 @@ def test_build_plan_should_prefer_llm_result(monkeypatch):
         )
 
     class _FakeLlm:
-        def invoke(self, _messages):
+        def invoke(self, messages):
+            captured_messages["messages"] = messages
             return _FakeResponse()
 
     monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
@@ -187,7 +196,9 @@ def test_build_plan_should_prefer_llm_result(monkeypatch):
         route_label="policy",
         request=request,
         strategy="quality",
+        memory_text="长期记忆：用户明确想报本科理工类专业。",
     )
 
     assert [item.step_type for item in steps] == ["local_rag_search", "synthesize_step"]
     assert steps[0].instruction == "检索软件工程专业的培养、就业、录取和学费信息。"
+    assert "长期记忆：用户明确想报本科理工类专业。" in str(captured_messages["messages"][1].content)

@@ -76,6 +76,7 @@ class AgentGraphState(TypedDict):
     route_label: str
     route_reason: str
     memory_context: list[str]
+    memory_text: str
     rewritten_query: str
     subproblems: list[SubproblemState]
     current_subproblems: list[SubproblemState]

@@ -225,6 +225,7 @@ class AgentRuntime:
         query: str,
         strategy: AgentStrategy,
         request: ChatRequest | None = None,
+        memory_text: str = "",
     ) -> list[str]:
         normalized = re.sub(r"\s+", " ", query).strip()
         if not normalized:
@@ -436,14 +437,17 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
 执行策略：{strategy}
 最大子问题数：{max_subproblems}
 原问题：{normalized}
+相关记忆：
+{memory_text or "当前没有可用记忆。"}
 
 请根据上面的约束拆分子问题。
 要求：
 1. 只返回 JSON 数组。
 2. 每个元素都是可独立求解的字符串子问题。
 3. 如有必要，优先输出前置问题，再输出深化问题。
-4. 不要编造新问题，不要遗漏关键约束。
-5. 如果原问题不适合拆分，就返回单元素数组。
+4. 可以利用相关记忆补全省略指代、科类、省份、年份、专业等上下文，但不能编造记忆中没有的信息。
+5. 不要编造新问题，不要遗漏关键约束。
+6. 如果原问题不适合拆分，就返回单元素数组。
 
 示例格式：
 ["子问题1", "子问题2"]
@@ -477,6 +481,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         route_label: str,
         request: ChatRequest,
         strategy: AgentStrategy,
+        memory_text: str = "",
     ) -> list[PlanStep]:
         allowed_step_types: list[PlanStepType] = []
         if "rag" in effective_features:
@@ -502,14 +507,49 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 [
                     SystemMessage(
                         content=(
-                            "你是一个子问题执行计划制定器。"
-                            "你需要先理解当前子问题，再输出一个按顺序执行的计划。"
-                            "同一子问题内计划节点顺序执行，不同子问题之间会并发执行。"
-                            "计划中的每个节点后续都会交给 ReAct Agent 单独执行。"
-                            "因此你要优先安排证据收集，再安排结论综合。"
-                            "你只能使用允许的 step_type，不得发明新类型。"
-                            "最后一步必须是 synthesize_step。"
-                            "只输出 JSON 数组，每个元素必须是对象，包含 step_type、title、instruction 三个字段。"
+                            "你是“招生咨询系统子问题执行计划制定器”。"
+                            "你的任务是针对当前子问题，生成一组按顺序执行的计划步骤，供后续 ReAct Agent 逐步执行。"
+                            "你必须先充分理解子问题本身、执行策略、问题路由，以及可用 step_type 的边界，再输出最终计划。"
+                            "你可以在内部深入思考，但绝对不要输出思考过程，只输出最终 JSON 数组。"
+                            "领域固定为招生咨询系统，因此你的计划必须围绕招生政策、报考条件、流程、费用、录取、专业、资助、联系方式、时间敏感信息等场景设计，不能写成空泛的通用计划。"
+                            "你必须遵守以下规则："
+                            "1. 同一子问题内的计划步骤是顺序执行的，不同子问题之间才会并发执行，因此当前计划必须考虑前后依赖关系。"
+                            "2. 每个计划节点后续都会交给 ReAct Agent 单独执行，所以每一步都必须目标单一、边界清晰、可独立执行。"
+                            "3. 优先安排证据收集，再安排证据补强，最后才安排结论综合。"
+                            "4. 如果某个结论需要前置证据支撑，就必须把前置证据步骤排在前面。"
+                            "5. 你只能使用允许的 step_type，不得发明新类型，不得改写 step_type 名称。"
+                            "6. 最后一步必须是 synthesize_step。"
+                            "7. 如果允许的 step_type 很少，就生成最小可行计划，不要为了凑复杂度乱加步骤。"
+                            "8. 如果同一类证据一步就能拿到，不要机械重复安排多个同类步骤。"
+                            "9. title 要短、直观、动作明确；instruction 要具体说明该步骤要完成什么、产出什么、关注什么证据。"
+                            "10. instruction 应体现招生场景中的关键约束，例如年份、省份、专业、费用项、流程条件、官方性、证据充分性和不确定性处理。"
+                            "11. 计划应优先服务于“拿证据并形成可核验结论”，而不是堆步骤。"
+                            "12. 如果允许列表里没有某种理想步骤，就不能暗示使用它，只能在现有 step_type 中做最优安排。"
+                            "你需要特别理解“前置步骤”和“深化步骤”："
+                            "前置步骤是为了回答当前子问题，先确认必要事实、检索必要资料、核验基础证据；"
+                            "深化步骤是在已有证据后进一步补强，例如增加外部工具验证、补充官方信息或进行引用校验；"
+                            "综合步骤则负责在已有结果上收束当前子问题结论。"
+                            "你必须让计划体现合理顺序：先前置，再深化，最后综合。"
+                            "输出格式要求："
+                            "只输出 JSON 数组。"
+                            "数组中的每个元素都必须是对象，且只能包含 step_type、title、instruction 三个字段。"
+                            "不要输出 Markdown、解释、前后缀、注释、代码块或额外字段。"
+                            "下面是示例："
+                            "示例1："
+                            "子问题：中原工学院软件工程专业学费是多少？"
+                            "允许的 step_type：[\"local_rag_search\",\"synthesize_step\"]"
+                            "输出："
+                            "[{\"step_type\":\"local_rag_search\",\"title\":\"检索收费资料\",\"instruction\":\"检索与中原工学院软件工程专业学费直接相关的校内资料，优先提取年份、专业名称、收费标准和适用范围等证据。\"},{\"step_type\":\"synthesize_step\",\"title\":\"综合学费结论\",\"instruction\":\"基于已获取的收费证据总结当前子问题结论，明确学费数值、适用范围以及是否存在不确定性。\"}]"
+                            "示例2："
+                            "子问题：中原工学院今年专升本报名流程是什么？"
+                            "允许的 step_type：[\"local_rag_search\",\"mcp_execute\",\"synthesize_step\"]"
+                            "输出："
+                            "[{\"step_type\":\"local_rag_search\",\"title\":\"检索校内流程资料\",\"instruction\":\"先检索与中原工学院今年专升本报名流程相关的校内资料，提取报名条件、材料、时间节点和流程步骤等基础证据。\"},{\"step_type\":\"mcp_execute\",\"title\":\"补充外部核验\",\"instruction\":\"如果校内资料不足或时效性不够，调用合适的外部工具补充或核验与今年专升本报名流程相关的最新公开信息。\"},{\"step_type\":\"synthesize_step\",\"title\":\"综合流程结论\",\"instruction\":\"基于前面步骤获得的证据整理当前子问题答案，按流程顺序总结，并明确哪些信息已确认、哪些仍需保守处理。\"}]"
+                            "示例3："
+                            "子问题：河南理科考生报考中原工学院计算机类专业录取把握如何？"
+                            "允许的 step_type：[\"local_rag_search\",\"mcp_execute\",\"synthesize_step\"]"
+                            "输出："
+                            "[{\"step_type\":\"local_rag_search\",\"title\":\"检索录取依据\",\"instruction\":\"检索与河南理科考生报考中原工学院计算机类专业相关的录取资料，重点提取年份、省份、科类、专业范围、分数或位次等证据。\"},{\"step_type\":\"mcp_execute\",\"title\":\"补强录取判断\",\"instruction\":\"在本地证据基础上补充外部工具核验，优先确认是否存在更新的录取参考信息或公开规则，以提高判断可靠性。\"},{\"step_type\":\"synthesize_step\",\"title\":\"综合报考判断\",\"instruction\":\"结合已有录取证据对当前子问题给出保守判断，明确依据、适用范围和不确定性，不得脱离证据直接下结论。\"}]"
                         )
                     ),
                     HumanMessage(
@@ -517,14 +557,20 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             f"执行策略：{strategy}\n"
                             f"问题路由：{route_label}\n"
                             f"子问题：{query}\n"
+                            f"相关记忆：\n{memory_text or '当前没有可用记忆。'}\n"
                             f"允许的 step_type：{json.dumps(allowed_step_types, ensure_ascii=False)}\n\n"
-                            "请给出顺序计划。\n"
+                            "请为这个子问题生成顺序执行计划。\n"
                             "要求：\n"
                             "1. 只返回 JSON 数组。\n"
-                            "2. 步骤数量尽量精简但有效。\n"
-                            "3. title 要短，instruction 要明确说明该步骤要完成什么。\n"
-                            "4. 如果需要先检索校内资料，再调用 MCP 外部工具，再汇总结论，就按这个顺序输出。\n"
-                            '示例：[{"step_type":"local_rag_search","title":"检索校内资料","instruction":"检索与该子问题直接相关的校内资料，提取可用证据。"},{"step_type":"synthesize_step","title":"综合结论","instruction":"基于已有证据给出当前子问题结论，并明确不确定性。"}]'
+                            "2. 每个元素都必须是对象，并且只包含 step_type、title、instruction 三个字段。\n"
+                            "3. 计划步骤数量尽量精简但必须有效，避免重复和空步骤。\n"
+                            "4. 必须先考虑前置证据步骤，再考虑证据补强或外部验证，最后以 synthesize_step 收束。\n"
+                            "5. 必须结合相关记忆理解当前子问题，必要时在 instruction 中保留记忆提供的省份、科类、年份、专业、层次等约束。\n"
+                            "6. title 要短，instruction 要明确说明该步骤的目标、证据重点和预期产出。\n"
+                            "7. 不得使用允许列表之外的 step_type。\n"
+                            "8. 如果只允许很少的 step_type，就输出最小可行计划，不要硬凑复杂流程。\n"
+                            "9. 计划必须贴合招生咨询场景，保留问题中的关键约束，不要写成泛泛的“查询信息”“处理问题”这种废话。\n"
+                            '输出示例：[{"step_type":"local_rag_search","title":"检索校内资料","instruction":"检索与该子问题直接相关的校内资料，提取可用证据。"},{"step_type":"synthesize_step","title":"综合结论","instruction":"基于已有证据给出当前子问题结论，并明确不确定性。"}]'
                         )
                     ),
                 ]
@@ -566,6 +612,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         fail_features: set[str],
         effective_features: list[FeatureFlag],
         memory_context_blocks: list[str],
+        memory_text: str,
         trace_id: str,
         route_label: str,
         step_events: list[AgentStepEvent],
@@ -646,7 +693,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             collector_tool_audit.append("agent_tool:mcp_runtime_unavailable:" + ",".join(item.alias for item in runtime.servers))
 
         history_messages = self.gateway._build_langchain_history_messages(request.messages[:-1])
-        memory_text = "\n".join(memory_context_blocks[:8]) if memory_context_blocks else "当前没有可用记忆。"
+        memory_blocks_text = "\n".join(memory_context_blocks) if memory_context_blocks else "当前没有可用记忆片段。"
         prior_evidence = "\n".join(collector_context_blocks[:8]) if collector_context_blocks else "当前没有已有证据。"
         available_tools = "\n".join(f"- {getattr(item, 'name', step.step_type)}" for item in tools) if tools else "当前步骤不提供额外工具。"
         prompt = (
@@ -655,6 +702,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "如果默认上下文已经足够，可以不调工具直接回答。"
             "你的回答必须聚焦当前计划节点，而不是一次性回答整个子问题。"
             "如果证据不足，明确说不确定，不要编造来源。"
+            "你必须把短期记忆、长期记忆、特殊记忆都当作真实可用上下文，并在整个推理过程中持续参考。"
         )
         human_prompt = (
             f"执行策略：{request.agent_strategy}\n"
@@ -662,8 +710,10 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             f"子问题：{subproblem.query}\n\n"
             f"当前计划节点：{step.title}\n"
             f"当前计划节点目标：{step.instruction or step.title}\n\n"
-            "默认记忆上下文：\n"
-            f"{memory_text}\n\n"
+            "结构化记忆：\n"
+            f"{memory_text or '当前没有可用记忆。'}\n\n"
+            "记忆上下文片段：\n"
+            f"{memory_blocks_text}\n\n"
             "当前已拿到的历史证据：\n"
             f"{prior_evidence}\n\n"
             "当前可用工具：\n"
@@ -969,7 +1019,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             return StepReviewResult(ok=False, message="步骤执行结果为空。")
         return StepReviewResult(ok=True, message="步骤满足要求。")
 
-    def replan_subproblem(self, subproblem: SubproblemState, request: ChatRequest) -> SubproblemState:
+    def replan_subproblem(self, subproblem: SubproblemState, request: ChatRequest, memory_text: str = "") -> SubproblemState:
         route_label, _ = self.gateway._classify_query_intent(subproblem.query)
         replanned = SubproblemState(
             subproblem_id=subproblem.subproblem_id,
@@ -980,6 +1030,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 route_label=route_label,
                 request=request,
                 strategy="quality",
+                memory_text=memory_text,
             ),
             replan_count=subproblem.replan_count + 1,
         )
