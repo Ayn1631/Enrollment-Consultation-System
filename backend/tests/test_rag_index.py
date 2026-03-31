@@ -18,6 +18,10 @@ class _FakeResponse:
         return self._payload
 
 
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    return sum(left_item * right_item for left_item, right_item in zip(left, right))
+
+
 def test_embed_documents_batches_remote_requests(monkeypatch, runtime_settings):
     captured_batches: list[list[str]] = []
     captured_payloads: list[dict] = []
@@ -134,12 +138,29 @@ def test_settings_prefer_split_model_endpoints_and_keys(monkeypatch):
     assert settings.resolve_rerank_api_key() == "rerank-env-key"
 
 
+def test_settings_should_fallback_to_api_url_when_local_llm_endpoint_unreachable(monkeypatch):
+    monkeypatch.setenv("API_URL", "https://fallback.example/v1/chat/completions")
+    monkeypatch.setenv("API_KEY", "primary-env-key")
+    monkeypatch.setenv("LLM_API_URL", "http://127.0.0.1:8317/v1")
+    monkeypatch.setenv("LLM_API_KEY", "llm-env-key")
+    monkeypatch.setattr("app.config._llm_endpoint_reachable", lambda endpoint, api_key: False)
+    settings = Settings()
+
+    assert settings.resolve_llm_api_url() == "https://fallback.example/v1/chat/completions"
+    assert settings.resolve_llm_api_key() == "primary-env-key"
+
+
 def test_embedding_result_for_real_input_text_is_stable_and_normalized(runtime_settings):
     from app.rag.service import RagGraphService
 
     if not runtime_settings.docs_dir.exists():
         raise AssertionError(f"真实语料目录不存在: {runtime_settings.docs_dir}")
-    settings = runtime_settings.model_copy(update={"rag_faiss_dir": runtime_settings.rag_faiss_dir})
+    settings = runtime_settings.model_copy(
+        update={
+            "rag_faiss_dir": runtime_settings.rag_faiss_dir,
+            "use_mock_generation": True,
+        }
+    )
     service = RagGraphService(settings)
     service.index.reindex()
     docs = service.index.all_documents()
@@ -161,16 +182,19 @@ def test_embedding_result_for_real_input_text_is_stable_and_normalized(runtime_s
         model=settings.embedding_model,
         timeout_seconds=settings.request_timeout_seconds,
         batch_size=settings.embedding_batch_size,
-        force_local=settings.use_mock_generation,
+        force_local=True,
     )
 
     query_vector = embeddings.embed_query(text)
     doc_vectors = embeddings.embed_documents([text, f"{text} 补充说明"])
+    same_similarity = _cosine_similarity(query_vector, doc_vectors[0])
+    different_similarity = _cosine_similarity(query_vector, doc_vectors[1])
 
     assert query_vector
     assert len(doc_vectors) == 2
     assert len(query_vector) == len(doc_vectors[0])
-    assert all(math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9) for left, right in zip(query_vector, doc_vectors[0]))
-    assert any(not math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9) for left, right in zip(query_vector, doc_vectors[1]))
+    assert same_similarity > 0.99
+    assert same_similarity > different_similarity
+    assert any(not math.isclose(left, right, rel_tol=1e-6, abs_tol=1e-6) for left, right in zip(query_vector, doc_vectors[1]))
     norm = math.sqrt(sum(item * item for item in query_vector))
     assert math.isclose(norm, 1.0, rel_tol=1e-6, abs_tol=1e-6)

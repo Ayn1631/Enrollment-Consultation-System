@@ -386,15 +386,18 @@ class AgentGraphRunner:
 
         for idx, step in enumerate(working.plan_steps, start=1):
             attempt = 0
+            step_node = f"plan_step_{idx}"
+            step_title = self.runtime._format_plan_step_title(step, idx)
+            is_final_step = idx == len(working.plan_steps)
             while True:
                 self.runtime.emit_step(
                     events=state["step_events"],
                     sink=sink,
                     strategy=state["agent_strategy"],
-                    node=step.step_type,
-                    title=step.title,
+                    node=step_node,
+                    title=step_title,
                     status="started",
-                    message=step.instruction or None,
+                    message=step.goal or None,
                     subproblem_id=working.subproblem_id,
                     plan_step_index=idx,
                     attempt=attempt + 1,
@@ -402,6 +405,8 @@ class AgentGraphRunner:
                 try:
                     result = self.runtime.run_subproblem_agent(
                         step=step,
+                        plan_step_index=idx,
+                        total_plan_steps=len(working.plan_steps),
                         subproblem=working,
                         request=state["request"],
                         fail_features=state["fail_features"],
@@ -419,6 +424,7 @@ class AgentGraphRunner:
                 review = self.runtime.review_step(
                     step,
                     result,
+                    is_final_step=is_final_step,
                     accumulated_tool_audit=working.tool_audit,
                 )
                 working.tool_audit.extend(result.tool_audit)
@@ -426,14 +432,14 @@ class AgentGraphRunner:
                 working.context_blocks.extend(result.context_blocks)
                 working.sources = self.runtime.dedupe_sources([*working.sources, *result.sources], limit=5)
                 if review.ok:
-                    working.step_outputs[f"{idx}:{step.step_type}"] = result.message
+                    working.step_outputs[str(idx)] = result.message
                     working.current_step_index = idx
                     self.runtime.emit_step(
                         events=state["step_events"],
                         sink=sink,
                         strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
+                        node=step_node,
+                        title=step_title,
                         status="completed",
                         message=review.message,
                         subproblem_id=working.subproblem_id,
@@ -448,8 +454,8 @@ class AgentGraphRunner:
                         events=state["step_events"],
                         sink=sink,
                         strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
+                        node=step_node,
+                        title=step_title,
                         status="retrying",
                         message=review.message,
                         subproblem_id=working.subproblem_id,
@@ -464,8 +470,8 @@ class AgentGraphRunner:
                         events=state["step_events"],
                         sink=sink,
                         strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
+                        node=step_node,
+                        title=step_title,
                         status="retrying",
                         message=f"准备重规划：{review.message}",
                         subproblem_id=working.subproblem_id,
@@ -474,30 +480,47 @@ class AgentGraphRunner:
                     )
                     return working
                 if state["agent_strategy"] == "speed":
-                    working.degraded = True
+                    has_usable_evidence = bool(working.sources or working.context_blocks or working.step_outputs)
+                    if not is_final_step and has_usable_evidence:
+                        skip_message = f"已保留已有证据，跳过失败的补强步骤：{review.message}"
+                        working.notes.append(skip_message)
+                        working.tool_audit.append(f"step:skipped:{idx}")
+                        self.runtime.emit_step(
+                            events=state["step_events"],
+                            sink=sink,
+                            strategy=state["agent_strategy"],
+                            node=step_node,
+                            title=step_title,
+                            status="completed",
+                            message=skip_message,
+                            subproblem_id=working.subproblem_id,
+                            plan_step_index=idx,
+                            attempt=attempt + 1,
+                        )
+                        break
+                    working.status = "failed"
                     working.notes.append(review.message)
-                    working.tool_audit.append(f"step:degraded:{step.step_type}")
                     self.runtime.emit_step(
                         events=state["step_events"],
                         sink=sink,
                         strategy=state["agent_strategy"],
-                        node=step.step_type,
-                        title=step.title,
-                        status="degraded",
+                        node=step_node,
+                        title=step_title,
+                        status="failed",
                         message=review.message,
                         subproblem_id=working.subproblem_id,
                         plan_step_index=idx,
                         attempt=attempt + 1,
                     )
-                    break
+                    return working
                 working.status = "failed"
                 working.notes.append(review.message)
                 self.runtime.emit_step(
                     events=state["step_events"],
                     sink=sink,
                     strategy=state["agent_strategy"],
-                    node=step.step_type,
-                    title=step.title,
+                    node=step_node,
+                    title=step_title,
                     status="failed",
                     message=review.message,
                     subproblem_id=working.subproblem_id,
@@ -507,7 +530,7 @@ class AgentGraphRunner:
                 return working
 
         if working.status == "pending":
-            working.status = "degraded" if working.degraded else "completed"
+            working.status = "completed"
         return working
 
     def _review_step(self, state: dict) -> dict:
@@ -522,10 +545,8 @@ class AgentGraphRunner:
         )
         state["pending_retries"] = [item for item in state["subproblem_results"] if item.status == "needs_replan"]
         if any(item.status == "failed" for item in state["subproblem_results"]):
-            state["status"] = "degraded"
+            state["status"] = "failed"
             state["failure_reason"] = "部分子问题执行失败"
-        elif any(item.status == "degraded" for item in state["subproblem_results"]):
-            state["status"] = "degraded"
         self.runtime.emit_step(
             events=state["step_events"],
             sink=sink,
@@ -559,7 +580,7 @@ class AgentGraphRunner:
             node="retry_or_escalate",
             title="重试或重规划",
             status="completed",
-            message=f"已刷新 {len(replanned)} 个子问题的候选工具建议",
+            message=f"已刷新 {len(replanned)} 个子问题的执行计划",
         )
         return state
 
@@ -583,7 +604,7 @@ class AgentGraphRunner:
             context_blocks.extend(item.context_blocks[:6])
             sources.extend(item.sources)
             state["tool_audit"].extend(item.tool_audit)
-            if item.status in {"degraded", "failed"}:
+            if item.status == "failed":
                 degraded_features.append("citation_guard" if not item.sources else "rag")
         state["sources"] = self.runtime.dedupe_sources(sources, limit=5)
         state["notes"].extend(notes)

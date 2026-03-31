@@ -52,7 +52,7 @@ class ServiceClient:
             base_url=settings.langchain4j_service_url,
             timeout_seconds=settings.langchain4j_timeout_seconds,
         )
-        self._rag_service = RagGraphService(settings)
+        self._rag_service: RagGraphService | None = None
         self._http_clients: dict[float, httpx.Client] = {}
 
     def startup(self) -> None:
@@ -60,7 +60,7 @@ class ServiceClient:
         if self.settings.service_call_mode == "http":
             self._get_http_client(self.settings.request_timeout_seconds)
         if self.settings.service_call_mode != "http":
-            self._rag_service.startup()
+            self._get_rag_service().startup()
 
     def shutdown(self) -> None:
         for client in self._http_clients.values():
@@ -74,6 +74,13 @@ class ServiceClient:
             client = httpx.Client(timeout=timeout)
             self._http_clients[timeout] = client
         return client
+
+    def _get_rag_service(self) -> RagGraphService:
+        service = self._rag_service
+        if service is None:
+            service = RagGraphService(self.settings)
+            self._rag_service = service
+        return service
 
     def _post(self, url: str, payload: dict, timeout: float) -> dict:
         last_error: Exception | None = None
@@ -125,7 +132,7 @@ class ServiceClient:
                 result.degrade_reason,
             )
             return result
-        result = self._rag_service.run(
+        result = self._get_rag_service().run(
             session_id=session_id,
             query=query,
             top_k=top_k,
@@ -365,14 +372,18 @@ class ServiceClient:
                 health[name] = {"healthy": False, "detail": str(exc)}
         return health
 
-    def reindex(self) -> dict:
+    def reindex(self, *, show_progress: bool = False) -> dict:
         if self.settings.service_call_mode == "http":
+            request_kwargs: dict[str, object] = {}
+            if show_progress:
+                request_kwargs["params"] = {"show_progress": "true"}
             response = self._get_http_client(15).post(
                 f"{self.settings.rag_agent_service_url}/rag/reindex",
+                **request_kwargs,
             )
             response.raise_for_status()
             return response.json()
-        return self._rag_service.reindex()
+        return self._get_rag_service().reindex(show_progress=show_progress)
 
     def rag_stats(self) -> dict:
         if self.settings.service_call_mode == "http":
@@ -381,7 +392,7 @@ class ServiceClient:
             )
             response.raise_for_status()
             return response.json()
-        return self._rag_service.stats()
+        return self._get_rag_service().stats()
 
     def _persist_memory_compression(
         self,

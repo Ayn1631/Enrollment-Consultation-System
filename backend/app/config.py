@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import logging
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,6 +13,33 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT_DIR / "docs" / "zyit"
+logger = logging.getLogger(__name__)
+
+
+def _normalize_openai_base_url(endpoint: str) -> str:
+    normalized = (endpoint or "").strip()
+    for suffix in ("/chat/completions", "/responses", "/completions"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized.rstrip("/")
+
+
+def _is_local_endpoint(endpoint: str) -> bool:
+    hostname = (urlparse(endpoint).hostname or "").lower()
+    return hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+@lru_cache(maxsize=8)
+def _llm_endpoint_reachable(endpoint: str, api_key: str) -> bool:
+    base_url = _normalize_openai_base_url(endpoint)
+    if not base_url:
+        return False
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        response = httpx.get(f"{base_url}/models", headers=headers, timeout=1.5)
+        return response.status_code < 500
+    except Exception:
+        return False
 
 
 class Settings(BaseSettings):
@@ -90,11 +121,26 @@ class Settings(BaseSettings):
 
     def resolve_llm_api_url(self) -> str:
         """解析对话模型地址，优先使用专用 LLM_API_URL，未配置时回退 API_URL。"""
-        return (self.llm_api_url or self.api_url).strip()
+        primary = (self.llm_api_url or "").strip()
+        fallback = (self.api_url or "").strip()
+        if primary and fallback and primary != fallback and _is_local_endpoint(primary):
+            api_key = (self.api_key or self.llm_api_key or "").strip()
+            if not _llm_endpoint_reachable(primary, api_key):
+                logger.warning("本地 LLM_API_URL 不可达，已回退到 API_URL: %s -> %s", primary, fallback)
+                return fallback
+        return primary or fallback
 
     def resolve_llm_api_key(self) -> str:
         """解析对话模型密钥，优先使用专用 LLM_API_KEY，未配置时回退 API_KEY。"""
-        return (self.llm_api_key or self.api_key).strip()
+        primary_url = (self.llm_api_url or "").strip()
+        fallback_url = (self.api_url or "").strip()
+        primary_key = (self.llm_api_key or "").strip()
+        fallback_key = (self.api_key or "").strip()
+        if primary_url and fallback_url and primary_url != fallback_url and _is_local_endpoint(primary_url):
+            probe_key = fallback_key or primary_key
+            if not _llm_endpoint_reachable(primary_url, probe_key):
+                return fallback_key or primary_key
+        return primary_key or fallback_key
 
     def resolve_embedding_api_url(self) -> str:
         """解析 Embedding 端点，未单独配置时从对话端点推导。"""

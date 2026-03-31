@@ -6,6 +6,8 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
+from app.rag import build_progress
+
 
 SOURCE_PATTERN = re.compile(r"^# 原文（来源：(.*?)）$")
 TITLE_PATTERN = re.compile(r"^网页标题：(.+?)$")
@@ -22,77 +24,88 @@ class RagIngestor:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-    def load_documents(self) -> list[Document]:
+    def load_documents(self, *, show_progress: bool = False) -> list[Document]:
         """加载 docs_dir 中的 markdown 文档并执行切块。"""
         rows: list[Document] = []
         seen_hashes: set[tuple[str, str]] = set()
         if not self.docs_dir.exists():
             return rows
 
-        for path in sorted(self.docs_dir.glob("*.md")):
-            if path.name.lower() == "readme.md":
-                continue
-            content = path.read_text(encoding="utf-8")
-            metadata = self._extract_doc_metadata(path=path, content=content)
-            parent_chunks = self._split_text(
-                content,
-                chunk_size=max(self.chunk_size * 3, 1200),
-                chunk_overlap=min(max(self.chunk_overlap * 2, 80), 160),
-            )
-            for parent_idx, parent_chunk in enumerate(parent_chunks, start=1):
-                parent_text = self._build_contextual_chunk(parent_chunk, metadata)
-                parent_id = f"{metadata['doc_id']}-parent-{parent_idx}"
-                section_hint = self._extract_section_hint(parent_chunk)
-                summary_doc = self._build_summary_document(
-                    metadata=metadata,
-                    parent_idx=parent_idx,
-                    parent_id=parent_id,
-                    parent_chunk=parent_chunk,
-                    parent_text=parent_text,
-                    section_hint=section_hint,
+        source_paths = [
+            path for path in sorted(self.docs_dir.glob("*.md")) if path.name.lower() != "readme.md"
+        ]
+        with build_progress(
+            enabled=show_progress and bool(source_paths),
+            total=len(source_paths),
+            desc="RAG 文档切块",
+            unit="file",
+            position=1,
+            leave=False,
+        ) as progress:
+            for path in source_paths:
+                progress.set_postfix_str(path.name)
+                content = path.read_text(encoding="utf-8")
+                metadata = self._extract_doc_metadata(path=path, content=content)
+                parent_chunks = self._split_text(
+                    content,
+                    chunk_size=max(self.chunk_size * 3, 1200),
+                    chunk_overlap=min(max(self.chunk_overlap * 2, 80), 160),
                 )
-                rows.append(summary_doc)
-                child_chunks = self._split_text(
-                    parent_chunk,
-                    chunk_size=self.chunk_size,
-                    chunk_overlap=self.chunk_overlap,
-                )
-                for child_idx, chunk in enumerate(child_chunks, start=1):
-                    normalized = re.sub(r"\s+", " ", chunk).strip()
-                    if len(normalized) < 20:
-                        continue
-                    content_hash = self._normalized_hash(normalized)
-                    dedupe_key = (str(metadata["source_url"]), content_hash)
-                    if dedupe_key in seen_hashes:
-                        continue
-                    seen_hashes.add(dedupe_key)
-                    chunk_id = f"{metadata['doc_id']}-{parent_idx}-{child_idx}"
-                    contextualized = self._build_contextual_chunk(
-                        chunk=normalized,
-                        doc_meta=metadata,
+                for parent_idx, parent_chunk in enumerate(parent_chunks, start=1):
+                    parent_text = self._build_contextual_chunk(parent_chunk, metadata)
+                    parent_id = f"{metadata['doc_id']}-parent-{parent_idx}"
+                    section_hint = self._extract_section_hint(parent_chunk)
+                    summary_doc = self._build_summary_document(
+                        metadata=metadata,
+                        parent_idx=parent_idx,
+                        parent_id=parent_id,
+                        parent_chunk=parent_chunk,
+                        parent_text=parent_text,
                         section_hint=section_hint,
                     )
-                    query_expansions = self._build_query_expansions(
-                        chunk=normalized,
-                        doc_meta=metadata,
-                        section_hint=section_hint,
+                    rows.append(summary_doc)
+                    child_chunks = self._split_text(
+                        parent_chunk,
+                        chunk_size=self.chunk_size,
+                        chunk_overlap=self.chunk_overlap,
                     )
-                    rows.append(
-                        Document(
-                            page_content=contextualized,
-                            metadata={
-                                **metadata,
-                                "chunk_id": chunk_id,
-                                "chunk_level": "small",
-                                "parent_id": parent_id,
-                                "parent_text": parent_text,
-                                "section_hint": section_hint,
-                                "chunk_text": normalized,
-                                "chunk_text_hash": content_hash,
-                                "query_expansions": query_expansions,
-                            },
+                    for child_idx, chunk in enumerate(child_chunks, start=1):
+                        normalized = re.sub(r"\s+", " ", chunk).strip()
+                        if len(normalized) < 20:
+                            continue
+                        content_hash = self._normalized_hash(normalized)
+                        dedupe_key = (str(metadata["source_url"]), content_hash)
+                        if dedupe_key in seen_hashes:
+                            continue
+                        seen_hashes.add(dedupe_key)
+                        chunk_id = f"{metadata['doc_id']}-{parent_idx}-{child_idx}"
+                        contextualized = self._build_contextual_chunk(
+                            chunk=normalized,
+                            doc_meta=metadata,
+                            section_hint=section_hint,
                         )
-                    )
+                        query_expansions = self._build_query_expansions(
+                            chunk=normalized,
+                            doc_meta=metadata,
+                            section_hint=section_hint,
+                        )
+                        rows.append(
+                            Document(
+                                page_content=contextualized,
+                                metadata={
+                                    **metadata,
+                                    "chunk_id": chunk_id,
+                                    "chunk_level": "small",
+                                    "parent_id": parent_id,
+                                    "parent_text": parent_text,
+                                    "section_hint": section_hint,
+                                    "chunk_text": normalized,
+                                    "chunk_text_hash": content_hash,
+                                    "query_expansions": query_expansions,
+                                },
+                            )
+                        )
+                progress.update(1)
         return rows
 
     def _extract_doc_metadata(self, path: Path, content: str) -> dict[str, str]:

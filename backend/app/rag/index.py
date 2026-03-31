@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from langchain_core.embeddings import Embeddings
 import re
 
 from app.config import Settings
+from app.rag import build_progress
 from app.rag.ingest import RagIngestor
 
 
@@ -31,6 +33,8 @@ class OpenAICompatibleEmbeddings(Embeddings):
         self.timeout_seconds = timeout_seconds
         self.batch_size = max(1, batch_size)
         self.force_local = force_local
+        self._progress_enabled = False
+        self._progress_desc = "RAG Embedding"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """批量文本向量化。"""
@@ -45,15 +49,55 @@ class OpenAICompatibleEmbeddings(Embeddings):
         if not texts:
             return []
         if self.force_local or not self.api_key:
-            return [self._local_fallback_embedding(text) for text in texts]
+            return self._embed_local(texts, desc=self._progress_desc)
         try:
-            results: list[list[float]] = []
+            return self._embed_remote(texts)
+        except Exception:
+            return self._embed_local(texts, desc=f"{self._progress_desc}（本地降级）")
+
+    @contextmanager
+    def progress_scope(self, *, enabled: bool, desc: str = "RAG Embedding"):
+        previous_enabled = self._progress_enabled
+        previous_desc = self._progress_desc
+        self._progress_enabled = enabled
+        self._progress_desc = desc
+        try:
+            yield
+        finally:
+            self._progress_enabled = previous_enabled
+            self._progress_desc = previous_desc
+
+    def _embed_remote(self, texts: list[str]) -> list[list[float]]:
+        results: list[list[float]] = []
+        total_batches = (len(texts) + self.batch_size - 1) // self.batch_size
+        with build_progress(
+            enabled=self._progress_enabled and total_batches > 0,
+            total=total_batches,
+            desc=self._progress_desc,
+            unit="batch",
+            position=1,
+            leave=False,
+        ) as progress:
             for start in range(0, len(texts), self.batch_size):
                 batch = texts[start : start + self.batch_size]
                 results.extend(self._embed_remote_batch(batch))
-            return results
-        except Exception:
-            return [self._local_fallback_embedding(text) for text in texts]
+                progress.update(1)
+        return results
+
+    def _embed_local(self, texts: list[str], *, desc: str) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        with build_progress(
+            enabled=self._progress_enabled and bool(texts),
+            total=len(texts),
+            desc=desc,
+            unit="doc",
+            position=1,
+            leave=False,
+        ) as progress:
+            for text in texts:
+                vectors.append(self._local_fallback_embedding(text))
+                progress.update(1)
+        return vectors
 
     def _embed_remote_batch(self, texts: list[str]) -> list[list[float]]:
         payload: dict[str, Any] = {"model": self.model, "input": texts}
@@ -126,12 +170,33 @@ class RagIndexManager:
                 return
         self.reindex()
 
-    def reindex(self) -> dict[str, Any]:
+    def reindex(self, *, show_progress: bool = False) -> dict[str, Any]:
         """强制重建索引并落盘。"""
-        self._documents = self._ingestor.load_documents()
-        self._build_vectorstore()
-        self._build_bm25()
-        self._indexed_at = datetime.utcnow()
+        with build_progress(
+            enabled=show_progress,
+            total=4,
+            desc="RAG 索引重建",
+            unit="step",
+            position=0,
+            leave=True,
+        ) as progress:
+            progress.set_description_str("RAG 索引重建：加载文档")
+            self._documents = self._ingestor.load_documents(show_progress=show_progress)
+            progress.update(1)
+
+            progress.set_postfix({"chunks": len(self._documents)}, refresh=True)
+            progress.set_description_str("RAG 索引重建：构建向量")
+            self._build_vectorstore(show_progress=show_progress)
+            progress.update(1)
+
+            progress.set_description_str("RAG 索引重建：构建BM25")
+            self._build_bm25()
+            progress.update(1)
+
+            self._indexed_at = datetime.utcnow()
+            progress.set_postfix({"chunks": len(self._documents)}, refresh=True)
+            progress.set_description_str("RAG 索引重建：完成")
+            progress.update(1)
         return {
             "status": "ok",
             "chunks": len(self._documents),
@@ -225,12 +290,14 @@ class RagIndexManager:
             self._doc_by_chunk_id = {}
             return False
 
-    def _build_vectorstore(self) -> None:
+    def _build_vectorstore(self, *, show_progress: bool = False) -> None:
         """构建 FAISS；若失败则构建本地降级向量缓存。"""
         self._sync_document_views()
         try:
             from langchain_community.vectorstores import FAISS
-            self._vectorstore = FAISS.from_documents(self._documents, self._embeddings)
+
+            with self._embeddings.progress_scope(enabled=show_progress, desc="RAG Embedding"):
+                self._vectorstore = FAISS.from_documents(self._documents, self._embeddings)
             self.faiss_dir.mkdir(parents=True, exist_ok=True)
             self._vectorstore.save_local(str(self.faiss_dir))
             self._local_dense_vectors = []
@@ -238,7 +305,8 @@ class RagIndexManager:
         except Exception:
             # FAISS 不可用时走本地向量检索降级，保持系统可用。
             self._vectorstore = None
-            self._local_dense_vectors = self._embeddings.embed_documents([doc.page_content for doc in self._documents])
+            with self._embeddings.progress_scope(enabled=show_progress, desc="RAG Embedding（本地向量）"):
+                self._local_dense_vectors = self._embeddings.embed_documents([doc.page_content for doc in self._documents])
 
     def _build_bm25(self) -> None:
         """构建 BM25；依赖缺失时降级为轻量词重叠检索。"""

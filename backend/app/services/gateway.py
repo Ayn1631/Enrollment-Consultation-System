@@ -5,10 +5,11 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterator
 
-from app.contracts import GenerationRequest, MemoryEntry
+from app.contracts import GenerationRequest, MemoryEntry, RagEvidence, RagQueryResponse
 from app.models import (
     AgentStepEvent,
     ChatCreateResponse,
@@ -1147,13 +1148,176 @@ class GatewayOrchestrator:
         """执行 LangGraph RAG 调用，支持测试注入 rag 故障。"""
         if "rag" in fail_features:
             raise RuntimeError("rag failure injected")
-        return self.deps.services.run_rag_graph(
+        rag_output = self.deps.services.run_rag_graph(
             session_id=session_id,
             query=query,
             top_k=self.deps.services.settings.rag_final_top_k,
             debug=True,
             memory_context_blocks=memory_context_blocks,
         )
+        if self._should_apply_local_doc_fallback(query=query, rag_output=rag_output):
+            fallback = self._search_local_docs_exact(query=query, limit=3)
+            if fallback:
+                self.logger.info(
+                    "[Gateway] rag local-doc fallback hit query=%s hits=%s",
+                    query[:120],
+                    len(fallback),
+                )
+                return self._merge_rag_with_local_doc_fallback(rag_output=rag_output, fallback_hits=fallback)
+        return rag_output
+
+    def _should_apply_local_doc_fallback(self, *, query: str, rag_output: RagQueryResponse) -> bool:
+        normalized = query.strip()
+        if not normalized:
+            return False
+        if rag_output.status != "degraded" and rag_output.sources:
+            return False
+        is_precise_fact_query = any(
+            token in normalized
+            for token in ("谁", "院长", "书记", "负责人", "主任", "领导", "电话", "邮箱", "联系方式")
+        )
+        if not is_precise_fact_query:
+            return False
+        if not rag_output.sources:
+            return True
+        return rag_output.degrade_reason in {None, "", "low_top_score", "low_coverage", "empty_retrieval", "retry_retrieval_failed"}
+
+    def _merge_rag_with_local_doc_fallback(
+        self,
+        *,
+        rag_output: RagQueryResponse,
+        fallback_hits: list[dict[str, Any]],
+    ) -> RagQueryResponse:
+        merged_context_blocks = list(rag_output.context_blocks)
+        merged_sources = list(rag_output.sources)
+        seen_blocks = set(merged_context_blocks)
+        seen_urls = {item.url for item in merged_sources}
+
+        for item in fallback_hits:
+            block = str(item["context_block"]).strip()
+            if block and block not in seen_blocks:
+                seen_blocks.add(block)
+                merged_context_blocks.insert(0, block)
+            evidence = RagEvidence(
+                chunk_id=str(item["chunk_id"]),
+                title=str(item["title"]),
+                url=str(item["url"]),
+                text=str(item["snippet"]),
+                score=float(item["score"]),
+            )
+            if evidence.url not in seen_urls:
+                seen_urls.add(evidence.url)
+                merged_sources.insert(0, evidence)
+
+        return rag_output.model_copy(
+            update={
+                "status": "ok",
+                "degrade_reason": None,
+                "context_blocks": merged_context_blocks,
+                "sources": merged_sources,
+            }
+        )
+
+    def _search_local_docs_exact(self, *, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        docs_dir = Path(self.deps.services.settings.docs_dir)
+        if not docs_dir.exists():
+            return []
+        terms = self._extract_local_doc_search_terms(query)
+        if not terms:
+            return []
+        matches: list[dict[str, Any]] = []
+        for path in sorted(docs_dir.glob("*.md")):
+            if path.name.lower() == "readme.md":
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            title = self._extract_local_doc_title(path=path, content=content)
+            url = self._extract_local_doc_url(content)
+            best_snippet, score = self._score_local_doc_match(
+                query=query,
+                terms=terms,
+                title=title,
+                content=content,
+            )
+            if not best_snippet or score <= 0:
+                continue
+            matches.append(
+                {
+                    "chunk_id": f"local-doc:{path.stem}",
+                    "title": title,
+                    "url": url,
+                    "snippet": best_snippet,
+                    "score": score,
+                    "context_block": (
+                        f"[本地原文兜底][来源:{title}][score={score:.3f}]\n"
+                        f"标题：{title}\n"
+                        f"正文：{best_snippet}"
+                    ),
+                }
+            )
+        matches.sort(key=lambda item: (float(item["score"]), len(str(item["snippet"]))), reverse=True)
+        return matches[:limit]
+
+    def _extract_local_doc_search_terms(self, query: str) -> list[str]:
+        normalized = re.sub(r"[？?！!。，“”\"'：:；;、]", " ", query).strip()
+        role_terms = [token for token in ("院长", "书记", "负责人", "主任", "领导", "电话", "邮箱", "联系方式") if token in normalized]
+        org_terms = re.findall(r"[\u4e00-\u9fff]{2,}(?:学院|学校|部门|中心|研究院|办公室|招生办)", normalized)
+        raw_parts = [item.strip() for item in re.split(r"[的\s]+", normalized) if item.strip()]
+        semantic_parts = [
+            item for item in raw_parts
+            if len(item) >= 2 and item not in {"是谁", "什么", "请问", "一下", "多少", "现在", "最新"}
+        ]
+        terms = [*org_terms, *role_terms, *semantic_parts]
+        deduped: list[str] = []
+        for item in terms:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped[:6]
+
+    def _extract_local_doc_title(self, *, path: Path, content: str) -> str:
+        for line in content.splitlines()[:8]:
+            normalized = line.strip()
+            if normalized.startswith("网页标题："):
+                return normalized.removeprefix("网页标题：").strip() or path.stem
+        return path.stem
+
+    def _extract_local_doc_url(self, content: str) -> str:
+        first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
+        matched = re.match(r"^# 原文（来源：(.*?)）$", first_line)
+        return matched.group(1).strip() if matched else ""
+
+    def _score_local_doc_match(
+        self,
+        *,
+        query: str,
+        terms: list[str],
+        title: str,
+        content: str,
+    ) -> tuple[str, float]:
+        title_hits = sum(1 for term in terms if term in title)
+        if title_hits <= 0 and not any(term in content for term in terms):
+            return "", 0.0
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        best_line = ""
+        best_score = 0.0
+        for idx, line in enumerate(lines):
+            line_hits = sum(1 for term in terms if term in line)
+            if line_hits <= 0:
+                continue
+            score = line_hits * 1.8 + title_hits * 0.6
+            if any(term in line for term in ("院长", "书记", "负责人", "主任", "领导")):
+                score += 1.5
+            if re.search(r"[\u4e00-\u9fff]{2,4}(?:教授|老师|院士)?", line) and "谁" in query:
+                score += 1.2
+            if score > best_score:
+                context_lines = [line]
+                if len(line) < 36 and idx + 1 < len(lines):
+                    context_lines.append(lines[idx + 1])
+                best_line = "\n".join(context_lines)
+                best_score = score
+        return best_line[:320], best_score
 
     def _invoke_skill(
         self,
@@ -1509,18 +1673,16 @@ class GatewayOrchestrator:
         sources: list[ChatSource],
         degraded: list[FeatureFlag],
     ) -> tuple[str, list[FeatureFlag]]:
-        deduped_degraded = list(dict.fromkeys(degraded))
-        if "citation_guard" not in effective_features:
-            return "", deduped_degraded
-        if sources and "citation_guard" not in deduped_degraded:
-            return "", deduped_degraded
-        if "citation_guard" not in deduped_degraded:
-            deduped_degraded.append("citation_guard")
-        prefix_text = (
-            "当前证据链不完整，以下内容仅供参考。\n"
-            "建议联系招生办电话 0371-67698700 / 67698712 / 67698674 进一步确认。\n\n"
-        )
-        return prefix_text, deduped_degraded
+        normalized_degraded = list(dict.fromkeys(degraded))
+        if "citation_guard" in effective_features and (not sources or "citation_guard" in normalized_degraded):
+            if "citation_guard" not in normalized_degraded:
+                normalized_degraded.append("citation_guard")
+            prefix_text = (
+                "当前证据链不完整，以下内容仅供参考。\n"
+                "建议联系招生办电话 0371-67698700 / 67698712 / 67698674 进一步确认。\n\n"
+            )
+            return prefix_text, normalized_degraded
+        return "", normalized_degraded
 
     def _yield_text_events(self, text: str) -> Iterator[GatewayStreamEvent]:
         chunk_size = max(1, self.deps.services.settings.stream_chunk_size)

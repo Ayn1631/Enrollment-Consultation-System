@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from types import SimpleNamespace
 
 from app.config import Settings
 from app.contracts import GenerationRequest, MemoryEntry, RagQueryResponse
@@ -64,7 +65,7 @@ class _HttpModeFakeClient:
             raise httpx.ConnectError("memory timeout")
         return _FakeResponse(200, {"status": "ok"})
 
-    def post(self, url: str, json: dict | None = None):
+    def post(self, url: str, json: dict | None = None, params: dict | None = None):
         if url.endswith("/rag/reindex"):
             return _FakeResponse(200, {"status": "ok", "chunks": 88, "updated_at": "2026-03-03T00:00:00"})
         if url.endswith("/rag/query"):
@@ -94,6 +95,7 @@ def _http_settings(runtime_settings: Settings) -> Settings:
     settings = runtime_settings.model_copy(
         update={
             "service_call_mode": "http",
+            "use_mock_generation": True,
         }
     )
     settings.rag_agent_service_url = "http://rag-agent-service:8001"
@@ -119,6 +121,23 @@ def test_reindex_http_mode(monkeypatch, runtime_settings: Settings):
     client = ServiceClient(settings=settings)
     payload = client.reindex()
     assert payload["chunks"] == 88
+
+
+def test_reindex_http_mode_passes_progress_flag(monkeypatch, runtime_settings: Settings):
+    captured_params: list[dict | None] = []
+
+    class _CaptureClient(_HttpModeFakeClient):
+        def post(self, url: str, json: dict | None = None, params: dict | None = None):
+            captured_params.append(params)
+            return super().post(url, json=json, params=params)
+
+    monkeypatch.setattr("app.services.service_client.httpx.Client", _CaptureClient)
+    settings = _http_settings(runtime_settings)
+    client = ServiceClient(settings=settings)
+    payload = client.reindex(show_progress=True)
+
+    assert payload["chunks"] == 88
+    assert captured_params[-1] == {"show_progress": "true"}
 
 
 def test_run_rag_graph_http_mode(monkeypatch, runtime_settings: Settings):
@@ -229,35 +248,30 @@ def test_generate_honors_requested_model_even_in_remote_mode(monkeypatch, runtim
 def test_generation_service_prefers_split_llm_endpoint_and_key(monkeypatch):
     captured: dict[str, object] = {}
 
-    class _FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": "这是远程生成结果",
-                        }
-                    }
-                ]
-            }
-
-    class _GenerationHttpClient:
-        def __init__(self, timeout: float):
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str, base_url: str, timeout: float, max_retries: int):
+            captured["api_key"] = api_key
+            captured["base_url"] = base_url
             captured["timeout"] = timeout
+            captured["max_retries"] = max_retries
+            self.api_key = api_key
+            self.base_url = base_url
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            captured["create_kwargs"] = kwargs
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="这是远程生成结果")
+                    )
+                ]
+            )
 
         def close(self) -> None:
             return None
 
-        def post(self, url: str, headers: dict | None = None, json: dict | None = None):
-            captured["url"] = url
-            captured["headers"] = headers or {}
-            captured["json"] = json or {}
-            return _FakeResponse()
-
-    monkeypatch.setattr("app.services.llm.httpx.Client", _GenerationHttpClient)
+    monkeypatch.setattr("app.services.llm.OpenAI", _FakeOpenAI)
     settings = Settings()
     if not settings.resolve_llm_api_key():
         pytest.skip("当前环境未配置可用的 LLM API KEY")
@@ -276,8 +290,6 @@ def test_generation_service_prefers_split_llm_endpoint_and_key(monkeypatch):
     )
 
     assert result.text == "这是远程生成结果"
-    assert captured["url"] == settings.resolve_llm_api_url()
-    assert captured["headers"] == {
-        "Authorization": f"Bearer {settings.resolve_llm_api_key()}",
-        "Content-Type": "application/json",
-    }
+    assert captured["base_url"] == settings.resolve_llm_api_url()
+    assert captured["api_key"] == settings.resolve_llm_api_key()
+    assert captured["create_kwargs"]["model"] == settings.generation_light_model

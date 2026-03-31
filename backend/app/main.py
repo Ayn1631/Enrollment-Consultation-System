@@ -270,7 +270,7 @@ def metrics() -> dict[str, object]:
 
 @app.post("/api/admin/reindex", dependencies=[Depends(_require_admin_token)])
 def admin_reindex() -> dict[str, object]:
-    payload = service_client.reindex()
+    payload = service_client.reindex(show_progress=True)
     return {"status": "ok", "result": payload}
 
 

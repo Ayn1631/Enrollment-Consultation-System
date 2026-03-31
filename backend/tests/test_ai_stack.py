@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+from types import SimpleNamespace
 
 from app.config import Settings
-from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanner, Neo4jKnowledgeAdapter
+from app.services.ai_stack import (
+    LangChain4jSkillBridge,
+    LangGraphFeaturePlanner,
+    Neo4jKnowledgeAdapter,
+    build_langchain_mcp_runtime,
+)
 from app.services.ai_stack import _format_exception_summary, load_mcp_server_configs
 
 
@@ -170,3 +177,134 @@ def test_load_mcp_server_configs_should_log_notes(caplog, tmp_path):
     assert any("MCP 服务 broken-http 缺少 url/serverUrl，已跳过。" in note for note in notes)
     assert any("[ai_stack.note] MCP 配置已加载" in record.message for record in caplog.records)
     assert any("MCP 服务 broken-http 缺少 url/serverUrl，已跳过。" in record.message for record in caplog.records)
+
+
+def test_load_mcp_server_configs_should_skip_missing_python_module(tmp_path):
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "fetch": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "definitely_missing_mcp_module_xyz"],
+                    },
+                    "bing-search": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "json"],
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(MCP_ENABLED=True, MCP_CONFIG_PATH=str(config_path))
+
+    servers, notes = load_mcp_server_configs(settings)
+
+    assert len(servers) == 1
+    assert servers[0].original_name == "bing-search"
+    assert any("缺少 Python 模块 definitely_missing_mcp_module_xyz，已跳过。" in note for note in notes)
+
+
+def test_build_langchain_mcp_runtime_should_unwrap_bound_tool_name(monkeypatch, tmp_path):
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "bing-search": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "json"],
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(MCP_ENABLED=True, MCP_CONFIG_PATH=str(config_path))
+
+    class _WrappedTool:
+        def __init__(self):
+            self.name = None
+            self.description = ""
+            self.bound = SimpleNamespace(name="bing_search", description="search the web")
+
+    class _FakeClient:
+        def __init__(
+            self,
+            connections=None,
+            *,
+            callbacks=None,
+            tool_interceptors=None,
+            tool_name_prefix=False,
+        ):
+            self.connections = connections
+
+        async def get_tools(self):
+            return [_WrappedTool()]
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr("langchain_mcp_adapters.client.MultiServerMCPClient", _FakeClient)
+
+    runtime = asyncio.run(build_langchain_mcp_runtime(settings))
+
+    assert len(runtime.tools) == 1
+    assert getattr(runtime.tools[0], "name", "") == "bing_search"
+    assert getattr(runtime.tools[0], "description", "") == "search the web"
+    asyncio.run(runtime.aclose())
+
+
+def test_build_langchain_mcp_runtime_should_use_single_multiserver_client(monkeypatch, tmp_path):
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "math-server": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "json"],
+                    },
+                    "weather-server": {
+                        "type": "http",
+                        "url": "https://example.com/mcp",
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(MCP_ENABLED=True, MCP_CONFIG_PATH=str(config_path))
+    captured_connections: list[dict] = []
+
+    class _FakeClient:
+        def __init__(
+            self,
+            connections=None,
+            *,
+            callbacks=None,
+            tool_interceptors=None,
+            tool_name_prefix=False,
+        ):
+            captured_connections.append(connections or {})
+
+        async def get_tools(self):
+            return [SimpleNamespace(name="weather_search", description="search weather")]
+
+    monkeypatch.setattr("langchain_mcp_adapters.client.MultiServerMCPClient", _FakeClient)
+
+    runtime = asyncio.run(build_langchain_mcp_runtime(settings))
+
+    assert len(captured_connections) == 1
+    assert set(captured_connections[0].keys()) == {"math_server", "weather_server"}
+    assert len(runtime.tools) == 1
+    assert [item.alias for item in runtime.servers] == ["math_server", "weather_server"]

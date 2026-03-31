@@ -1,5 +1,6 @@
 # Project docs
 docs/
+review/
 frontend/dist/
 frontend/node_modules/
 backend/.pytest_cache/

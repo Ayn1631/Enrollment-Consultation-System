@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
 import pytest
 
+from app.config import Settings
+from app.contracts import RagQueryResponse
 from app.main import app
 from app.contracts import GenerationResponse
+from app.services.gateway import GatewayDependencies, GatewayOrchestrator
+from app.state import ServiceContainer
 
 
 @pytest.fixture(autouse=True)
@@ -263,6 +268,59 @@ def test_time_sensitive_query_should_not_emit_local_web_search_audit():
     assert "web_read" not in body
 
 
+def test_invoke_rag_should_use_local_doc_fallback_for_precise_identity_query(tmp_path: Path, runtime_settings):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "1087-高标准推进筹建河南电子科技大学-中原工学院.md").write_text(
+        "\n".join(
+            [
+                "# 原文（来源：https://www.zut.edu.cn/index/gbztjcjhndzkjdx/36.htm）",
+                "网页标题：高标准推进筹建河南电子科技大学-中原工学院",
+                "抓取时间：2026-03-30",
+                "",
+                "9月11日，我校人工智能学院与中原人工智能产业技术研究院召开人工智能科教合作会议。",
+                "人工智能学院院长陈东义教授与中原人工智能产业技术研究院院长李明及双方代表共10余人参加会议。",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = runtime_settings.model_copy(update={"docs_dir": docs_dir})
+
+    class _FakeServices:
+        def __init__(self, settings: Settings):
+            self.settings = settings
+
+        def run_rag_graph(self, **kwargs):
+            return RagQueryResponse(
+                trace_id="trace-test",
+                status="degraded",
+                context_blocks=[],
+                sources=[],
+                degrade_reason="low_top_score",
+                latency_ms={},
+            )
+
+    gateway = GatewayOrchestrator(
+        GatewayDependencies(
+            container=ServiceContainer(),
+            services=_FakeServices(settings),  # type: ignore[arg-type]
+        )
+    )
+
+    result = gateway._invoke_rag(
+        session_id="test-session",
+        query="人工智能学院的院长是谁？",
+        fail_features=set(),
+        memory_context_blocks=[],
+    )
+
+    assert result.status == "ok"
+    assert result.degrade_reason is None
+    assert any("陈东义" in block for block in result.context_blocks)
+    assert any(item.title == "高标准推进筹建河南电子科技大学-中原工学院" for item in result.sources)
+
+
 def test_skill_exec_failure_should_degrade_not_fail():
     client = TestClient(app)
     payload = _base_payload()
@@ -356,13 +414,23 @@ def test_health_overall_false_when_dependency_unhealthy(monkeypatch):
     assert data["healthy"] is False
 
 
-def test_admin_reindex_endpoint():
+def test_admin_reindex_endpoint(monkeypatch: pytest.MonkeyPatch):
+    from app import main as main_module
+
     client = TestClient(app)
+    captured: dict[str, bool] = {}
+
+    def _fake_reindex(*, show_progress: bool = False):
+        captured["show_progress"] = show_progress
+        return {"status": "ok", "chunks": 3, "updated_at": "2026-03-30T00:00:00"}
+
+    monkeypatch.setattr(main_module.service_client, "reindex", _fake_reindex)
     res = client.post("/api/admin/reindex")
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "ok"
     assert "result" in body
+    assert captured["show_progress"] is True
 
 
 def test_admin_retrieval_stats_endpoint():

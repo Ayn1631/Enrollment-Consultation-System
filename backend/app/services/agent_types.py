@@ -1,21 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict
 
 from app.models import AgentStepEvent, AgentStrategy, ChatRequest, ChatSource, FeatureFlag
-
-
-PlanStepType = Literal[
-    "recall_memory",
-    "local_rag_search",
-    "general_skill",
-    "saved_skill",
-    "mcp_discover",
-    "mcp_execute",
-    "citation_guard",
-    "synthesize_step",
-]
 
 
 SubproblemStatus = Literal["pending", "completed", "degraded", "failed", "needs_replan"]
@@ -23,9 +11,7 @@ SubproblemStatus = Literal["pending", "completed", "degraded", "failed", "needs_
 
 @dataclass(slots=True)
 class PlanStep:
-    step_type: PlanStepType
-    title: str
-    instruction: str = ""
+    goal: str
 
 
 @dataclass(slots=True)

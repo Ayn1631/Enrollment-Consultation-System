@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypedDict
@@ -243,6 +244,29 @@ def _single_note(message: str) -> list[str]:
     return [message]
 
 
+def _ensure_mcp_adapter_compatibility(notes: list[str]) -> None:
+    """兼容旧版 mcp SDK，补齐 langchain_mcp_adapters 导入时缺失的类型别名。"""
+    try:
+        import mcp.client.session as session_module
+        import mcp.types as types_module
+    except Exception as exc:  # noqa: BLE001
+        _append_note(notes, f"MCP 兼容补丁加载失败：{exc.__class__.__name__}")
+        return
+
+    patched: list[str] = []
+    if not hasattr(session_module, "ElicitationFnT") and hasattr(session_module, "SamplingFnT"):
+        setattr(session_module, "ElicitationFnT", getattr(session_module, "SamplingFnT"))
+        patched.append("session.ElicitationFnT->SamplingFnT")
+    if not hasattr(types_module, "ElicitRequestParams") and hasattr(types_module, "CreateMessageRequestParams"):
+        setattr(types_module, "ElicitRequestParams", getattr(types_module, "CreateMessageRequestParams"))
+        patched.append("types.ElicitRequestParams->CreateMessageRequestParams")
+    if not hasattr(types_module, "ElicitResult") and hasattr(types_module, "CreateMessageResult"):
+        setattr(types_module, "ElicitResult", getattr(types_module, "CreateMessageResult"))
+        patched.append("types.ElicitResult->CreateMessageResult")
+    if patched:
+        _append_note(notes, "已应用 MCP 兼容补丁：" + ", ".join(patched))
+
+
 def _normalize_stdio_command(command: str) -> tuple[str, str | None]:
     """对 Windows 上常见 MCP 命令做兼容处理，减少子进程启动失败。"""
     normalized = command.strip()
@@ -341,6 +365,14 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
             if command_note:
                 _append_note(notes, f"MCP 服务 {original_name}：{command_note}")
             args = [_expand_text_value(str(item)) for item in list(raw.get("args") or [])]
+            if (
+                Path(command).name.lower().startswith("python")
+                and len(args) >= 2
+                and args[0] == "-m"
+                and not importlib.util.find_spec(args[1])
+            ):
+                _append_note(notes, f"MCP 服务 {original_name} 缺少 Python 模块 {args[1]}，已跳过。")
+                continue
             extra_env = {
                 str(key): _expand_text_value(str(value))
                 for key, value in dict(raw.get("env") or {}).items()
@@ -396,6 +428,8 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
     if not servers:
         return McpToolRuntime(client=None, tools=[], servers=[], notes=notes)
 
+    _ensure_mcp_adapter_compatibility(notes)
+
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
     except Exception as exc:  # noqa: BLE001
@@ -403,9 +437,7 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
         return McpToolRuntime(client=None, tools=[], servers=servers, notes=notes)
 
     connections: dict[str, dict[str, Any]] = {}
-    timeout_map: dict[str, float] = {}
     for server in servers:
-        timeout_map[server.alias] = server.timeout_seconds or 60.0
         if server.transport == "stdio":
             connections[server.alias] = {
                 "transport": "stdio",
@@ -423,36 +455,30 @@ async def build_langchain_mcp_runtime(settings: Settings) -> McpToolRuntime:
             connections[server.alias] = connection
 
     client = None
+    configured_tools: list[Any] = []
     try:
-        client = MultiServerMCPClient(connections=connections)
+        client = MultiServerMCPClient(connections)
         tools = await client.get_tools()
     except Exception as exc:  # noqa: BLE001
-        if client is not None:
-            close_method = getattr(client, "close", None)
-            if close_method is not None:
-                result = close_method()
-                if hasattr(result, "__await__"):
-                    await result
         _append_note(notes, f"MCP 工具加载失败：{_format_exception_summary(exc)}")
-        return McpToolRuntime(client=None, tools=[], servers=servers, notes=notes)
+        return McpToolRuntime(client=client, tools=[], servers=servers, notes=notes)
 
-    configured_tools: list[Any] = []
     for tool in tools:
-        tool_name = str(getattr(tool, "name", ""))
-        matched_server = next((item for item in servers if tool_name.startswith(f"{item.alias}_")), None)
-        if matched_server is None:
-            configured_tools.append(tool)
-            continue
-        timeout_ms = max(1, int((timeout_map.get(matched_server.alias) or 60.0) * 1000))
-        if hasattr(tool, "with_config"):
-            tool = tool.with_config({"timeout": timeout_ms})
+        bound_tool = getattr(tool, "bound", None)
+        if getattr(tool, "name", None) is None and getattr(bound_tool, "name", None):
+            tool = bound_tool
         configured_tools.append(tool)
+
+    if not configured_tools:
+        _append_note(notes, "MCP 已成功连接，但未发现可用工具。")
+        return McpToolRuntime(client=client, tools=[], servers=servers, notes=notes)
 
     _append_note(
         notes,
         "MCP 外部工具已接入："
         + ", ".join(f"{item.original_name}->{item.alias}" for item in servers),
     )
+    _append_note(notes, f"MCP 共加载 {len(configured_tools)} 个工具。")
     return McpToolRuntime(client=client, tools=configured_tools, servers=servers, notes=notes)
 
 
@@ -467,21 +493,35 @@ def build_langchain_chat_model(
     llm_api_key = settings.resolve_llm_api_key()
     if settings.use_mock_generation or not llm_api_key:
         return None
-    try:
-        from langchain_openai import ChatOpenAI
-    except Exception:
-        return None
     base_url = settings.resolve_llm_api_url()
     if base_url.endswith("/chat/completions"):
         base_url = base_url[: -len("/chat/completions")]
     model_kwargs: dict[str, float] = {}
     if top_p is not None:
         model_kwargs["top_p"] = top_p
-    return ChatOpenAI(
-        model=model or settings.generation_main_model,
-        api_key=llm_api_key,
-        base_url=base_url,
-        temperature=0.2 if temperature is None else temperature,
-        timeout=settings.llm_timeout_seconds,
-        model_kwargs=model_kwargs,
-    )
+    try:
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model or settings.generation_main_model,
+            api_key=llm_api_key,
+            base_url=base_url,
+            temperature=0.2 if temperature is None else temperature,
+            timeout=settings.llm_timeout_seconds,
+            model_kwargs=model_kwargs,
+        )
+    except Exception:
+        pass
+    try:
+        from langchain_community.chat_models import ChatOpenAI as CommunityChatOpenAI
+
+        logger.warning("langchain_openai 不可用，已回退到 langchain_community.ChatOpenAI。")
+        return CommunityChatOpenAI(
+            model_name=model or settings.generation_main_model,
+            openai_api_key=llm_api_key,
+            openai_api_base=base_url,
+            temperature=0.2 if temperature is None else temperature,
+            request_timeout=settings.llm_timeout_seconds,
+            model_kwargs=model_kwargs,
+        )
+    except Exception:
+        return None

@@ -99,9 +99,9 @@ class RagGraphService:
             latency_ms=result.latency_ms if debug else {},
         )
 
-    def reindex(self) -> dict:
+    def reindex(self, *, show_progress: bool = False) -> dict:
         """触发索引重建。"""
-        return self.index.reindex()
+        return self.index.reindex(show_progress=show_progress)
 
     def stats(self) -> dict:
         """返回索引统计信息。"""

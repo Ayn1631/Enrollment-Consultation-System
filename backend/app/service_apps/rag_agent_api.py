@@ -38,8 +38,8 @@ def rag_query(request: RagQueryRequest) -> RagQueryResponse:
 
 
 @app.post("/rag/reindex")
-def reindex() -> dict:
-    return rag_service.reindex()
+def reindex(show_progress: bool = False) -> dict:
+    return rag_service.reindex(show_progress=show_progress)
 
 
 @app.get("/rag/stats")
