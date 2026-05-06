@@ -8,6 +8,7 @@ import re
 
 from docx import Document as DocxDocument
 from openpyxl import Workbook
+from openpyxl import load_workbook
 from PyPDF2 import PdfReader
 
 
@@ -220,6 +221,138 @@ def export_admission_markdown_documents(
         parsed_path.write_text(document.to_json(), encoding="utf-8")
         exported.append(markdown_path)
     return exported
+
+
+def load_major_catalog_rows(input_path: Path, *, source_dataset: str) -> list[dict[str, str]]:
+    workbook = load_workbook(str(input_path), read_only=True, data_only=True)
+    preferred_sheet = next((sheet for sheet in workbook.worksheets if _sheet_has_major_columns(sheet)), workbook.worksheets[0])
+    rows = list(preferred_sheet.iter_rows(values_only=True))
+    header_index = _find_first_non_empty_row(rows)
+    if header_index is None:
+        return []
+    header_map = _build_header_map([str(value).strip() if value is not None else "" for value in rows[header_index]])
+    results: list[dict[str, str]] = []
+    for row_no, values in enumerate(rows[header_index + 1 :], start=header_index + 2):
+        raw_row = [str(value).strip() if value is not None else "" for value in values]
+        record = _build_major_catalog_row(
+            raw_row=raw_row,
+            header_map=header_map,
+            source_file=input_path.name,
+            source_doc=input_path.stem,
+            source_table_title=preferred_sheet.title,
+            source_row_no=str(row_no),
+            extract_time=datetime.now().isoformat(timespec="seconds"),
+        )
+        if record is None:
+            continue
+        record["academic_year"] = _extract_primary_year(f"{input_path.stem} {' '.join(raw_row)}")
+        record["source_dataset"] = source_dataset
+        record["major_code"] = record.pop("专业代码", "")
+        record["major_name"] = record.pop("专业名称", "")
+        record["duration"] = record.pop("学制", "")
+        record["tuition"] = record.pop("学费（元）", "")
+        record["exam_subjects"] = record.pop("选考科目", "")
+        record["degree_type"] = record.pop("学位授予门类", "")
+        record["college_name"] = record.pop("所在院系", "")
+        record["evidence_text"] = "；".join(
+            f"{label}：{record.get(field, '')}"
+            for label, field in (
+                ("专业代码", "major_code"),
+                ("专业名称", "major_name"),
+                ("学制", "duration"),
+                ("学费（元）", "tuition"),
+                ("选考科目", "exam_subjects"),
+                ("学位授予门类", "degree_type"),
+                ("所在院系", "college_name"),
+            )
+            if record.get(field)
+        )
+        results.append(record)
+    return results
+
+
+def load_faq_seed_rows(input_path: Path) -> list[dict[str, str]]:
+    workbook = load_workbook(str(input_path), read_only=True, data_only=True)
+    sheet = workbook.worksheets[0]
+    rows = list(sheet.iter_rows(values_only=True))
+    header_index = _find_row_index_containing(rows, "问题")
+    if header_index is None:
+        return []
+    headers = [str(value).strip() if value is not None else "" for value in rows[header_index]]
+    column_map = {
+        "tag_name": _find_column_index(headers, {"标签"}),
+        "question_no": _find_column_index(headers, {"序号"}),
+        "question": _find_column_index(headers, {"问题"}),
+        "answer": _find_column_index(headers, {"答案（建议全面完善答案，考生提问后可以让其更全面的了解本问题，让考生咨询过程体验更佳。）", "答案"}),
+    }
+    results: list[dict[str, str]] = []
+    for values in rows[header_index + 1 :]:
+        row = [str(value).strip() if value is not None else "" for value in values]
+        question = _value_by_index(row, column_map["question"])
+        answer = _value_by_index(row, column_map["answer"])
+        if not question or not answer:
+            continue
+        results.append(
+            {
+                "source_file": input_path.name,
+                "tag_name": _value_by_index(row, column_map["tag_name"]),
+                "question_no": _value_by_index(row, column_map["question_no"]),
+                "question": question,
+                "answer": answer,
+                "retrieval_priority": "low",
+            }
+        )
+    return results
+
+
+def load_score_line_rows(input_path: Path) -> list[dict[str, str]]:
+    try:
+        import xlrd
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("缺少 xlrd，无法解析 xls 录取分数线文件") from exc
+
+    workbook = xlrd.open_workbook(str(input_path))
+    sheet = workbook.sheet_by_index(0)
+    rows = [[_normalize_xls_value(sheet.cell_value(row_idx, col_idx)) for col_idx in range(sheet.ncols)] for row_idx in range(sheet.nrows)]
+    header_index = _find_score_header_index(rows)
+    if header_index is None:
+        return []
+    headers = rows[header_index]
+    aliases = {
+        "年份": {"年份", "年度"},
+        "省份": {"省份", "生源省份"},
+        "批次": {"批次", "录取批次"},
+        "category": {"科类", "选科", "科类/选科"},
+        "major_name": {"专业", "专业名称"},
+        "min_score": {"最低分", "投档最低分", "录取最低分"},
+        "min_rank": {"最低位次", "投档最低位次", "录取最低位次", "位次"},
+    }
+    column_map = {key: _find_column_index(headers, labels) for key, labels in aliases.items()}
+    results: list[dict[str, str]] = []
+    for row_no, values in enumerate(rows[header_index + 1 :], start=header_index + 2):
+        if not any(values):
+            continue
+        major_name = _value_by_index(values, column_map["major_name"])
+        if not major_name:
+            continue
+        evidence = "；".join(f"{headers[idx]}：{value}" for idx, value in enumerate(values) if value)
+        results.append(
+            {
+                "source_dataset": "score_lines",
+                "source_file": input_path.name,
+                "source_sheet": sheet.name,
+                "source_row_no": str(row_no),
+                "year": _value_by_index(values, column_map["年份"]) or _extract_primary_year(f"{input_path.stem} {evidence}"),
+                "province": _value_by_index(values, column_map["省份"]),
+                "batch": _value_by_index(values, column_map["批次"]),
+                "category": _value_by_index(values, column_map["category"]),
+                "major_name": major_name,
+                "min_score": _value_by_index(values, column_map["min_score"]),
+                "min_rank": _value_by_index(values, column_map["min_rank"]),
+                "evidence_text": evidence,
+            }
+        )
+    return results
 
 
 def _extract_single_table(
@@ -475,3 +608,65 @@ def _cleanup_previous_exports(*, output_dir: Path, parsed_dir: Path) -> None:
     for path in parsed_dir.glob("*.json"):
         if json_pattern.match(path.name):
             path.unlink(missing_ok=True)
+
+
+def _sheet_has_major_columns(sheet) -> bool:
+    rows = list(sheet.iter_rows(values_only=True, max_row=3))
+    for row in rows:
+        headers = [str(value).strip() if value is not None else "" for value in row]
+        header_map = _build_header_map(headers)
+        if _is_major_catalog_table(header_map):
+            return True
+    return False
+
+
+def _find_first_non_empty_row(rows: list[list[object]]) -> int | None:
+    for idx, row in enumerate(rows):
+        if any((str(value).strip() if value is not None else "") for value in row):
+            return idx
+    return None
+
+
+def _find_row_index_containing(rows: list[list[object]], keyword: str) -> int | None:
+    for idx, row in enumerate(rows):
+        values = [str(value).strip() if value is not None else "" for value in row]
+        if keyword in values:
+            return idx
+    return None
+
+
+def _find_column_index(headers: list[str], labels: set[str]) -> int:
+    for idx, header in enumerate(headers):
+        if header in labels:
+            return idx
+    return -1
+
+
+def _value_by_index(row: list[str], index: int) -> str:
+    if index < 0 or index >= len(row):
+        return ""
+    return row[index]
+
+
+def _extract_primary_year(text: str) -> str:
+    matched = re.search(r"(20\d{2})", text)
+    return matched.group(1) if matched else ""
+
+
+def _normalize_xls_value(value: object) -> str:
+    text = str(value).strip()
+    if text.endswith(".0"):
+        return text[:-2]
+    return text
+
+
+def _find_score_header_index(rows: list[list[str]]) -> int | None:
+    expected_tokens = {"年份", "省份", "专业", "最低分", "位次", "批次", "录取批次"}
+    best_idx: int | None = None
+    best_score = -1
+    for idx, row in enumerate(rows[:8]):
+        score = sum(1 for cell in row if any(token in cell for token in expected_tokens))
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+    return best_idx if best_score >= 2 else None

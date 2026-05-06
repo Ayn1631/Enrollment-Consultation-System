@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT_DIR / "docs" / "zyit"
+ADMISSIONS_SOURCE_DIR = ROOT_DIR / "docs" / "招生资料" / "25"
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +75,9 @@ class Settings(BaseSettings):
         alias="CORS_ALLOW_ORIGINS",
     )
     docs_dir: Path = DOCS_DIR
+    admissions_source_dir: Path = Field(default=ADMISSIONS_SOURCE_DIR, alias="ADMISSIONS_SOURCE_DIR")
+    admissions_parsed_dir: Path = Field(default=ROOT_DIR / "backend" / "data" / "admissions_kb" / "parsed", alias="ADMISSIONS_PARSED_DIR")
+    admissions_faiss_dir: Path = Field(default=ROOT_DIR / "backend" / "data" / "faiss" / "admissions_2025", alias="ADMISSIONS_FAISS_DIR")
 
     embedding_api_url: str = Field(default="", alias="EMBEDDING_API_URL")
     embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
@@ -111,6 +115,12 @@ class Settings(BaseSettings):
         default="http://observability-service:8006",
         alias="OBSERVABILITY_SERVICE_URL",
     )
+
+    mysql_host: str = Field(default="127.0.0.1", alias="MYSQL_HOST")
+    mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
+    mysql_database: str = Field(default="admissions_kb", alias="MYSQL_DATABASE")
+    mysql_user: str = Field(default="root", alias="MYSQL_USER")
+    mysql_password: str = Field(default="", alias="MYSQL_PASSWORD")
 
     rag_agent_service_timeout_seconds: float = Field(default=2.5, alias="RAG_AGENT_SERVICE_TIMEOUT_SECONDS")
     memory_service_timeout_seconds: float = Field(default=0.8, alias="MEMORY_SERVICE_TIMEOUT_SECONDS")
@@ -187,6 +197,12 @@ class Settings(BaseSettings):
             if path.exists():
                 return path
         return None
+
+    def resolve_mysql_dsn(self) -> str:
+        return (
+            f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}"
+            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
+        )
 
 
 @lru_cache(maxsize=1)
