@@ -28,6 +28,8 @@ from app.contracts import (
     SkillSaveRequest,
 )
 from app.models import ChatSource, FeatureFlag
+from app.admissions_kb.router import route_structured_query
+from app.admissions_kb.tools import StructuredAdmissionsToolset
 from app.rag.service import RagGraphService
 from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanner
 from app.services.llm import GenerationService
@@ -48,6 +50,7 @@ class ServiceClient:
         self._skills = SkillManager()
         self._generator = GenerationService(settings)
         self._feature_planner = LangGraphFeaturePlanner()
+        self._admissions_toolset = StructuredAdmissionsToolset(settings)
         self._langchain4j_bridge = LangChain4jSkillBridge(
             base_url=settings.langchain4j_service_url,
             timeout_seconds=settings.langchain4j_timeout_seconds,
@@ -151,6 +154,19 @@ class ServiceClient:
             f"sources={len(result.sources)} degrade_reason={result.degrade_reason}"
         )
         return result
+
+    def query_admissions_structured(self, *, query: str) -> RagQueryResponse | None:
+        decision = route_structured_query(query)
+        if decision.tool_name is None:
+            return None
+        trace_id = f"structured-{decision.tool_name}"
+        if decision.tool_name == "major_catalog_lookup":
+            payload = self._admissions_toolset.major_catalog_lookup(raw_query=query, filters=decision.filters)
+        elif decision.tool_name == "scoreline_lookup":
+            payload = self._admissions_toolset.scoreline_lookup(raw_query=query, filters=decision.filters)
+        else:
+            payload = self._admissions_toolset.policy_table_lookup(raw_query=query, filters=decision.filters)
+        return self._admissions_toolset.to_rag_response(payload=payload, trace_id=trace_id)
 
     def write_short_memory(self, session_id: str, key: str, value: str) -> None:
         self.write_memory(session_id=session_id, entry=MemoryEntry(key=key, value=value, kind="short"))

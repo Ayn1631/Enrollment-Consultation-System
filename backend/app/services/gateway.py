@@ -1148,6 +1148,14 @@ class GatewayOrchestrator:
         """执行 LangGraph RAG 调用，支持测试注入 rag 故障。"""
         if "rag" in fail_features:
             raise RuntimeError("rag failure injected")
+        try:
+            structured = self.deps.services.query_admissions_structured(query=query)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("[Gateway] structured query fallback to rag query=%s error=%s", query[:100], exc)
+            structured = None
+        if structured is not None:
+            self.logger.info("[Gateway] structured route hit query=%s sources=%s", query[:120], len(structured.sources))
+            return structured
         rag_output = self.deps.services.run_rag_graph(
             session_id=session_id,
             query=query,

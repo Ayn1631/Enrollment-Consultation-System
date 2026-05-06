@@ -283,6 +283,136 @@ class AdmissionsRepository:
                 )
         return len(rows)
 
+    def search_major_catalog(self, *, raw_query: str, filters: dict[str, str], limit: int = 8) -> list[dict[str, Any]]:
+        sql = """
+            SELECT academic_year, source_dataset, source_file, source_doc, source_table_title, source_row_no,
+                   major_code, major_name, duration, tuition, exam_subjects, degree_type, college_name, evidence_text
+            FROM major_catalog
+        """
+        where_parts, params = self._build_major_where(raw_query=raw_query, filters=filters)
+        if where_parts:
+            sql += " WHERE " + " AND ".join(where_parts)
+        sql += " ORDER BY academic_year DESC, major_code ASC LIMIT %s"
+        params.append(limit)
+        return self._fetch_all(sql, params)
+
+    def search_score_lines(self, *, raw_query: str, filters: dict[str, str], limit: int = 8) -> list[dict[str, Any]]:
+        sql = """
+            SELECT source_dataset, source_file, source_sheet, source_row_no, year, province, batch,
+                   category, major_name, min_score, min_rank, evidence_text
+            FROM score_lines
+        """
+        where_parts, params = self._build_scoreline_where(raw_query=raw_query, filters=filters)
+        if where_parts:
+            sql += " WHERE " + " AND ".join(where_parts)
+        sql += " ORDER BY year DESC, province ASC, major_name ASC LIMIT %s"
+        params.append(limit)
+        return self._fetch_all(sql, params)
+
+    def search_policy_tables(self, *, raw_query: str, filters: dict[str, str], limit: int = 12) -> list[dict[str, Any]]:
+        sql = """
+            SELECT source_dataset, source_file, source_doc, table_topic, source_row_no, field_name, field_value, evidence_text
+            FROM policy_tables
+        """
+        where_parts, params = self._build_policy_where(raw_query=raw_query, filters=filters)
+        if where_parts:
+            sql += " WHERE " + " AND ".join(where_parts)
+        sql += " ORDER BY table_topic ASC, source_row_no ASC LIMIT %s"
+        params.append(limit)
+        return self._fetch_all(sql, params)
+
+    def _fetch_all(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                return list(cursor.fetchall())
+
+    def _build_major_where(self, *, raw_query: str, filters: dict[str, str]) -> tuple[list[str], list[Any]]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        mapping = {
+            "major_name": "major_name LIKE %s",
+            "major_code": "major_code = %s",
+            "college_name": "college_name LIKE %s",
+            "degree_type": "degree_type LIKE %s",
+            "exam_subjects": "exam_subjects LIKE %s",
+            "academic_year": "academic_year = %s",
+        }
+        for key, clause in mapping.items():
+            value = filters.get(key, "").strip()
+            if not value:
+                continue
+            where_parts.append(clause)
+            params.append(value if key in {"major_code", "academic_year"} else f"%{value}%")
+        if filters.get("tuition_min"):
+            where_parts.append("CAST(REPLACE(tuition, ',', '') AS UNSIGNED) >= %s")
+            params.append(int(filters["tuition_min"]))
+        if filters.get("tuition_max"):
+            where_parts.append("CAST(REPLACE(tuition, ',', '') AS UNSIGNED) <= %s")
+            params.append(int(filters["tuition_max"]))
+        if raw_query.strip():
+            like = f"%{raw_query.strip()}%"
+            where_parts.append(
+                "("
+                "major_name LIKE %s OR college_name LIKE %s OR exam_subjects LIKE %s OR evidence_text LIKE %s"
+                ")"
+            )
+            params.extend([like, like, like, like])
+        return where_parts, params
+
+    def _build_scoreline_where(self, *, raw_query: str, filters: dict[str, str]) -> tuple[list[str], list[Any]]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        mapping = {
+            "year": "year = %s",
+            "province": "province LIKE %s",
+            "batch": "batch LIKE %s",
+            "category": "category LIKE %s",
+            "major_name": "major_name LIKE %s",
+        }
+        for key, clause in mapping.items():
+            value = filters.get(key, "").strip()
+            if not value:
+                continue
+            where_parts.append(clause)
+            params.append(value if key == "year" else f"%{value}%")
+        if filters.get("min_score_min"):
+            where_parts.append("CAST(REPLACE(min_score, ',', '') AS UNSIGNED) >= %s")
+            params.append(int(filters["min_score_min"]))
+        if filters.get("min_score_max"):
+            where_parts.append("CAST(REPLACE(min_score, ',', '') AS UNSIGNED) <= %s")
+            params.append(int(filters["min_score_max"]))
+        if raw_query.strip():
+            like = f"%{raw_query.strip()}%"
+            where_parts.append(
+                "("
+                "province LIKE %s OR batch LIKE %s OR category LIKE %s OR major_name LIKE %s OR evidence_text LIKE %s"
+                ")"
+            )
+            params.extend([like, like, like, like, like])
+        return where_parts, params
+
+    def _build_policy_where(self, *, raw_query: str, filters: dict[str, str]) -> tuple[list[str], list[Any]]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        mapping = {
+            "table_topic": "table_topic LIKE %s",
+            "keyword": "field_value LIKE %s",
+            "year": "evidence_text LIKE %s",
+            "source_doc": "source_doc LIKE %s",
+        }
+        for key, clause in mapping.items():
+            value = filters.get(key, "").strip()
+            if not value:
+                continue
+            where_parts.append(clause)
+            params.append(f"%{value}%")
+        if raw_query.strip():
+            like = f"%{raw_query.strip()}%"
+            where_parts.append("(table_topic LIKE %s OR field_name LIKE %s OR field_value LIKE %s OR evidence_text LIKE %s)")
+            params.extend([like, like, like, like])
+        return where_parts, params
+
 
 def flatten_policy_table_rows(table_rows: list[dict[str, str]]) -> list[dict[str, str]]:
     flattened: list[dict[str, str]] = []

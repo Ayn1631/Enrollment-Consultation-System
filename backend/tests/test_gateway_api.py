@@ -176,6 +176,41 @@ def test_create_chat_defaults_to_ok_or_degraded():
     assert "trace_id" in data
 
 
+def test_create_chat_prefers_structured_query_when_major_catalog_hits(monkeypatch: pytest.MonkeyPatch):
+    from app import main as main_module
+
+    client = TestClient(app)
+    monkeypatch.setattr(
+        main_module.service_client,
+        "query_admissions_structured",
+        lambda query: RagQueryResponse(
+            trace_id="structured-major",
+            status="ok",
+            context_blocks=["[structured:major_catalog_lookup] 自动化专业学费 5500 元"],
+            sources=[
+                {
+                    "chunk_id": "major:1",
+                    "title": "自动化 - 自动化与电气工程学院",
+                    "url": "2025年招生专业详情.xlsx",
+                    "text": "专业名称：自动化；学费（元）：5500",
+                    "score": 0.9,
+                }
+            ],
+            degrade_reason=None,
+            latency_ms={},
+        ),
+    )
+    payload = _base_payload()
+    payload["messages"] = [{"role": "user", "content": "自动化专业学费是多少？"}]
+    res = client.post("/api/chat", json=payload)
+    assert res.status_code == 200
+    session_id = res.json()["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    parsed = _parse_sse_body(stream_res.text)
+    assert "5500" in parsed["text"]
+    assert parsed["done"]["sources"][0]["title"] == "自动化 - 自动化与电气工程学院"
+
+
 def test_agent_mode_request_should_be_accepted():
     client = TestClient(app)
     payload = _base_payload()

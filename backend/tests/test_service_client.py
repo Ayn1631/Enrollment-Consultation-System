@@ -150,6 +150,35 @@ def test_run_rag_graph_http_mode(monkeypatch, runtime_settings: Settings):
     assert len(response.context_blocks) >= 1
 
 
+def test_query_admissions_structured_returns_major_catalog_result(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
+    client = ServiceClient(settings=settings)
+
+    class _FakeRepository:
+        def search_major_catalog(self, *, raw_query: str, filters: dict[str, str], limit: int = 8):
+            return [
+                {
+                    "source_file": "2025年招生专业详情.xlsx",
+                    "major_name": "自动化",
+                    "college_name": "自动化与电气工程学院",
+                    "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院",
+                }
+            ]
+
+        def search_score_lines(self, *, raw_query: str, filters: dict[str, str], limit: int = 8):
+            return []
+
+        def search_policy_tables(self, *, raw_query: str, filters: dict[str, str], limit: int = 12):
+            return []
+
+    client._admissions_toolset.repository = _FakeRepository()
+    response = client.query_admissions_structured(query="自动化专业学费是多少？")
+
+    assert response is not None
+    assert response.status == "ok"
+    assert response.sources[0].title == "自动化 - 自动化与电气工程学院"
+
+
 def test_plan_features_orders_citation_guard_last(isolated_runtime_settings: Settings):
     settings = _local_settings(isolated_runtime_settings)
     client = ServiceClient(settings=settings)
