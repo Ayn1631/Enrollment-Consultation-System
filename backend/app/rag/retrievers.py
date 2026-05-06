@@ -102,7 +102,12 @@ class HybridRetriever:
         ranked_items: list[RetrievedItem] = []
         for doc in merged:
             chunk_id = str(doc.metadata.get("chunk_id", ""))
-            score = scores.get(chunk_id, 0.0) + self._temporal_bonus(query=query, doc=doc) + self._parent_focus_bonus(doc, focus_parent_ids)
+            score = (
+                scores.get(chunk_id, 0.0)
+                + self._temporal_bonus(query=query, doc=doc)
+                + self._parent_focus_bonus(doc, focus_parent_ids)
+                + self._query_intent_bonus(query=query, doc=doc)
+            )
             ranked_items.append(RetrievedItem(document=doc, score=score))
         return ranked_items
 
@@ -190,7 +195,9 @@ class HybridRetriever:
         ordered_candidates = self._apply_temporal_policy(query=query, docs=ordered_candidates)
         ordered_candidates.sort(
             key=lambda doc: (
-                scores.get(str(doc.metadata.get("chunk_id", "")), 0.0) + self._temporal_bonus(query=query, doc=doc),
+                scores.get(str(doc.metadata.get("chunk_id", "")), 0.0)
+                + self._temporal_bonus(query=query, doc=doc)
+                + self._query_intent_bonus(query=query, doc=doc),
                 str(doc.metadata.get("publish_date", "")),
             ),
             reverse=True,
@@ -223,7 +230,7 @@ class HybridRetriever:
                 continue
             coverage = token_hits / max(len(tokens), 1)
             numeric_hits = sum(1 for token in tokens if token.isdigit() and token in text)
-            score = phrase_hit + coverage + numeric_hits * 0.25
+            score = phrase_hit + coverage + numeric_hits * 0.25 + self._query_intent_bonus(query=query, doc=doc)
             cloned = Document(page_content=doc.page_content, metadata=dict(doc.metadata))
             cloned.metadata["score"] = score
             scored.append((score, cloned))
@@ -303,3 +310,46 @@ class HybridRetriever:
     def _is_expired(self, doc: Document) -> bool:
         expire_date = str(doc.metadata.get("expire_date", "")).strip()
         return bool(expire_date and expire_date < date.today().isoformat())
+
+    def _query_intent_bonus(self, *, query: str, doc: Document) -> float:
+        normalized_query = query.strip()
+        if not normalized_query:
+            return 0.0
+        source_title = str(doc.metadata.get("source_title", ""))
+        source_url = str(doc.metadata.get("source_url", ""))
+        chunk_text = " ".join(
+            [
+                str(doc.metadata.get("chunk_text", "")),
+                str(doc.metadata.get("section_hint", "")),
+                doc.page_content,
+            ]
+        )
+        bonus = 0.0
+        college_name = self._extract_college_name(normalized_query)
+        if college_name and college_name in source_title:
+            bonus += 1.0
+        if college_name and college_name in chunk_text:
+            bonus += 0.6
+        if "招生咨询电话" in normalized_query or "电话" in normalized_query:
+            if any(token in chunk_text for token in ("联系方式：", "招生咨询电话", "咨询电话")):
+                bonus += 1.4
+            if "就业信息网" in source_title or "job.zut.edu.cn" in source_url:
+                bonus -= 1.1
+        if "网址" in normalized_query or "网站" in normalized_query:
+            if any(token in chunk_text for token in ("网址：", "学院网址", "http://", "https://")):
+                bonus += 1.4
+            if "就业信息网" in source_title or "job.zut.edu.cn" in source_url:
+                bonus -= 1.0
+        if "国标代码" in normalized_query and "国标代码" in chunk_text:
+            bonus += 1.2
+        if "河南招生代码" in normalized_query and "河南招生代码" in chunk_text:
+            bonus += 1.2
+        if "调档比例" in normalized_query and "调档比例" in chunk_text:
+            bonus += 1.0
+        if "预留计划" in normalized_query and "预留计划" in chunk_text:
+            bonus += 1.0
+        return bonus
+
+    def _extract_college_name(self, query: str) -> str:
+        matched = re.search(r"([\u4e00-\u9fffA-Za-z（）()]{2,40}学院)", query)
+        return matched.group(1) if matched else ""

@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     generation_main_model: str = Field(default="gpt-4.1", alias="GENERATION_MAIN_MODEL")
     generation_cache_enabled: bool = Field(default=True, alias="GENERATION_CACHE_ENABLED")
     generation_cache_ttl_seconds: int = Field(default=300, alias="GENERATION_CACHE_TTL_SECONDS")
+    eval_judge_model: str = Field(default="gpt-4.1-mini", alias="EVAL_JUDGE_MODEL")
     cors_allow_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
         alias="CORS_ALLOW_ORIGINS",

@@ -74,7 +74,7 @@ def _extract_major_filters(query: str) -> dict[str, str]:
         filters["college_name"] = college_match.group(1)
     major_match = re.search(r"([\u4e00-\u9fffA-Za-z0-9]{2,40}专业)", query)
     if major_match:
-        filters["major_name"] = major_match.group(1).removesuffix("专业")
+        filters["major_name"] = _clean_major_name(major_match.group(1).removesuffix("专业"))
     return filters
 
 
@@ -97,7 +97,7 @@ def _extract_scoreline_filters(query: str) -> dict[str, str]:
             break
     major_match = re.search(r"([\u4e00-\u9fffA-Za-z0-9]{2,40}专业)", query)
     if major_match:
-        filters["major_name"] = major_match.group(1).removesuffix("专业")
+        filters["major_name"] = _clean_major_name(major_match.group(1).removesuffix("专业"))
     score_values = re.findall(r"(\d{3,4})", query)
     if "以上" in query and score_values:
         filters["min_score_min"] = score_values[-1]
@@ -120,3 +120,12 @@ def _extract_policy_filters(query: str) -> dict[str, str]:
 def _extract_year(query: str) -> str:
     matched = re.search(r"(20\d{2})", query)
     return matched.group(1) if matched else ""
+
+
+def _clean_major_name(value: str) -> str:
+    cleaned = value.strip()
+    cleaned = re.sub(r"^20\d{2}年", "", cleaned)
+    cleaned = re.sub(r"^(河南|河北|山东|山西|安徽|江苏|浙江|湖北|湖南|广东|广西|江西|福建|北京|天津|上海|重庆|四川|云南|贵州)", "", cleaned)
+    cleaned = re.sub(r"^(本科批|一本|二本|提前批|艺术批)", "", cleaned)
+    cleaned = re.sub(r"^(理工|文史|物理类|历史类|物理|历史)", "", cleaned)
+    return cleaned.strip()
