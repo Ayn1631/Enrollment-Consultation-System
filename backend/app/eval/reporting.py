@@ -8,13 +8,18 @@ from openai import OpenAI
 from app.config import Settings
 
 
+EVAL_JUDGE_MODEL_NAME = "gpt-5.4-mini"
+
+
 def render_markdown_report(*, settings: Settings, report: dict[str, Any]) -> str:
     client = _build_client(settings)
+    base_markdown = ""
     if client is None:
-        return _fallback_markdown(report)
+        base_markdown = _fallback_markdown(report)
+        return _append_case_details(base_markdown, report)
     try:
         response = client.chat.completions.create(
-            model=settings.eval_judge_model,
+            model=EVAL_JUDGE_MODEL_NAME,
             temperature=0.0,
             messages=[
                 {
@@ -30,9 +35,10 @@ def render_markdown_report(*, settings: Settings, report: dict[str, Any]) -> str
             ],
         )
         content = str(response.choices[0].message.content or "").strip()
-        return content if content else _fallback_markdown(report)
+        base_markdown = content if content else _fallback_markdown(report)
     except Exception:
-        return _fallback_markdown(report)
+        base_markdown = _fallback_markdown(report)
+    return _append_case_details(base_markdown, report)
 
 
 def _build_client(settings: Settings) -> OpenAI | None:
@@ -91,4 +97,68 @@ def _fallback_markdown(report: dict[str, Any]) -> str:
             "- 对低分案例复查题目生成质量，避免无唯一证据的问题进入测试集。",
         ]
     )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _append_case_details(base_markdown: str, report: dict[str, Any]) -> str:
+    rows = report.get("rows", [])
+    if not isinstance(rows, list) or not rows:
+        return base_markdown.strip() + "\n"
+
+    lines = [base_markdown.strip(), "", "## 全量问答与检索明细"]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lines.extend(
+            [
+                "",
+                f"### {row.get('case_id', 'unknown')}",
+                f"- 分类：{row.get('category', '')}",
+                f"- 测试提问：{row.get('question', '')}",
+                f"- 标准答案：{row.get('expected_answer', '')}",
+                f"- 期望检索模式：{row.get('retrieval_mode_expected', '')}",
+                f"- 实际路由：{row.get('route_actual', '')}",
+                f"- 检索LLM评分：{row.get('retrieval_judge_overall_score', '')}",
+                f"- 检索裁判模式：{row.get('retrieval_judge_mode', '')}",
+                f"- 回答LLM评分：{row.get('judge_overall_score', '')}",
+                f"- 是否通过：{row.get('passed', False)}",
+                f"- 检索指标：Recall@5={row.get('recall@5', 0)}，MRR@5={row.get('mrr@5', 0)}，nDCG@5={row.get('ndcg@5', 0)}，evidence_coverage={row.get('evidence_coverage', 0)}",
+                f"- 回答结果：{row.get('answer_text', '')}",
+            ]
+        )
+        retrieval_sources = row.get("retrieval_sources", [])
+        if retrieval_sources:
+            lines.append(f"- 检索来源：{', '.join(str(item) for item in retrieval_sources if str(item).strip())}")
+        cited_titles = row.get("cited_titles", [])
+        if cited_titles:
+            lines.append(f"- 引用来源：{', '.join(str(item) for item in cited_titles if str(item).strip())}")
+        record_rows = row.get("retrieval_records_preview", [])
+        if isinstance(record_rows, list) and record_rows:
+            lines.append("- 结构化检索结果：")
+            for record in record_rows:
+                if not isinstance(record, dict):
+                    continue
+                lines.append(
+                    "  - "
+                    + "；".join(
+                        part
+                        for part in [
+                            f"source={record.get('source_file', '')}#{record.get('source_row_no', '')}" if record.get("source_file") else "",
+                            f"major={record.get('major_name', '')}" if record.get("major_name") else "",
+                            f"college={record.get('college_name', '')}" if record.get("college_name") else "",
+                            f"year={record.get('year', '')}" if record.get("year") else "",
+                            f"province={record.get('province', '')}" if record.get("province") else "",
+                            f"batch={record.get('batch', '')}" if record.get("batch") else "",
+                            f"min_score={record.get('min_score', '')}" if record.get("min_score") else "",
+                            f"min_rank={record.get('min_rank', '')}" if record.get("min_rank") else "",
+                            f"evidence={record.get('evidence_text', '')}" if record.get("evidence_text") else "",
+                        ]
+                        if part
+                    )
+                )
+        context_rows = row.get("retrieval_context_preview", [])
+        if isinstance(context_rows, list) and context_rows:
+            lines.append("- RAG检索结果：")
+            for index, block in enumerate(context_rows, start=1):
+                lines.append(f"  - chunk{index}: {block}")
     return "\n".join(lines).strip() + "\n"

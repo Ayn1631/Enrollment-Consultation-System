@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import scripts.run_rag_eval as rag_eval_script
+
 from app.config import Settings
+from app.eval.judges import RagEvalJudge
 from app.eval.reporting import render_markdown_report
 from scripts.run_rag_eval import (
     build_report,
@@ -68,6 +71,26 @@ def test_render_markdown_report_fallback_contains_required_sections():
         "answer_summary": {"answer_modes": {"gateway": 1, "extractive-fallback": 1}, "answer_failure_count": 1, "answer_failure_rate": 0.5},
         "bucket_summary": {"招生章程": {"total": 1, "pass_rate": 0.0, "avg_overall_score": 0.2}},
         "top_failures": [{"case_id": "c2", "question": "招生预留计划比例是多少？", "failure_reason": "未命中关键证据"}],
+        "rows": [
+            {
+                "case_id": "c1",
+                "category": "招生章程",
+                "question": "招生预留计划比例是多少？",
+                "expected_answer": "1%",
+                "retrieval_mode_expected": "rag-first",
+                "route_actual": "rag",
+                "passed": False,
+                "recall@5": 0.0,
+                "mrr@5": 0.0,
+                "ndcg@5": 0.0,
+                "evidence_coverage": 1.0,
+                "answer_text": "当前回答未命中。",
+                "retrieval_sources": ["中原工学院2025年普通本科招生章程"],
+                "cited_titles": ["中原工学院2025年普通本科招生章程"],
+                "retrieval_context_preview": ["正文：学校将招生计划总数的1%作为预留计划。"],
+                "retrieval_records_preview": [],
+            }
+        ],
     }
     markdown = render_markdown_report(settings=settings, report=report)
 
@@ -77,6 +100,50 @@ def test_render_markdown_report_fallback_contains_required_sections():
     assert "## 回答生成" in markdown
     assert "## 失败案例" in markdown
     assert "## 改进建议" in markdown
+    assert "## 全量问答与检索明细" in markdown
+    assert "测试提问：招生预留计划比例是多少？" in markdown
+    assert "RAG检索结果：" in markdown
+
+
+def test_parse_llm_json_payload_accepts_fenced_json():
+    payload = """```json
+{
+  "dimensions": {
+    "route_correctness": {
+      "score_0_5": 5,
+      "reason": "ok",
+      "evidence_used": [],
+      "failed_constraints": []
+    }
+  },
+  "overall_score": 5.0
+}
+```"""
+
+    parsed = RagEvalJudge._parse_llm_json_payload(payload)
+
+    assert parsed["overall_score"] == 5.0
+    assert parsed["dimensions"]["route_correctness"]["score_0_5"] == 5
+
+
+def test_run_eval_parallel_preserves_case_order(monkeypatch):
+    cases = [
+        {"case_id": "c1"},
+        {"case_id": "c2"},
+        {"case_id": "c3"},
+    ]
+
+    monkeypatch.setattr(rag_eval_script, "_get_thread_eval_worker_context", lambda settings: object())
+    monkeypatch.setattr(
+        rag_eval_script,
+        "_evaluate_case",
+        lambda *, case, context, answer_mode: {"case_id": case["case_id"], "answer_mode_actual": answer_mode},
+    )
+
+    rows = rag_eval_script.run_eval(settings=Settings(), cases=cases, answer_mode="extractive", workers=3)
+
+    assert [row["case_id"] for row in rows] == ["c1", "c2", "c3"]
+    assert all(row["answer_mode_actual"] == "extractive" for row in rows)
 
 
 def test_synthesize_answer_prefers_structured_fields():

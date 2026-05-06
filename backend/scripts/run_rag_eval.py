@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import json
 from math import log2
+import os
 from pathlib import Path
 import re
 import sys
+import threading
 import uuid
 from typing import Any
 
@@ -23,6 +27,17 @@ from app.main import app
 from app.rag.service import RagGraphService
 
 
+@dataclass
+class EvalWorkerContext:
+    client: TestClient
+    toolset: StructuredAdmissionsToolset
+    rag_service: RagGraphService
+    judge: RagEvalJudge
+
+
+_EVAL_THREAD_CONTEXT = threading.local()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="运行招生资料 RAG 自动评测")
     parser.add_argument("--cases", type=Path, default=ROOT / "reports" / "rag_eval_cases.jsonl")
@@ -34,10 +49,16 @@ def main() -> int:
         default="gateway-fallback",
         help="回答阶段执行模式：优先走主链路，失败时可自动降级到本地抽取式回答",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, min(4, os.cpu_count() or 1)),
+        help="评测并发 worker 数。为 1 时串行执行，大于 1 时按 case 并发执行。",
+    )
     args = parser.parse_args()
 
     settings = Settings()
-    rows = run_eval(settings=settings, cases=load_cases(args.cases), answer_mode=args.answer_mode)
+    rows = run_eval(settings=settings, cases=load_cases(args.cases), answer_mode=args.answer_mode, workers=args.workers)
     summary = build_report(rows)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -54,59 +75,122 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def run_eval(*, settings: Settings, cases: list[dict[str, Any]], answer_mode: str = "gateway-fallback") -> list[dict[str, Any]]:
+def run_eval(
+    *,
+    settings: Settings,
+    cases: list[dict[str, Any]],
+    answer_mode: str = "gateway-fallback",
+    workers: int = 1,
+) -> list[dict[str, Any]]:
+    normalized_workers = max(1, int(workers or 1))
+    if normalized_workers == 1:
+        context = _build_eval_worker_context(settings)
+        return [_evaluate_case(case=case, context=context, answer_mode=answer_mode) for case in cases]
+
+    ordered_rows: list[dict[str, Any] | None] = [None] * len(cases)
+    with ThreadPoolExecutor(max_workers=normalized_workers) as executor:
+        futures = [
+            executor.submit(
+                _evaluate_case_indexed,
+                index=index,
+                case=case,
+                settings=settings,
+                answer_mode=answer_mode,
+            )
+            for index, case in enumerate(cases)
+        ]
+        for future in futures:
+            index, row = future.result()
+            ordered_rows[index] = row
+    return [row for row in ordered_rows if isinstance(row, dict)]
+
+
+def _build_eval_worker_context(settings: Settings) -> EvalWorkerContext:
     client = TestClient(app)
     toolset = StructuredAdmissionsToolset(settings)
     rag_service = RagGraphService(settings)
     rag_service.startup()
     judge = RagEvalJudge(settings)
-    rows: list[dict[str, Any]] = []
-    for case in cases:
-        retrieval = run_retrieval(case=case, toolset=toolset, rag_service=rag_service)
-        answer_text, cited_titles, answer_mode_actual, answer_error = run_answer(
-            client=client,
-            case=case,
-            retrieval=retrieval,
-            answer_mode=answer_mode,
-        )
-        judge_result = judge.score(
-            case=case,
-            answer_text=answer_text,
-            evidence_blocks=list(retrieval.get("context_blocks", [])),
-            cited_titles=cited_titles,
-        )
-        overall = round((retrieval["retrieval_score"] * 0.35) + (judge_result.overall_score / 5 * 0.65), 4)
-        failure_reason = "" if overall >= 0.6 else (
-            "路由错误" if not retrieval["route_ok"] else
-            "未命中关键证据" if retrieval["recall@5"] <= 0 else
-            "答案评分偏低"
-        )
-        rows.append(
-            {
-                "case_id": case["case_id"],
-                "category": case["category"],
-                "question": case["question"],
-                "retrieval_mode_expected": case["retrieval_mode_expected"],
-                "route_actual": retrieval["route_actual"],
-                "route_ok": retrieval["route_ok"],
-                "recall@5": retrieval["recall@5"],
-                "mrr@5": retrieval["mrr@5"],
-                "ndcg@5": retrieval["ndcg@5"],
-                "evidence_coverage": retrieval["evidence_coverage"],
-                "answer_text": answer_text[:500],
-                "cited_titles": cited_titles,
-                "answer_mode_actual": answer_mode_actual,
-                "answer_error": answer_error,
-                "judge_mode": judge_result.judge_mode,
-                "judge_dimensions": {name: item.model_dump(mode="json") for name, item in judge_result.dimensions.items()},
-                "judge_overall_score": judge_result.overall_score,
-                "retrieval_score": retrieval["retrieval_score"],
-                "overall_score": overall,
-                "passed": overall >= 0.6,
-                "failure_reason": failure_reason,
-            }
-        )
-    return rows
+    return EvalWorkerContext(client=client, toolset=toolset, rag_service=rag_service, judge=judge)
+
+
+def _get_thread_eval_worker_context(settings: Settings) -> EvalWorkerContext:
+    context = getattr(_EVAL_THREAD_CONTEXT, "context", None)
+    if isinstance(context, EvalWorkerContext):
+        return context
+    context = _build_eval_worker_context(settings)
+    _EVAL_THREAD_CONTEXT.context = context
+    return context
+
+
+def _evaluate_case_indexed(
+    *,
+    index: int,
+    case: dict[str, Any],
+    settings: Settings,
+    answer_mode: str,
+) -> tuple[int, dict[str, Any]]:
+    context = _get_thread_eval_worker_context(settings)
+    return index, _evaluate_case(case=case, context=context, answer_mode=answer_mode)
+
+
+def _evaluate_case(*, case: dict[str, Any], context: EvalWorkerContext, answer_mode: str) -> dict[str, Any]:
+    retrieval = run_retrieval(case=case, toolset=context.toolset, rag_service=context.rag_service)
+    retrieval_judge = context.judge.score_retrieval(case=case, retrieval=retrieval)
+    answer_text, cited_titles, answer_mode_actual, answer_error = run_answer(
+        client=context.client,
+        case=case,
+        retrieval=retrieval,
+        answer_mode=answer_mode,
+    )
+    judge_result = context.judge.score_answer(
+        case=case,
+        answer_text=answer_text,
+        evidence_blocks=list(retrieval.get("context_blocks", [])),
+        cited_titles=cited_titles,
+    )
+    retrieval_score = round(retrieval_judge.overall_score / 5, 4)
+    overall = round((retrieval_score * 0.35) + (judge_result.overall_score / 5 * 0.65), 4)
+    failure_reason = "" if overall >= 0.6 else (
+        "路由错误" if not retrieval["route_ok"] else
+        "未命中关键证据" if retrieval_judge.overall_score < 3.0 else
+        "答案评分偏低"
+    )
+    return {
+        "case_id": case["case_id"],
+        "category": case["category"],
+        "question": case["question"],
+        "expected_answer": case.get("expected_answer", ""),
+        "expected_keywords": list(case.get("expected_keywords", [])),
+        "retrieval_mode_expected": case["retrieval_mode_expected"],
+        "route_actual": retrieval["route_actual"],
+        "route_ok": retrieval["route_ok"],
+        "recall@5": retrieval["recall@5"],
+        "mrr@5": retrieval["mrr@5"],
+        "ndcg@5": retrieval["ndcg@5"],
+        "evidence_coverage": retrieval["evidence_coverage"],
+        "answer_text": answer_text[:500],
+        "cited_titles": cited_titles,
+        "retrieval_sources": list(retrieval.get("source_titles", [])),
+        "retrieval_context_preview": [
+            str(item).replace("\n", " ")[:240]
+            for item in list(retrieval.get("context_blocks", []))[:3]
+        ],
+        "retrieval_records_preview": build_retrieval_records_preview(list(retrieval.get("records", []))[:3]),
+        "retrieval_judge_mode": retrieval_judge.judge_mode,
+        "retrieval_judge_dimensions": {name: item.model_dump(mode="json") for name, item in retrieval_judge.dimensions.items()},
+        "retrieval_judge_overall_score": retrieval_judge.overall_score,
+        "answer_mode_actual": answer_mode_actual,
+        "answer_error": answer_error,
+        "judge_mode": judge_result.judge_mode,
+        "judge_dimensions": {name: item.model_dump(mode="json") for name, item in judge_result.dimensions.items()},
+        "judge_overall_score": judge_result.overall_score,
+        "retrieval_score": retrieval_score,
+        "retrieval_metric_score": retrieval["retrieval_score"],
+        "overall_score": overall,
+        "passed": overall >= 0.6,
+        "failure_reason": failure_reason,
+    }
 
 
 def run_retrieval(*, case: dict[str, Any], toolset: StructuredAdmissionsToolset, rag_service: RagGraphService) -> dict[str, Any]:
@@ -255,6 +339,26 @@ def synthesize_answer(*, case: dict[str, Any], retrieval: dict[str, Any]) -> tup
         snippet = " ".join(block.replace("\n", " ") for block in context_blocks[:2])
         return f"根据检索命中的原文证据：{snippet[:360]}", source_titles[:3]
     return "未检索到可用于生成答案的稳定证据。", source_titles[:3]
+
+
+def build_retrieval_records_preview(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    previews: list[dict[str, Any]] = []
+    for row in records:
+        previews.append(
+            {
+                "source_file": str(row.get("source_file", "")),
+                "source_row_no": str(row.get("source_row_no", "")),
+                "major_name": str(row.get("major_name", "")),
+                "college_name": str(row.get("college_name", "")),
+                "year": str(row.get("year", "")),
+                "province": str(row.get("province", "")),
+                "batch": str(row.get("batch", "")),
+                "min_score": str(row.get("min_score", "")),
+                "min_rank": str(row.get("min_rank", "")),
+                "evidence_text": str(row.get("evidence_text", ""))[:240],
+            }
+        )
+    return previews
 
 
 def extract_rag_answer(*, question: str, context_blocks: list[str]) -> str:
