@@ -190,3 +190,39 @@ def test_extract_rag_answer_returns_phone_and_website():
 
     assert "0371-67698037" in phone_answer
     assert "https://soft.zut.edu.cn/" in website_answer
+
+
+def test_extract_rag_answer_can_fallback_to_local_markdown(tmp_path):
+    target_doc = tmp_path / "学院介绍-智能纺织与织物电子学院.md"
+    target_doc.write_text(
+        "\n".join(
+            [
+                "# 原文",
+                "网页标题：智能纺织与织物电子学院",
+                "联系方式：0371-62506970",
+                "网址：https://textile.zut.edu.cn/",
+                "河南招生代码 6115、6116、6117、6118",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    website_answer = extract_rag_answer(
+        question="智能纺织与织物电子学院的网址是什么？",
+        context_blocks=["# 原文（来源：https://zsc.zut.edu.cn/info/1121/2068.htm）"],
+        docs_dir=tmp_path,
+    )
+    phone_answer = extract_rag_answer(
+        question="智能纺织与织物电子学院的招生咨询电话是什么？",
+        context_blocks=["# 原文（来源：https://zsc.zut.edu.cn/info/1121/2068.htm）"],
+        docs_dir=tmp_path,
+    )
+    code_answer = extract_rag_answer(
+        question="中原工学院河南招生代码有哪些？",
+        context_blocks=["# 原文（来源：https://zsc.zut.edu.cn/xxcx/gklqcx.htm）"],
+        docs_dir=tmp_path,
+    )
+
+    assert website_answer == "https://textile.zut.edu.cn/"
+    assert phone_answer == "0371-62506970"
+    assert code_answer == "6115、6116、6117、6118"

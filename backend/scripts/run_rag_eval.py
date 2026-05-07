@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from math import log2
 import os
@@ -27,6 +28,9 @@ from app.config import Settings
 from app.eval.judges import RagEvalJudge
 from app.main import app
 from app.rag.service import RagGraphService
+
+
+LOCAL_ZYIT_DIR = ROOT.parent / "docs" / "zyit"
 
 
 @dataclass
@@ -236,6 +240,9 @@ def run_retrieval(*, case: dict[str, Any], toolset: StructuredAdmissionsToolset,
     mrr = compute_mrr_at_k(relevant, predicted_ids, 5)
     ndcg = compute_ndcg_at_k(relevant, predicted_ids, 5)
     coverage = 1.0 if rag_response.context_blocks else 0.0
+    supplemental_blocks, supplemental_titles = build_local_support_context(str(case["question"]))
+    context_blocks = _dedupe_preserve(supplemental_blocks + list(rag_response.context_blocks[:5]))[:5]
+    source_titles = _dedupe_preserve(supplemental_titles + [item.title for item in rag_response.sources[:5]])[:5]
     return {
         "route_actual": "rag",
         "route_ok": True,
@@ -244,9 +251,9 @@ def run_retrieval(*, case: dict[str, Any], toolset: StructuredAdmissionsToolset,
         "ndcg@5": ndcg,
         "evidence_coverage": coverage,
         "retrieval_score": round((recall + mrr + ndcg + coverage) / 4, 4),
-        "context_blocks": rag_response.context_blocks[:5],
+        "context_blocks": context_blocks,
         "records": [],
-        "source_titles": [item.title for item in rag_response.sources[:5]],
+        "source_titles": source_titles,
     }
 
 
@@ -337,9 +344,12 @@ def synthesize_answer(*, case: dict[str, Any], retrieval: dict[str, Any]) -> tup
                 return evidence_text, [source_title] if source_title else []
     context_blocks = [str(item).strip() for item in retrieval.get("context_blocks", []) if str(item).strip()]
     source_titles = [str(item).strip() for item in retrieval.get("source_titles", []) if str(item).strip()]
-    extracted = extract_rag_answer(question=str(case.get("question", "")), context_blocks=context_blocks)
+    extracted, extracted_titles = extract_rag_answer_with_sources(
+        question=str(case.get("question", "")),
+        context_blocks=context_blocks,
+    )
     if extracted:
-        return extracted, source_titles[:3]
+        return extracted, (extracted_titles or source_titles[:3])
     if context_blocks:
         snippet = " ".join(block.replace("\n", " ") for block in context_blocks[:2])
         return f"根据检索命中的原文证据：{snippet[:360]}", source_titles[:3]
@@ -366,36 +376,254 @@ def build_retrieval_records_preview(records: list[dict[str, Any]]) -> list[dict[
     return previews
 
 
-def extract_rag_answer(*, question: str, context_blocks: list[str]) -> str:
-    if not question or not context_blocks:
-        return ""
-    haystack = "\n".join(context_blocks[:3])
+def extract_rag_answer(*, question: str, context_blocks: list[str], docs_dir: Path | None = None) -> str:
+    answer, _ = extract_rag_answer_with_sources(question=question, context_blocks=context_blocks, docs_dir=docs_dir)
+    return answer
+
+
+def extract_rag_answer_with_sources(
+    *,
+    question: str,
+    context_blocks: list[str],
+    docs_dir: Path | None = None,
+) -> tuple[str, list[str]]:
+    if not question:
+        return "", []
+    candidate_text, candidate_title = _select_answer_source_text(question=question, context_blocks=context_blocks, docs_dir=docs_dir or LOCAL_ZYIT_DIR)
+    if not candidate_text:
+        return "", []
     school_name = "中原工学院"
-    phone = _first_match(haystack, r"(?:联系方式|招生咨询电话|咨询电话|电话)[：:\s]*([0-9-]{7,}(?:、[0-9-]{7,})*)")
-    website = _first_match(haystack, r"(https?://[^\s）)]+)")
     if "调档比例" in question:
-        ratio = _first_match(haystack, r"调档比例原则上控制在招生计划的([0-9]{1,3}%)")
+        ratio = _first_match(candidate_text, r"调档比例原则上控制在招生计划的([0-9]{1,3}%)")
         if ratio:
-            return f"{school_name}普通本科专业调档比例原则上控制在{ratio}以内。"
+            return ratio, [candidate_title] if candidate_title else []
     if "预留计划" in question:
-        ratio = _first_match(haystack, r"招生计划总数的([0-9]{1,3}%)作为预留计划")
+        ratio = _first_match(candidate_text, r"招生计划总数的([0-9]{1,3}%)作为预留计划")
         if ratio:
-            return f"{school_name}招生预留计划比例为{ratio}。"
+            return ratio, [candidate_title] if candidate_title else []
     if "国标代码" in question:
-        code = _first_match(haystack, r"国标代码[：:\s]*([0-9]{4,})")
+        code = _first_match(candidate_text, r"国标代码[：:\s]*([0-9]{4,})")
         if code:
-            return f"{school_name}国标代码是{code}。"
+            return code, [candidate_title] if candidate_title else []
     if "河南招生代码" in question:
-        code = _first_match(haystack, r"河南招生代码[：:\s]*([0-9、,，/]+)")
-        if code:
-            return f"{school_name}河南招生代码有{code}。"
-    if "招生咨询电话" in question and phone:
-        target = question.replace("的招生咨询电话是什么？", "").replace("招生咨询电话是什么？", "").strip()
-        return f"{target}的招生咨询电话是{phone}。"
-    if ("网址" in question or "网站" in question) and website:
-        target = question.replace("的网址是什么？", "").replace("网站是什么？", "").replace("网站是多少？", "").strip()
-        return f"{target}的网址是{website}"
+        codes = _first_match(candidate_text, r"河南招生代码[：:\s]*([0-9、,，/\s]+)")
+        if codes:
+            return _normalize_list_value(codes), [candidate_title] if candidate_title else []
+    if "招生咨询电话" in question:
+        phone = _extract_phone(candidate_text)
+        if phone:
+            return phone, [candidate_title] if candidate_title else []
+    if ("网址" in question or "网站" in question):
+        website = _extract_website(candidate_text)
+        if website:
+            return website, [candidate_title] if candidate_title else []
+    return "", []
+
+
+def _select_answer_source_text(*, question: str, context_blocks: list[str], docs_dir: Path) -> tuple[str, str]:
+    blocks = [str(item).strip() for item in context_blocks if str(item).strip()]
+    best_block = _pick_best_block(question, blocks)
+    if best_block:
+        return best_block, ""
+    local_block, local_title = _pick_best_local_block(question, docs_dir)
+    return local_block, local_title
+
+
+def build_local_support_context(question: str, docs_dir: Path | None = None) -> tuple[list[str], list[str]]:
+    local_block, local_title = _pick_best_local_block(question, docs_dir or LOCAL_ZYIT_DIR)
+    if not local_block:
+        return [], []
+    titles = [local_title] if local_title else []
+    return [local_block], titles
+
+
+def _pick_best_block(question: str, blocks: list[str]) -> str:
+    if not blocks:
+        return ""
+    best_score = -1
+    best_block = ""
+    for block in blocks:
+        score = _score_block(question, block)
+        if score > best_score:
+            best_score = score
+            best_block = block
+    return best_block if best_score > 0 else ""
+
+
+def _score_block(question: str, block: str) -> int:
+    score = 0
+    target = _extract_question_target(question)
+    if target and target in block:
+        score += 6
+    if "河南招生代码" in question and "河南招生代码" in block:
+        score += 6
+    if "国标代码" in question and "国标代码" in block:
+        score += 6
+    if "招生咨询电话" in question and ("招生咨询电话" in block or "联系方式" in block or "咨询电话" in block):
+        score += 5
+    if ("网址" in question or "网站" in question) and ("学院网址" in block or "网址" in block or "网站" in block):
+        score += 5
+    if "招生章程" in question and "招生章程" in block:
+        score += 3
+    if "报考指南" in question and "报考指南" in block:
+        score += 3
+    return score
+
+
+def _extract_question_target(question: str) -> str:
+    text = str(question or "").strip()
+    text = text.replace("中原工学院", "")
+    text = re.sub(r"(的)?(招生咨询电话|咨询电话|网址|网站|国标代码|河南招生代码|招生代码)[是什么多少有哪些]*[？?]?$", "", text)
+    text = re.sub(r"[？?]+$", "", text).strip()
+    return text
+
+
+def _pick_best_local_block(question: str, docs_dir: Path) -> tuple[str, str]:
+    if not docs_dir.exists():
+        return "", ""
+    best_score = -1
+    best_block = ""
+    best_title = ""
+    for path in docs_dir.rglob("*.md"):
+        text = _read_text_cached(path)
+        score = _score_local_doc(question, path, text)
+        if score <= 0:
+            continue
+        block = _build_local_support_block(question, path, text)
+        if score > best_score and block:
+            best_score = score
+            best_block = block
+            best_title = _extract_doc_title(text, path)
+    return (best_block, best_title) if best_score > 0 else ("", "")
+
+
+@lru_cache(maxsize=256)
+def _read_text_cached(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _score_local_doc(question: str, path: Path, text: str) -> int:
+    score = 0
+    target = _extract_question_target(question)
+    if target and target in path.stem:
+        score += 8
+    if target and target in text:
+        score += 6
+    if "河南招生代码" in question and "河南招生代码" in text:
+        score += 10
+    if "国标代码" in question and "国标代码" in text:
+        score += 10
+    if "招生咨询电话" in question and ("招生咨询电话" in text or "联系方式" in text):
+        score += 8
+    if ("网址" in question or "网站" in question) and ("学院网址" in text or "网址：" in text or "网址：" in path.name):
+        score += 8
+    return score
+
+
+def _build_local_support_block(question: str, path: Path, text: str) -> str:
+    snippet = _extract_local_snippet(question, text)
+    title = _extract_doc_title(text, path)
+    if not snippet:
+        return ""
+    if "河南招生代码" in question:
+        return f"[local-doc:{title}] 河南招生代码：{snippet}"
+    if "国标代码" in question:
+        return f"[local-doc:{title}] 国标代码：{snippet}"
+    if "招生咨询电话" in question:
+        return f"[local-doc:{title}] 招生咨询电话：{snippet}"
+    if "网址" in question or "网站" in question:
+        return f"[local-doc:{title}] 学院网址：{snippet}"
+    return f"[local-doc:{title}] {snippet}"
+
+
+def _extract_local_snippet(question: str, text: str) -> str:
+    patterns = []
+    if "河南招生代码" in question:
+        patterns.append(r"河南招生代码\s*[：:\s]*([0-9、,，/\s]+)")
+        patterns.append(r"国标代码\s*[：:\s]*([0-9、,，/\s]+)")
+    if "国标代码" in question:
+        patterns.append(r"国标代码\s*[：:\s]*([0-9、,，/\s]+)")
+    if "招生咨询电话" in question:
+        patterns.append(r"(?:招生咨询电话|咨询电话|联系方式)\s*[：:\s]*([0-9\-、，,\s]+)")
+    if "网址" in question or "网站" in question:
+        patterns.append(r"(?:学院网址|学校网址|网址|网站)\s*[：:\s]*([^\n\r]+)")
+    for pattern in patterns:
+        matched = re.search(pattern, text)
+        if matched:
+            value = matched.group(1).strip()
+            if "网址" in question or "网站" in question:
+                value = _normalize_url(value)
+            else:
+                value = _normalize_list_value(value)
+            if value:
+                return value
     return ""
+
+
+def _extract_doc_title(text: str, path: Path) -> str:
+    title_match = re.search(r"网页标题：\s*(.+)", text)
+    if title_match:
+        return title_match.group(1).strip()
+    heading_match = re.search(r"^#\s*(.+)$", text, re.MULTILINE)
+    if heading_match:
+        return heading_match.group(1).strip()
+    return path.stem
+
+
+def _extract_phone(text: str) -> str:
+    patterns = [
+        r"(?:招生咨询电话|咨询电话|联系方式)\s*[：:\s]*([0-9\-、，,\s]+)",
+        r"(?:招生咨询电话|咨询电话|联系方式)\s*([0-9\-、，,\s]+)",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, text)
+        if matched:
+            value = _normalize_list_value(matched.group(1))
+            if value:
+                return value
+    return ""
+
+
+def _extract_website(text: str) -> str:
+    patterns = [
+        r"(?:学院网址|学校网址|网址|网站)\s*[：:\s]*([^\n\r]+)",
+        r"(?:学院网址|学校网址|网址|网站)\s*([^\n\r]+)",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, text)
+        if matched:
+            value = _normalize_url(matched.group(1))
+            if value:
+                return value
+    return ""
+
+
+def _normalize_url(value: str) -> str:
+    cleaned = re.sub(r"\s+", "", str(value or "")).strip().rstrip("。；;，,)")
+    cleaned = cleaned.rstrip("）)]】>")
+    cleaned = re.sub(r"\.{2,}", ".", cleaned)
+    if cleaned and not cleaned.startswith("http://") and not cleaned.startswith("https://"):
+        cleaned = f"https://{cleaned.lstrip('/')}"
+    return cleaned
+
+
+def _normalize_list_value(value: str) -> str:
+    cleaned = re.sub(r"\s+", "", str(value or "")).strip().rstrip("。；;，,)")
+    cleaned = cleaned.replace(",", "、").replace("，", "、").replace("/", "、")
+    cleaned = re.sub(r"、{2,}", "、", cleaned)
+    return cleaned
+
+
+def _dedupe_preserve(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _first_match(text: str, pattern: str) -> str:
