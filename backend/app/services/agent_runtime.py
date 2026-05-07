@@ -41,6 +41,7 @@ class AgentRuntime:
         self._mcp_runtime_locks: dict[str, threading.RLock] = {}
         self._mcp_runtime_guard = threading.RLock()
         self._rag_document_catalog_text: str | None = None
+        self._tool_trace_log_lock = threading.RLock()
 
     @property
     def deps(self):
@@ -83,6 +84,128 @@ class AgentRuntime:
         if sink is not None:
             sink(event)
         return event
+
+    def _serialize_tool_payload(self, payload: Any) -> str:
+        if payload is None:
+            return "无"
+        if isinstance(payload, str):
+            return payload.strip() or "无"
+        try:
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        except Exception:
+            return str(payload).strip() or "无"
+
+    def _truncate_tool_trace_text(self, text: str, *, max_chars: int) -> str:
+        normalized = (text or "").strip()
+        if len(normalized) <= max_chars:
+            return normalized or "无"
+        return normalized[: max_chars - 16].rstrip() + "\n...（已截断）"
+
+    def _extract_message_tool_calls(self, message: Any) -> list[dict[str, Any]]:
+        raw_tool_calls = getattr(message, "tool_calls", None)
+        if not raw_tool_calls:
+            additional_kwargs = getattr(message, "additional_kwargs", None)
+            if isinstance(additional_kwargs, dict):
+                raw_tool_calls = additional_kwargs.get("tool_calls")
+        normalized_calls: list[dict[str, Any]] = []
+        for item in raw_tool_calls or []:
+            if not isinstance(item, dict):
+                continue
+            function_block = item.get("function") if isinstance(item.get("function"), dict) else {}
+            args = item.get("args")
+            if args is None:
+                args = item.get("arguments")
+            if args is None:
+                args = function_block.get("arguments")
+            if isinstance(args, str):
+                stripped = args.strip()
+                if stripped.startswith("{") or stripped.startswith("["):
+                    try:
+                        args = json.loads(stripped)
+                    except Exception:
+                        args = stripped
+            normalized_calls.append(
+                {
+                    "id": str(item.get("id") or item.get("tool_call_id") or ""),
+                    "name": str(item.get("name") or function_block.get("name") or ""),
+                    "args": args,
+                }
+            )
+        return normalized_calls
+
+    def _pop_matching_tool_call(
+        self,
+        pending_tool_calls: list[dict[str, Any]],
+        *,
+        tool_name: str,
+        tool_call_id: str,
+    ) -> dict[str, Any] | None:
+        if tool_call_id:
+            for index, item in enumerate(pending_tool_calls):
+                if str(item.get("id") or "") == tool_call_id:
+                    return pending_tool_calls.pop(index)
+        if tool_name:
+            for index, item in enumerate(pending_tool_calls):
+                if str(item.get("name") or "") == tool_name:
+                    return pending_tool_calls.pop(index)
+        return None
+
+    def _build_tool_trace_message(self, *, tool_name: str, tool_args: Any, tool_output: str) -> str:
+        serialized_args = self._truncate_tool_trace_text(
+            self._serialize_tool_payload(tool_args),
+            max_chars=800,
+        )
+        serialized_output = self._truncate_tool_trace_text(
+            self._serialize_tool_payload(tool_output),
+            max_chars=1500,
+        )
+        return (
+            f"工具：{tool_name or 'unknown_tool'}\n"
+            f"传入：\n{serialized_args}\n\n"
+            f"传出：\n{serialized_output}"
+        ).strip()
+
+    def _get_tool_trace_log_path(self) -> Path:
+        reports_dir = Path(__file__).resolve().parents[2] / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        return reports_dir / "agent_tool_traces.jsonl"
+
+    def _append_tool_trace_record(
+        self,
+        *,
+        trace_id: str,
+        session_id: str,
+        tool_name: str,
+        tool_args: Any,
+        tool_output: str,
+        subproblem_id: str | None,
+        plan_step_index: int | None,
+        attempt: int | None,
+    ) -> None:
+        payload = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "tool_name": tool_name or "unknown_tool",
+            "tool_args": tool_args,
+            "tool_output": tool_output,
+            "subproblem_id": subproblem_id,
+            "plan_step_index": plan_step_index,
+            "attempt": attempt,
+        }
+        path = self._get_tool_trace_log_path()
+        with self._tool_trace_log_lock:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.logger.info(
+            "[agent.tool_trace] trace_id=%s session_id=%s tool=%s step=%s attempt=%s output_chars=%s",
+            trace_id,
+            session_id,
+            tool_name or "unknown_tool",
+            plan_step_index,
+            attempt,
+            len(tool_output or ""),
+        )
 
     def audit_user_input(self, query: str) -> tuple[bool, str, str]:
         return self.gateway._audit_user_input(query)
@@ -777,11 +900,47 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 }
             )
         )
+        pending_tool_calls: list[dict[str, Any]] = []
         for message in list(result.get("messages") or []):
+            if getattr(message, "type", "") == "ai":
+                pending_tool_calls.extend(self._extract_message_tool_calls(message))
+                continue
             if getattr(message, "type", "") != "tool":
                 continue
             tool_name = str(getattr(message, "name", "") or "")
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "")
             content = normalize_content(getattr(message, "content", ""))
+            matched_call = self._pop_matching_tool_call(
+                pending_tool_calls,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            )
+            self._append_tool_trace_record(
+                trace_id=trace_id,
+                session_id=request.session_id,
+                tool_name=tool_name,
+                tool_args=(matched_call or {}).get("args"),
+                tool_output=content or "无返回内容",
+                subproblem_id=subproblem.subproblem_id,
+                plan_step_index=plan_step_index,
+                attempt=attempt,
+            )
+            self.emit_step(
+                events=step_events,
+                sink=sink,
+                strategy=request.agent_strategy,
+                node=f"tool_call_{tool_name or 'unknown_tool'}",
+                title=f"工具调用：{tool_name or 'unknown_tool'}",
+                status="completed",
+                message=self._build_tool_trace_message(
+                    tool_name=tool_name,
+                    tool_args=(matched_call or {}).get("args"),
+                    tool_output=content or "无返回内容",
+                ),
+                subproblem_id=subproblem.subproblem_id,
+                plan_step_index=plan_step_index,
+                attempt=attempt,
+            )
             if not content:
                 continue
             if tool_name in {"local_rag_search", "major_catalog_lookup", "scoreline_lookup", "policy_table_lookup"}:

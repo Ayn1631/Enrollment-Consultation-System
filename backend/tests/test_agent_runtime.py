@@ -428,6 +428,91 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
     assert "agent_tool:major_catalog_lookup" in collector_tool_audit
 
 
+def test_run_subproblem_agent_should_emit_tool_input_and_output_trace(monkeypatch, tmp_path: Path):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s-tool-trace",
+        messages=[{"role": "user", "content": "自动化专业学费多少"}],
+        mode="agent",
+        features=["rag"],
+    )
+    step_events = []
+    trace_log_path = tmp_path / "agent_tool_traces.jsonl"
+
+    class _FakePlanningAiMessage:
+        type = "ai"
+        content = ""
+        tool_calls = [
+            {
+                "id": "call-1",
+                "name": "major_catalog_lookup",
+                "args": {"tool_query": "自动化专业学费多少"},
+            }
+        ]
+
+    class _FakeToolMessage:
+        type = "tool"
+        name = "major_catalog_lookup"
+        tool_call_id = "call-1"
+        content = "结构化工具：major_catalog_lookup\n命中记录数：1"
+
+    class _FakeFinalAiMessage:
+        type = "ai"
+        content = "自动化专业学费为 5500 元。"
+
+    class _FakeLlm:
+        pass
+
+    class _FakeAgent:
+        async def ainvoke(self, payload):
+            return {"messages": [_FakePlanningAiMessage(), _FakeToolMessage(), _FakeFinalAiMessage()]}
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+    monkeypatch.setattr(runtime, "get_mcp_runtime", lambda _trace_id: McpToolRuntime(client=None, tools=[], servers=[], notes=[]))
+    monkeypatch.setattr(runtime, "_get_tool_trace_log_path", lambda: trace_log_path)
+    monkeypatch.setattr("langgraph.prebuilt.create_react_agent", lambda *_args, **_kwargs: _FakeAgent())
+
+    result = runtime.run_subproblem_agent(
+        step=PlanStep("先补齐回答当前问题所需的证据。"),
+        plan_step_index=1,
+        total_plan_steps=1,
+        subproblem=SimpleNamespace(
+            subproblem_id="sp-1",
+            query="自动化专业学费多少",
+            context_blocks=[],
+            sources=[],
+            notes=[],
+            tool_audit=[],
+        ),
+        request=request,
+        fail_features=set(),
+        effective_features=["rag"],
+        memory_context_blocks=[],
+        memory_text="当前没有可用记忆。",
+        trace_id="trace-tool-1",
+        route_label="policy",
+        step_events=step_events,
+        sink=None,
+        attempt=1,
+    )
+
+    assert result.ok is True
+    tool_event = next(item for item in step_events if item.title == "工具调用：major_catalog_lookup")
+    assert "传入：" in tool_event.message
+    assert "自动化专业学费多少" in tool_event.message
+    assert "传出：" in tool_event.message
+    assert "命中记录数：1" in tool_event.message
+    lines = trace_log_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["trace_id"] == "trace-tool-1"
+    assert payload["session_id"] == "s-tool-trace"
+    assert payload["tool_name"] == "major_catalog_lookup"
+    assert payload["tool_args"]["tool_query"] == "自动化专业学费多少"
+    assert "命中记录数：1" in payload["tool_output"]
+
+
 def test_normalize_agent_tool_should_unwrap_bound_tool_name_and_description():
     runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
     wrapped = _WrappedFakeTool("bing_search", "search official pages")
