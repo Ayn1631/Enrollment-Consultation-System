@@ -11,8 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Callable
 
-from app.admissions_kb.router import route_structured_query
-from app.admissions_kb.tools import StructuredAdmissionsToolset, StructuredToolPayload
+from app.admissions_kb.tools import StructuredAdmissionsToolset
 from app.models import AgentStepEvent, AgentStrategy, ChatRequest, ChatSource, FeatureFlag, SessionResult
 from app.services.ai_stack import (
     McpToolRuntime,
@@ -867,15 +866,11 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
 
         def run_structured_lookup(tool_name: str, tool_query: str, *, limit: int) -> str:
             collector_tool_audit.append(f"agent_tool:{tool_name}")
-            route = route_structured_query(tool_query)
-            if route.tool_name and route.tool_name != tool_name:
-                return f"该问题更适合使用 {route.tool_name}，路由原因：{route.reason}"
-            filters = route.filters if route.tool_name == tool_name else {}
             lookup = getattr(structured_toolset, tool_name, None)
             if lookup is None:
                 return f"结构化工具不存在：{tool_name}"
             try:
-                payload = lookup(raw_query=tool_query, filters=filters, limit=limit)
+                payload = lookup(raw_query=tool_query, filters={}, limit=limit)
             except Exception as exc:
                 return f"结构化检索失败：{exc}"
             if not payload.records:
@@ -889,7 +884,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                     [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in structured_response.sources]],
                     limit=5,
                 )
-            return self._render_structured_payload_text(payload, limit=min(limit, 3))
+            return structured_toolset.render_payload_text(payload, max_records=limit)
 
         @tool_factory("major_catalog_lookup")
         def major_catalog_lookup(tool_query: str) -> str:
@@ -1387,33 +1382,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         if isinstance(result, dict):
             return json.dumps(result, ensure_ascii=False)
         return str(result or "").strip()
-
-    def _render_structured_payload_text(self, payload: StructuredToolPayload, *, limit: int = 3) -> str:
-        rows = [
-            f"结构化工具：{payload.tool_name}",
-            f"命中字段：{','.join(payload.matched_fields) or 'raw_query'}",
-            f"命中记录数：{len(payload.records)}",
-        ]
-        for index, record in enumerate(payload.records[:limit], start=1):
-            title = self._resolve_structured_record_title(payload.tool_name, record)
-            evidence = self._compact_text_block(str(record.get('evidence_text', '')).strip(), limit_chars=180)
-            source_file = str(record.get("source_file", "")).strip() or "unknown_source"
-            rows.append(f"{index}. {title} | 来源：{source_file} | 证据：{evidence or '无'}")
-        return "\n".join(rows).strip()
-
-    def _resolve_structured_record_title(self, tool_name: str, record: dict[str, Any]) -> str:
-        if tool_name == "major_catalog_lookup":
-            major_name = str(record.get("major_name", "")).strip()
-            college_name = str(record.get("college_name", "")).strip()
-            return " - ".join(item for item in (major_name, college_name) if item) or "专业目录记录"
-        if tool_name == "scoreline_lookup":
-            year = str(record.get("year", "")).strip()
-            province = str(record.get("province", "")).strip()
-            major_name = str(record.get("major_name", "")).strip()
-            return " ".join(item for item in (year, province, major_name) if item) or "分数线记录"
-        table_topic = str(record.get("table_topic", "")).strip()
-        source_doc = str(record.get("source_doc", "")).strip()
-        return table_topic or source_doc or "政策附表记录"
 
     def _extract_json_payloads_from_tool_result(self, result: Any) -> list[Any]:
         payloads: list[Any] = []

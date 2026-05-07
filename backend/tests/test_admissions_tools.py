@@ -57,6 +57,29 @@ def test_toolset_to_rag_response_formats_records():
     assert "structured:major_catalog_lookup" in response.context_blocks[0]
 
 
+def test_render_payload_text_returns_full_record_text():
+    toolset = StructuredAdmissionsToolset(Settings())
+    payload = StructuredToolPayload(
+        tool_name="major_catalog_lookup",
+        matched_fields=[],
+        route_reason="专业目录类结构化查询",
+        records=[
+            {
+                "source_file": "2025年招生专业详情.xlsx",
+                "source_doc": "2025年招生专业详情.xlsx",
+                "major_name": "自动化",
+                "college_name": "自动化与电气工程学院",
+                "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院；选考科目：物理+化学",
+            }
+        ],
+    )
+
+    rendered = toolset.render_payload_text(payload, max_chars=500, max_records=1)
+
+    assert "以下为渐进式载入的结构化全文内容" in rendered
+    assert "证据全文：专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院；选考科目：物理+化学" in rendered
+
+
 def test_filter_rows_prefers_exact_major_match():
     toolset = StructuredAdmissionsToolset(Settings())
     rows = [
@@ -103,3 +126,39 @@ def test_major_catalog_lookup_fallbacks_when_repository_returns_empty(monkeypatc
     )
 
     assert payload.records[0]["major_name"] == "软件工程"
+
+
+def test_choose_best_payload_prefers_more_relevant_result():
+    toolset = StructuredAdmissionsToolset(Settings())
+    major_payload = StructuredToolPayload(
+        tool_name="major_catalog_lookup",
+        matched_fields=[],
+        route_reason="专业目录类结构化查询",
+        records=[
+            {
+                "major_name": "自动化",
+                "college_name": "自动化与电气工程学院",
+                "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院",
+                "_retrieval_score": 92.0,
+            }
+        ],
+    )
+    scoreline_payload = StructuredToolPayload(
+        tool_name="scoreline_lookup",
+        matched_fields=[],
+        route_reason="录取分数/位次类结构化查询",
+        records=[
+            {
+                "major_name": "自动化",
+                "province": "河南",
+                "year": "2025",
+                "evidence_text": "2025年河南本科批自动化最低分 531",
+                "_retrieval_score": 48.0,
+            }
+        ],
+    )
+
+    best = toolset.choose_best_payload([scoreline_payload, major_payload], raw_query="自动化专业学费是多少")
+
+    assert best is not None
+    assert best.tool_name == "major_catalog_lookup"

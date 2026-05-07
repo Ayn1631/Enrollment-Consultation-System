@@ -28,7 +28,6 @@ from app.contracts import (
     SkillSaveRequest,
 )
 from app.models import ChatSource, FeatureFlag
-from app.admissions_kb.router import route_structured_query
 from app.admissions_kb.tools import StructuredAdmissionsToolset
 from app.rag.service import RagGraphService
 from app.services.ai_stack import LangChain4jSkillBridge, LangGraphFeaturePlanner
@@ -156,17 +155,16 @@ class ServiceClient:
         return result
 
     def query_admissions_structured(self, *, query: str) -> RagQueryResponse | None:
-        decision = route_structured_query(query)
-        if decision.tool_name is None:
+        payloads = [
+            self._admissions_toolset.major_catalog_lookup(raw_query=query, filters={}, limit=8),
+            self._admissions_toolset.scoreline_lookup(raw_query=query, filters={}, limit=8),
+            self._admissions_toolset.policy_table_lookup(raw_query=query, filters={}, limit=12),
+        ]
+        best_payload = self._admissions_toolset.choose_best_payload(payloads, raw_query=query)
+        if best_payload is None:
             return None
-        trace_id = f"structured-{decision.tool_name}"
-        if decision.tool_name == "major_catalog_lookup":
-            payload = self._admissions_toolset.major_catalog_lookup(raw_query=query, filters=decision.filters)
-        elif decision.tool_name == "scoreline_lookup":
-            payload = self._admissions_toolset.scoreline_lookup(raw_query=query, filters=decision.filters)
-        else:
-            payload = self._admissions_toolset.policy_table_lookup(raw_query=query, filters=decision.filters)
-        return self._admissions_toolset.to_rag_response(payload=payload, trace_id=trace_id)
+        trace_id = f"structured-{best_payload.tool_name}"
+        return self._admissions_toolset.to_rag_response(payload=best_payload, trace_id=trace_id)
 
     def write_short_memory(self, session_id: str, key: str, value: str) -> None:
         self.write_memory(session_id=session_id, entry=MemoryEntry(key=key, value=value, kind="short"))
