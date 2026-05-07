@@ -199,7 +199,7 @@ def test_build_plan_should_prefer_llm_result(monkeypatch):
     assert "长期记忆：用户明确想报本科理工类专业。" in str(captured_messages["messages"][1].content)
 
 
-def test_rewrite_query_should_include_recent_user_context_and_restore_missing_constraints(monkeypatch):
+def test_rewrite_query_should_include_recent_user_context_and_prompt_constraints(monkeypatch):
     settings = Settings(MCP_ENABLED=False)
     runtime = AgentRuntime(_GatewayStub(settings))
     request = ChatRequest(
@@ -231,12 +231,11 @@ def test_rewrite_query_should_include_recent_user_context_and_restore_missing_co
         strategy="quality",
     )
 
-    assert "我河南高考500分, 可以上什么专业???" in str(captured_messages["messages"][1].content)
-    assert "500分" in rewritten
-    assert "河南" in rewritten
-    assert "物理类" in rewritten
-    assert "2025年" in rewritten or "25" in rewritten
-    assert "2026" in rewritten
+    prompt_text = str(captured_messages["messages"][0].content) + "\n" + str(captured_messages["messages"][1].content)
+    assert "我河南高考500分, 可以上什么专业???" in prompt_text
+    assert "必须完整保留最近多轮用户上下文中已经明确给出的条件" in prompt_text
+    assert "参考往年情况给推荐" in prompt_text
+    assert rewritten == "如果参考2025年的录取情况，河南物理类考生2026年高考多少分可以推荐报考中原工学院的哪些专业？"
 
 
 def test_build_plan_should_append_synthesis_goal_when_missing(monkeypatch):
