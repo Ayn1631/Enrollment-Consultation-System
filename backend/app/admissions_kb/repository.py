@@ -339,7 +339,7 @@ class AdmissionsRepository:
         where_parts, params = self._build_policy_where(raw_query=raw_query, filters=filters)
         if where_parts:
             sql += " WHERE " + " AND ".join(where_parts)
-        sql += " ORDER BY table_topic ASC, source_row_no ASC"
+        sql += " ORDER BY table_topic ASC, CAST(source_row_no AS UNSIGNED) ASC, field_name ASC"
         if limit is not None:
             sql += " LIMIT %s"
             params.append(limit)
@@ -440,6 +440,7 @@ class AdmissionsRepository:
 
 def flatten_policy_table_rows(table_rows: list[dict[str, str]]) -> list[dict[str, str]]:
     flattened: list[dict[str, str]] = []
+    excluded_fields = {"academic_year", "evidence_text", "extract_time", "序号"}
     for row in table_rows:
         evidence_text = "；".join(
             f"{label}：{row.get(label, '')}"
@@ -447,7 +448,7 @@ def flatten_policy_table_rows(table_rows: list[dict[str, str]]) -> list[dict[str
             if row.get(label)
         )
         for field_name, field_value in row.items():
-            if field_name.startswith("source_") or field_name == "extract_time" or field_name == "序号":
+            if field_name.startswith("source_") or field_name in excluded_fields:
                 continue
             flattened.append(
                 {

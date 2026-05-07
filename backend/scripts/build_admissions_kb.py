@@ -63,7 +63,11 @@ def main() -> int:
 def _collect_document_rows(source_root: Path) -> tuple[list[dict[str, str]], list[ParseRunRecord]]:
     documents: list[dict[str, str]] = []
     parse_runs: list[ParseRunRecord] = []
-    sources = list(sorted(source_root.rglob("*.docx"))) + list(sorted(source_root.rglob("*.pdf")))
+    sources = [
+        path
+        for path in (list(sorted(source_root.rglob("*.docx"))) + list(sorted(source_root.rglob("*.pdf"))))
+        if not _should_skip_source_file(path)
+    ]
     for path in sources:
         parsed: ParsedAdmissionDocument
         if path.suffix.lower() == ".docx":
@@ -112,6 +116,10 @@ def _collect_document_rows(source_root: Path) -> tuple[list[dict[str, str]], lis
         )
     )
     return documents, parse_runs
+
+
+def _should_skip_source_file(path: Path) -> bool:
+    return path.name.startswith("~$")
 
 
 if __name__ == "__main__":

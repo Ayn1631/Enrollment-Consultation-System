@@ -203,20 +203,51 @@ def test_render_policy_payload_text_should_pivot_to_table_rows():
                 "source_file": "附表.xlsx",
                 "table_topic": "专业情况汇总表",
                 "source_row_no": "26",
-                "field_name": "专业名称",
+                "field_name": "major_name",
                 "field_value": "英语",
             },
             {
                 "source_file": "附表.xlsx",
                 "table_topic": "专业情况汇总表",
                 "source_row_no": "26",
-                "field_name": "学费（元）",
+                "field_name": "tuition",
                 "field_value": "4400",
+            },
+            {
+                "source_file": "附表.xlsx",
+                "table_topic": "专业情况汇总表",
+                "source_row_no": "26",
+                "field_name": "evidence_text",
+                "field_value": "专业代码：050201；专业名称：英语",
             },
         ],
     )
 
     rendered = toolset.render_payload_text(payload, max_records=10)
 
-    assert "来源文件\t表主题\t源行号\t专业名称\t学费（元）" in rendered
-    assert "附表.xlsx\t专业情况汇总表\t26\t英语\t4400" in rendered
+    assert "命中记录数：1" in rendered
+    assert "专业名称\t学费（元）" in rendered
+    assert "英语\t4400" in rendered
+    assert "来源文件" not in rendered
+    assert "evidence_text" not in rendered
+
+
+def test_render_policy_payload_text_should_preserve_numeric_row_order():
+    toolset = StructuredAdmissionsToolset(Settings())
+    payload = StructuredToolPayload(
+        tool_name="policy_table_lookup",
+        matched_fields=[],
+        route_reason="政策附表类结构化全量文本返回",
+        records=[
+            {"source_file": "附表.xlsx", "table_topic": "major_catalog", "source_row_no": "10", "field_name": "major_code", "field_value": "080203"},
+            {"source_file": "附表.xlsx", "table_topic": "major_catalog", "source_row_no": "10", "field_name": "major_name", "field_value": "材料成型及控制工程"},
+            {"source_file": "附表.xlsx", "table_topic": "major_catalog", "source_row_no": "2", "field_name": "major_code", "field_value": "070302"},
+            {"source_file": "附表.xlsx", "table_topic": "major_catalog", "source_row_no": "2", "field_name": "major_name", "field_value": "应用化学"},
+        ],
+    )
+
+    rendered = toolset.render_payload_text(payload, max_records=10)
+    lines = [line for line in rendered.splitlines() if line.strip()]
+
+    assert "070302\t应用化学" in lines[4]
+    assert "080203\t材料成型及控制工程" in lines[5]

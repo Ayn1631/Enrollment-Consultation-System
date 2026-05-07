@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 from app.admissions_kb.parsers import load_major_catalog_rows, load_score_line_rows
-from app.admissions_kb.repository import AdmissionsRepository
+from app.admissions_kb.repository import AdmissionsRepository, flatten_policy_table_rows
 from app.contracts import RagEvidence, RagQueryResponse
 from app.models import ChatSource
 
@@ -34,6 +34,7 @@ class StructuredAdmissionsToolset:
         filters: dict[str, str] | None = None,
         limit: int = 8,
     ) -> StructuredToolPayload:
+        limit = 9999
         filters = dict(filters or {})
         try:
             records = self.repository.search_major_catalog(raw_query=raw_query, filters=filters, limit=limit)
@@ -56,6 +57,7 @@ class StructuredAdmissionsToolset:
         filters: dict[str, str] | None = None,
         limit: int = 8,
     ) -> StructuredToolPayload:
+        limit = 9999
         filters = dict(filters or {})
         try:
             records = self.repository.search_score_lines(raw_query=raw_query, filters=filters, limit=limit)
@@ -78,6 +80,7 @@ class StructuredAdmissionsToolset:
         filters: dict[str, str] | None = None,
         limit: int = 12,
     ) -> StructuredToolPayload:
+        limit = 9999
         filters = dict(filters or {})
         try:
             records = self.repository.search_policy_tables(raw_query=raw_query, filters=filters, limit=limit)
@@ -141,10 +144,11 @@ class StructuredAdmissionsToolset:
     ) -> str:
         if not payload.records:
             return "未检索到匹配的结构化记录。"
+        display_count = self._payload_display_count(payload)
         table_text = self._render_payload_as_table(payload=payload, max_records=max_records)
         header = [
             f"结构化工具：{payload.tool_name}",
-            f"命中记录数：{len(payload.records)}",
+            f"命中记录数：{display_count}",
             "以下为 xlsx 原表格式输出：",
         ]
         rendered = "\n".join([*header, "", table_text]).strip()
@@ -264,23 +268,9 @@ class StructuredAdmissionsToolset:
             return []
 
     def _load_policy_cache(self) -> list[dict]:
-        rows: list[dict] = []
-        for row in self._load_major_cache():
-            if not row.get("source_table_title"):
-                continue
-            rows.append(
-                {
-                    "source_dataset": "policy_tables",
-                    "source_file": row.get("source_file", ""),
-                    "source_doc": row.get("source_doc", ""),
-                    "table_topic": row.get("source_table_title", ""),
-                    "source_row_no": row.get("source_row_no", ""),
-                    "field_name": "evidence_text",
-                    "field_value": row.get("evidence_text", ""),
-                    "evidence_text": row.get("evidence_text", ""),
-                }
-            )
-        return rows
+        return flatten_policy_table_rows(
+            [row for row in self._load_major_cache() if row.get("source_table_title")]
+        )
 
     def _filter_rows(self, rows: list[dict], *, raw_query: str, filters: dict[str, str], limit: int) -> list[dict]:
         return self._rank_records(records=rows, raw_query=raw_query, filters=filters, limit=limit)
@@ -441,18 +431,27 @@ class StructuredAdmissionsToolset:
                     "source_row_no": key[2],
                 }
                 ordered_keys.append(key)
-            field_name = str(record.get("field_name", "")).strip()
+            field_name = self._canonical_policy_field_name(str(record.get("field_name", "")).strip())
             field_value = self._format_table_value(record.get("field_value", ""))
-            if field_name:
+            if field_name and field_name not in {"academic_year", "evidence_text"}:
                 grouped_rows[key][field_name] = field_value
                 if field_name not in discovered_fields:
                     discovered_fields.append(field_name)
-        headers = ["source_file", "table_topic", "source_row_no", *discovered_fields]
-        label_map = {
-            "source_file": "来源文件",
-            "table_topic": "表主题",
-            "source_row_no": "源行号",
-        }
+        preferred_headers = [
+            "major_code",
+            "major_name",
+            "duration",
+            "tuition",
+            "exam_subjects",
+            "degree_type",
+            "college_name",
+        ]
+        headers = [field for field in preferred_headers if field in discovered_fields]
+        headers.extend(field for field in discovered_fields if field not in headers)
+        if not headers:
+            return "未检索到可还原的政策附表字段。"
+        label_map = self._policy_field_labels()
+        ordered_keys.sort(key=lambda item: (item[1], self._safe_int(item[2]) or 0))
         limited_keys = ordered_keys if max_records is None else ordered_keys[:max_records]
         table_rows = ["\t".join(label_map.get(field, field) for field in headers)]
         for key in limited_keys:
@@ -495,6 +494,42 @@ class StructuredAdmissionsToolset:
     def _format_table_value(self, value: object) -> str:
         text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
         return text
+
+    def _policy_field_labels(self) -> dict[str, str]:
+        return {
+            "major_code": "专业代码",
+            "major_name": "专业名称",
+            "duration": "学制",
+            "tuition": "学费（元）",
+            "exam_subjects": "选考科目",
+            "degree_type": "学位授予门类",
+            "college_name": "所在院系",
+        }
+
+    def _canonical_policy_field_name(self, field_name: str) -> str:
+        reverse_labels = {
+            "专业代码": "major_code",
+            "专业名称": "major_name",
+            "学制": "duration",
+            "学费（元）": "tuition",
+            "选考科目": "exam_subjects",
+            "学位授予门类": "degree_type",
+            "所在院系": "college_name",
+        }
+        return reverse_labels.get(field_name, field_name)
+
+    def _payload_display_count(self, payload: StructuredToolPayload) -> int:
+        if payload.tool_name != "policy_table_lookup":
+            return len(payload.records)
+        grouped_keys = {
+            (
+                str(record.get("source_file", "")).strip(),
+                str(record.get("table_topic", "")).strip(),
+                str(record.get("source_row_no", "")).strip(),
+            )
+            for record in payload.records
+        }
+        return len(grouped_keys)
 
     def _normalize_text(self, value: str) -> str:
         return re.sub(r"\s+", "", (value or "").strip()).lower()
