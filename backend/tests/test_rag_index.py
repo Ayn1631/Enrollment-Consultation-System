@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import httpx
 import math
+from pathlib import Path
 
 from app.config import Settings
-from app.rag.index import OpenAICompatibleEmbeddings
+from app.rag.index import OpenAICompatibleEmbeddings, RagIndexManager
 
 
 class _FakeResponse:
@@ -198,3 +199,24 @@ def test_embedding_result_for_real_input_text_is_stable_and_normalized(runtime_s
     assert any(not math.isclose(left, right, rel_tol=1e-6, abs_tol=1e-6) for left, right in zip(query_vector, doc_vectors[1]))
     norm = math.sqrt(sum(item * item for item in query_vector))
     assert math.isclose(norm, 1.0, rel_tol=1e-6, abs_tol=1e-6)
+
+
+def test_rag_index_manifest_detects_docs_change(tmp_path: Path):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    target = docs_dir / "01-测试文档.md"
+    target.write_text("# 原文\n网页标题：测试文档\n发布时间：2025-01-01\n抓取时间：2025-01-02\n正文：测试内容", encoding="utf-8")
+
+    settings = Settings().model_copy(
+        update={
+            "docs_dir": docs_dir,
+            "rag_faiss_dir": tmp_path / "faiss",
+        }
+    )
+    manager = RagIndexManager(settings)
+
+    manager._write_index_manifest()
+    assert manager._manifest_matches_current() is True
+
+    target.write_text("# 原文\n网页标题：测试文档\n发布时间：2025-01-01\n抓取时间：2025-01-02\n正文：测试内容已更新", encoding="utf-8")
+    assert manager._manifest_matches_current() is False

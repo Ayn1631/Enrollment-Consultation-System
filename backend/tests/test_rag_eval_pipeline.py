@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from langchain_core.documents import Document
+
 import scripts.run_rag_eval as rag_eval_script
 
 from app.config import Settings
 from app.eval.judges import RagEvalJudge
+from app.eval.relevance import resolve_relevant_chunk_ids
 from app.eval.reporting import render_markdown_report
 from scripts.run_rag_eval import (
     build_report,
@@ -226,3 +231,78 @@ def test_extract_rag_answer_can_fallback_to_local_markdown(tmp_path):
     assert website_answer == "https://textile.zut.edu.cn/"
     assert phone_answer == "0371-62506970"
     assert code_answer == "6115、6116、6117、6118"
+
+
+def test_resolve_relevant_chunk_ids_matches_source_ref_stem():
+    case = {
+        "question": "软件学院的网址是什么？",
+        "expected_answer": "https://soft.zut.edu.cn/",
+        "expected_keywords": ["https://soft.zut.edu.cn/"],
+        "source_refs": ["20-学院介绍-软件学院.md"],
+        "relevant_chunk_ids": [],
+    }
+    documents = [
+        Document(
+            page_content="标题：软件学院\n正文：联系方式：0371-67698037 网址：https://soft.zut.edu.cn/",
+            metadata={
+                "chunk_id": "20-学院介绍-软件学院-1-1",
+                "chunk_level": "small",
+                "doc_id": "20-学院介绍-软件学院",
+                "source_title": "软件学院",
+                "topic": "学院介绍",
+                "chunk_text": "联系方式：0371-67698037 网址：https://soft.zut.edu.cn/",
+            },
+        ),
+        Document(
+            page_content="标题：计算机学院\n正文：网址：https://cs.zut.edu.cn/",
+            metadata={
+                "chunk_id": "39-学院介绍-计算机学院-1-1",
+                "chunk_level": "small",
+                "doc_id": "39-学院介绍-计算机学院",
+                "source_title": "计算机学院",
+                "topic": "学院介绍",
+                "chunk_text": "网址：https://cs.zut.edu.cn/",
+            },
+        ),
+    ]
+
+    relevant = resolve_relevant_chunk_ids(case=case, documents=documents)
+
+    assert relevant == ["20-学院介绍-软件学院-1-1"]
+
+
+def test_run_retrieval_resolves_missing_relevant_chunk_ids():
+    case = {
+        "question": "软件学院的网址是什么？",
+        "retrieval_mode_expected": "rag-first",
+        "expected_answer": "https://soft.zut.edu.cn/",
+        "expected_keywords": ["https://soft.zut.edu.cn/"],
+        "source_refs": ["20-学院介绍-软件学院.md"],
+        "relevant_chunk_ids": [],
+    }
+    documents = [
+        Document(
+            page_content="标题：软件学院\n正文：联系方式：0371-67698037 网址：https://soft.zut.edu.cn/",
+            metadata={
+                "chunk_id": "20-学院介绍-软件学院-1-1",
+                "chunk_level": "small",
+                "doc_id": "20-学院介绍-软件学院",
+                "source_title": "软件学院",
+                "topic": "学院介绍",
+                "chunk_text": "联系方式：0371-67698037 网址：https://soft.zut.edu.cn/",
+            },
+        )
+    ]
+    rag_service = SimpleNamespace(
+        index=SimpleNamespace(all_documents=lambda: documents),
+        run=lambda **kwargs: SimpleNamespace(
+            context_blocks=["联系方式：0371-67698037 网址：https://soft.zut.edu.cn/"],
+            sources=[SimpleNamespace(chunk_id="20-学院介绍-软件学院-1-1", title="软件学院")],
+        ),
+    )
+
+    retrieval = rag_eval_script.run_retrieval(case=case, toolset=SimpleNamespace(), rag_service=rag_service)
+
+    assert retrieval["recall@5"] == 1.0
+    assert retrieval["mrr@5"] == 1.0
+    assert retrieval["ndcg@5"] == 1.0

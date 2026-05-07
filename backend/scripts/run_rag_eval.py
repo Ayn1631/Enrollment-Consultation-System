@@ -26,6 +26,7 @@ from app.admissions_kb.router import route_structured_query
 from app.admissions_kb.tools import StructuredAdmissionsToolset
 from app.config import Settings
 from app.eval.judges import RagEvalJudge
+from app.eval.relevance import resolve_relevant_chunk_ids
 from app.main import app
 from app.rag.service import RagGraphService
 
@@ -235,7 +236,7 @@ def run_retrieval(*, case: dict[str, Any], toolset: StructuredAdmissionsToolset,
         }
     rag_response = rag_service.run(session_id=uuid.uuid4().hex, query=str(case["question"]), top_k=5, debug=True)
     predicted_ids = [item.chunk_id for item in rag_response.sources]
-    relevant = set(str(item) for item in case.get("relevant_chunk_ids", []))
+    relevant = set(resolve_relevant_chunk_ids(case=case, documents=rag_service.index.all_documents()))
     recall = compute_recall_at_k(relevant, predicted_ids, 5)
     mrr = compute_mrr_at_k(relevant, predicted_ids, 5)
     ndcg = compute_ndcg_at_k(relevant, predicted_ids, 5)

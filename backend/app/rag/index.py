@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +142,7 @@ class RagIndexManager:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.faiss_dir: Path = settings.rag_faiss_dir
+        self._manifest_path: Path = self.faiss_dir / "manifest.json"
         self._documents: list[Document] = []
         self._sparse_documents: list[Document] = []
         self._vectorstore = None
@@ -264,7 +267,9 @@ class RagIndexManager:
 
     def _can_load_vectorstore(self) -> bool:
         """判断本地是否存在可加载的 FAISS 文件。"""
-        return (self.faiss_dir / "index.faiss").exists() and (self.faiss_dir / "index.pkl").exists()
+        if not (self.faiss_dir / "index.faiss").exists() or not (self.faiss_dir / "index.pkl").exists():
+            return False
+        return self._manifest_matches_current()
 
     def _try_load_vectorstore(self) -> bool:
         """尝试加载本地 FAISS 索引，成功则同步文档缓存。"""
@@ -300,6 +305,7 @@ class RagIndexManager:
                 self._vectorstore = FAISS.from_documents(self._documents, self._embeddings)
             self.faiss_dir.mkdir(parents=True, exist_ok=True)
             self._vectorstore.save_local(str(self.faiss_dir))
+            self._write_index_manifest()
             self._local_dense_vectors = []
             return
         except Exception:
@@ -307,6 +313,7 @@ class RagIndexManager:
             self._vectorstore = None
             with self._embeddings.progress_scope(enabled=show_progress, desc="RAG Embedding（本地向量）"):
                 self._local_dense_vectors = self._embeddings.embed_documents([doc.page_content for doc in self._documents])
+            self._write_index_manifest()
 
     def _build_bm25(self) -> None:
         """构建 BM25；依赖缺失时降级为轻量词重叠检索。"""
@@ -409,3 +416,48 @@ class RagIndexManager:
         if original is None:
             return Document(page_content=doc.page_content, metadata=dict(doc.metadata))
         return Document(page_content=original.page_content, metadata=dict(original.metadata))
+
+    def _manifest_matches_current(self) -> bool:
+        """校验本地索引是否仍与当前语料和切块配置一致。"""
+        if not self._manifest_path.exists():
+            return False
+        try:
+            stored = json.loads(self._manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return stored == self._build_index_manifest()
+
+    def _write_index_manifest(self) -> None:
+        """写入索引清单，避免误加载陈旧向量库。"""
+        self.faiss_dir.mkdir(parents=True, exist_ok=True)
+        self._manifest_path.write_text(
+            json.dumps(self._build_index_manifest(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _build_index_manifest(self) -> dict[str, Any]:
+        """生成当前语料快照，供启动阶段判断索引新鲜度。"""
+        source_paths = [
+            path for path in sorted(self.settings.docs_dir.glob("*.md"))
+            if path.name.lower() != "readme.md"
+        ]
+        files = []
+        for path in source_paths:
+            stat = path.stat()
+            files.append(
+                {
+                    "name": path.name,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
+        manifest = {
+            "docs_dir": str(self.settings.docs_dir),
+            "chunk_size": self.settings.rag_chunk_size,
+            "chunk_overlap": self.settings.rag_chunk_overlap,
+            "file_count": len(files),
+            "files": files,
+        }
+        fingerprint_payload = json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        manifest["fingerprint"] = hashlib.sha1(fingerprint_payload).hexdigest()
+        return manifest

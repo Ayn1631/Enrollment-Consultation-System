@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 
 from app.admissions_kb.parsers import load_major_catalog_rows, load_score_line_rows
 from app.config import Settings
+from app.eval.relevance import resolve_relevant_chunk_ids
 from app.rag.index import RagIndexManager
 
 
@@ -123,21 +124,7 @@ def _fill_relevant_chunk_ids(*, settings: Settings, cases: list[dict[str, Any]])
     manager.startup()
     docs = manager.all_documents()
     for case in cases:
-        relevant: list[str] = []
-        source_refs = [str(item) for item in case.get("source_refs", [])]
-        keywords = [str(item) for item in case.get("expected_keywords", [])[:3]]
-        for doc in docs:
-            source_url = str(doc.metadata.get("source_url", ""))
-            chunk_id = str(doc.metadata.get("chunk_id", ""))
-            if not chunk_id or str(doc.metadata.get("chunk_level", "")) != "small":
-                continue
-            if source_refs and not any(ref in source_url for ref in source_refs):
-                continue
-            text = str(doc.page_content)
-            if keywords and not any(keyword in text for keyword in keywords):
-                continue
-            relevant.append(chunk_id)
-        case["relevant_chunk_ids"] = relevant[:6]
+        case["relevant_chunk_ids"] = resolve_relevant_chunk_ids(case=case, documents=docs)
 
 
 def _make_rag_case(case_id: str, category: str, question: str, answer: str, source_ref: str) -> dict[str, Any]:
