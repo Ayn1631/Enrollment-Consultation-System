@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from app.admissions_kb.tools import StructuredToolPayload
 from app.config import Settings
 from app.models import ChatRequest, ChatSource
 from app.services.ai_stack import McpServerConfig, McpToolRuntime
@@ -352,8 +353,72 @@ def test_run_subproblem_agent_should_offer_all_tools_to_react_agent(monkeypatch)
     assert result.ok is True
     assert captured["version"] == "v2"
     assert "local_rag_search" in captured["tool_names"]
+    assert "major_catalog_lookup" in captured["tool_names"]
+    assert "scoreline_lookup" in captured["tool_names"]
+    assert "policy_table_lookup" in captured["tool_names"]
     assert "bing_search" in captured["tool_names"]
     assert "weather_lookup" in captured["tool_names"]
+
+
+def test_build_local_agent_tools_should_include_executable_structured_lookup(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s6-local",
+        messages=[{"role": "user", "content": "自动化专业学费多少"}],
+        mode="agent",
+        features=["rag"],
+    )
+    collector_context_blocks: list[str] = []
+    collector_sources: list[ChatSource] = []
+    collector_notes: list[str] = []
+    collector_tool_audit: list[str] = []
+
+    def _tool_factory(name: str):
+        def _decorate(fn):
+            fn.name = name
+            return fn
+
+        return _decorate
+
+    monkeypatch.setattr(
+        agent_runtime_module.StructuredAdmissionsToolset,
+        "major_catalog_lookup",
+        lambda self, **_: StructuredToolPayload(
+            tool_name="major_catalog_lookup",
+            matched_fields=["major_name"],
+            route_reason="专业目录类结构化查询",
+            records=[
+                {
+                    "source_file": "2025年招生专业详情.xlsx",
+                    "major_name": "自动化",
+                    "college_name": "自动化与电气工程学院",
+                    "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院",
+                }
+            ],
+        ),
+    )
+
+    tools = runtime._build_local_agent_tools(
+        tool_factory=_tool_factory,
+        request=request,
+        effective_features=["rag"],
+        fail_features=set(),
+        memory_context_blocks=[],
+        collector_context_blocks=collector_context_blocks,
+        collector_sources=collector_sources,
+        collector_notes=collector_notes,
+        collector_tool_audit=collector_tool_audit,
+        rag_document_catalog="招生章程.md",
+    )
+
+    major_lookup = next(item for item in tools if getattr(item, "name", "") == "major_catalog_lookup")
+    result_text = major_lookup("自动化专业学费多少")
+
+    assert "结构化工具：major_catalog_lookup" in result_text
+    assert any("structured:major_catalog_lookup" in item for item in collector_context_blocks)
+    assert any(source.title == "自动化 - 自动化与电气工程学院" for source in collector_sources)
+    assert "agent_tool:major_catalog_lookup" in collector_tool_audit
 
 
 def test_normalize_agent_tool_should_unwrap_bound_tool_name_and_description():
