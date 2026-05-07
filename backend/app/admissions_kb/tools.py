@@ -34,7 +34,6 @@ class StructuredAdmissionsToolset:
         filters: dict[str, str] | None = None,
         limit: int = 8,
     ) -> StructuredToolPayload:
-        limit = 9999
         filters = dict(filters or {})
         try:
             records = self.repository.search_major_catalog(raw_query=raw_query, filters=filters, limit=limit)
@@ -57,7 +56,6 @@ class StructuredAdmissionsToolset:
         filters: dict[str, str] | None = None,
         limit: int = 8,
     ) -> StructuredToolPayload:
-        limit = 9999
         filters = dict(filters or {})
         try:
             records = self.repository.search_score_lines(raw_query=raw_query, filters=filters, limit=limit)
@@ -80,7 +78,6 @@ class StructuredAdmissionsToolset:
         filters: dict[str, str] | None = None,
         limit: int = 12,
     ) -> StructuredToolPayload:
-        limit = 9999
         filters = dict(filters or {})
         try:
             records = self.repository.search_policy_tables(raw_query=raw_query, filters=filters, limit=limit)
@@ -144,6 +141,9 @@ class StructuredAdmissionsToolset:
     ) -> str:
         if not payload.records:
             return "未检索到匹配的结构化记录。"
+        if self._is_fulltext_payload(payload):
+            max_chars = None
+            max_records = None
         display_count = self._payload_display_count(payload)
         table_text = self._render_payload_as_table(payload=payload, max_records=max_records)
         header = [
@@ -530,6 +530,9 @@ class StructuredAdmissionsToolset:
             for record in payload.records
         }
         return len(grouped_keys)
+
+    def _is_fulltext_payload(self, payload: StructuredToolPayload) -> bool:
+        return "全量文本返回" in str(payload.route_reason or "")
 
     def _normalize_text(self, value: str) -> str:
         return re.sub(r"\s+", "", (value or "").strip()).lower()

@@ -192,6 +192,42 @@ def test_major_catalog_fulltext_should_return_all_repository_rows(monkeypatch):
     assert payload.records[0]["major_name"] == "自动化"
 
 
+def test_render_fulltext_payload_should_ignore_max_chars_and_max_records():
+    toolset = StructuredAdmissionsToolset(Settings())
+    payload = StructuredToolPayload(
+        tool_name="major_catalog_lookup",
+        matched_fields=[],
+        route_reason="专业目录类结构化全量文本返回",
+        records=[
+            {
+                "major_code": "070302",
+                "major_name": "应用化学",
+                "duration": "四年",
+                "tuition": "5000",
+                "exam_subjects": "物理+化学",
+                "degree_type": "理学",
+                "college_name": "材料电子与储能学院",
+            },
+            {
+                "major_code": "080203",
+                "major_name": "材料成型及控制工程",
+                "duration": "四年",
+                "tuition": "5000",
+                "exam_subjects": "物理+化学",
+                "degree_type": "工学",
+                "college_name": "材料电子与储能学院",
+            },
+        ],
+    )
+
+    rendered = toolset.render_payload_text(payload, max_chars=20, max_records=1)
+
+    assert "命中记录数：2" in rendered
+    assert "070302\t应用化学\t四年\t5000\t物理+化学\t理学\t材料电子与储能学院" in rendered
+    assert "080203\t材料成型及控制工程\t四年\t5000\t物理+化学\t工学\t材料电子与储能学院" in rendered
+    assert "内容过长，已截断显示。" not in rendered
+
+
 def test_render_policy_payload_text_should_pivot_to_table_rows():
     toolset = StructuredAdmissionsToolset(Settings())
     payload = StructuredToolPayload(
