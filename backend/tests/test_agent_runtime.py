@@ -199,6 +199,46 @@ def test_build_plan_should_prefer_llm_result(monkeypatch):
     assert "长期记忆：用户明确想报本科理工类专业。" in str(captured_messages["messages"][1].content)
 
 
+def test_rewrite_query_should_include_recent_user_context_and_restore_missing_constraints(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s-rewrite-1",
+        messages=[
+            {"role": "user", "content": "我河南高考500分, 可以上什么专业???"},
+            {"role": "assistant", "content": "你是文科还是理科？"},
+            {"role": "user", "content": "2026, 物理类. 你需要根据25的情况给我一个推荐"},
+        ],
+        mode="agent",
+        features=["rag"],
+    )
+    captured_messages = {}
+
+    class _FakeResponse:
+        content = "如果参考2025年的录取情况，河南物理类考生2026年高考多少分可以推荐报考中原工学院的哪些专业？"
+
+    class _FakeLlm:
+        def invoke(self, messages):
+            captured_messages["messages"] = messages
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+
+    rewritten = runtime.rewrite_query(
+        request=request,
+        last_user="2026, 物理类. 你需要根据25的情况给我一个推荐",
+        memory_text="当前没有可用记忆。",
+        strategy="quality",
+    )
+
+    assert "我河南高考500分, 可以上什么专业???" in str(captured_messages["messages"][1].content)
+    assert "500分" in rewritten
+    assert "河南" in rewritten
+    assert "物理类" in rewritten
+    assert "2025年" in rewritten or "25" in rewritten
+    assert "2026" in rewritten
+
+
 def test_build_plan_should_append_synthesis_goal_when_missing(monkeypatch):
     settings = Settings(MCP_ENABLED=False)
     runtime = AgentRuntime(_GatewayStub(settings))

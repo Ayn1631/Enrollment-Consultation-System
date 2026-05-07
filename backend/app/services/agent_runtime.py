@@ -287,6 +287,7 @@ class AgentRuntime:
         memory_text: str,
         strategy: AgentStrategy,
     ) -> str:
+        recent_user_context = self._build_recent_user_context(request=request)
         llm = build_langchain_chat_model(
             self.deps.services.settings,
             model=request.model,
@@ -294,11 +295,21 @@ class AgentRuntime:
             top_p=request.top_p,
         )
         if llm is None:
-            return self._rule_rewrite_query(last_user=last_user, memory_text=memory_text, strategy=strategy)
+            return self._rule_rewrite_query(
+                last_user=last_user,
+                memory_text=memory_text,
+                strategy=strategy,
+                recent_user_context=recent_user_context,
+            )
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
         except Exception:
-            return self._rule_rewrite_query(last_user=last_user, memory_text=memory_text, strategy=strategy)
+            return self._rule_rewrite_query(
+                last_user=last_user,
+                memory_text=memory_text,
+                strategy=strategy,
+                recent_user_context=recent_user_context,
+            )
         try:
             response = llm.invoke(
                 [
@@ -307,16 +318,16 @@ class AgentRuntime:
                             "你是“招生咨询查询改写器”。"
                             "你的任务是把用户当前这句话，改写成适合招生咨询工具链执行的单轮查询。"
                             "你的输出会直接用于后续检索、RAG、技能执行、外部搜索或工具路由，因此改写结果必须清晰、完整、可检索、少歧义。"
-                            "你必须先在内部综合理解“执行策略、用户原问题、相关记忆”，再给出最终改写结果，但不要输出你的分析过程。"
+                            "你必须先在内部综合理解“执行策略、用户原问题、最近多轮用户上下文、相关记忆”，再给出最终改写结果，但不要输出你的分析过程。"
                             "你只能输出最终改写后的问题文本，不要输出解释、前缀、编号、引号、Markdown、多个候选版本或任何额外内容。"
                             "改写目标如下："
                             "第一，补全省略代词、指代对象、年份、省份、专业、费用项、流程对象等关键缺失信息，使问题变成可以独立理解的单轮查询。"
-                            "第二，尽量利用相关记忆补全上下文，但只能使用与当前问题直接相关、且可以高置信度承接的信息。"
+                            "第二，尽量利用最近多轮用户上下文和相关记忆补全上下文，但只能使用与当前问题直接相关、且可以高置信度承接的信息。"
                             "第三，必须保持用户原意，不得编造新需求，不得扩写成用户没有表达过的目标。"
                             "第四，如果记忆里存在多个可能指代对象且无法确定，就保持原问题核心意图并做最小保守补全，不要瞎猜。"
                             "第五，不要回答问题本身，你的职责只是改写查询，不是提供结论。"
                             "第六，输出必须是适合工具链理解的一条自然语言查询，而不是搜索语法、标签列表或问答摘要。"
-                            "第七，当用户问题已经足够清晰时，只做轻量规范化，不要过度改写。"
+                            "第七，当用户问题已经足够清晰时，只做轻量规范化，不要过度改写。第八，年份、省份、分数、科类/选科、批次、专业名称、学校名称等属于硬性约束；只要最近多轮用户上下文中已明确给出，且当前问题没有明确推翻，就必须完整保留，不得遗漏。"
                             "记忆使用规则："
                             "只有在原问题出现“这个、那个、它、那、这、该专业、这个学费、今年、这类情况”等省略表达时，才优先用记忆补全。"
                             "如果记忆与原问题无关，忽略记忆。"
@@ -353,23 +364,39 @@ class AgentRuntime:
                             "请执行一次招生咨询查询改写任务。\n\n"
                             f"执行策略：{strategy}\n"
                             f"用户原问题：{last_user}\n\n"
+                            f"最近多轮用户上下文：\n{recent_user_context}\n\n"
                             f"相关记忆：\n{memory_text}\n\n"
                             "输出要求：\n"
                             "1. 只输出一条改写后的查询文本。\n"
                             "2. 优先补全当前问题中的省略指代、时间范围、地区、专业、费用项、流程对象等关键缺失信息。\n"
-                            "3. 可以根据相关记忆替换“这个、那个、它、那、今年、该专业、这个费用”等模糊表达，但前提是记忆与当前问题直接相关且指向明确。\n"
+                            "3. 可以根据最近多轮用户上下文与相关记忆替换“这个、那个、它、那、今年、该专业、这个费用”等模糊表达，但前提是这些上下文与当前问题直接相关且指向明确。\n"
                             "4. 不要编造用户没有提出的新目标，不要把一个问题扩成多个问题。\n"
                             "5. 不要输出解释，不要输出分析过程，不要输出多个候选版本。\n"
                             "6. 如果原问题已经足够清晰，就做轻量规范化后直接输出。\n"
-                            "7. 如果记忆不足以安全替换代词，就保守改写，不要乱猜。"
+                            "7. 如果记忆不足以安全替换代词，就保守改写，不要乱猜。\n8. 必须完整保留最近多轮用户上下文中已经明确给出的硬约束，尤其是年份、省份、分数、科类/选科、批次、专业、学校。\n9. 如果当前问题要求“参考往年情况给推荐”，则改写结果中必须同时保留当前目标年份和参考年份。"
                         )
                     ),
                 ]
             )
             content = str(getattr(response, "content", "") or "").strip()
-            return content or self._rule_rewrite_query(last_user=last_user, memory_text=memory_text, strategy=strategy)
+            rewritten = content or self._rule_rewrite_query(
+                last_user=last_user,
+                memory_text=memory_text,
+                strategy=strategy,
+                recent_user_context=recent_user_context,
+            )
+            return self._restore_missing_hard_constraints(
+                rewritten=rewritten,
+                last_user=last_user,
+                recent_user_context=recent_user_context,
+            )
         except Exception:
-            return self._rule_rewrite_query(last_user=last_user, memory_text=memory_text, strategy=strategy)
+            return self._rule_rewrite_query(
+                last_user=last_user,
+                memory_text=memory_text,
+                strategy=strategy,
+                recent_user_context=recent_user_context,
+            )
 
     def split_query(
         self,
@@ -1411,13 +1438,85 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         rows.append("建议：稍后重试，或切换更快模型/速度优先策略后再试。")
         return "\n".join(rows).strip()
 
-    def _rule_rewrite_query(self, *, last_user: str, memory_text: str, strategy: AgentStrategy) -> str:
+    def _rule_rewrite_query(
+        self,
+        *,
+        last_user: str,
+        memory_text: str,
+        strategy: AgentStrategy,
+        recent_user_context: str = "",
+    ) -> str:
         normalized = " ".join(last_user.split()).strip()
+        if recent_user_context:
+            normalized = self._restore_missing_hard_constraints(
+                rewritten=normalized,
+                last_user=last_user,
+                recent_user_context=recent_user_context,
+            )
         if strategy == "quality" and memory_text and any(token in normalized for token in ("这个", "那个", "它", "那")):
             first_memory_line = next((line[2:] for line in memory_text.splitlines() if line.startswith("- ")), "")
             if first_memory_line:
                 return f"{normalized}（结合上下文：{first_memory_line}）"
         return normalized
+
+    def _build_recent_user_context(self, *, request: ChatRequest, max_messages: int = 3) -> str:
+        user_messages = [
+            re.sub(r"\s+", " ", str(item.content or "")).strip()
+            for item in request.messages
+            if getattr(item, "role", "") == "user" and str(item.content or "").strip()
+        ]
+        if not user_messages:
+            return "当前没有可用的最近用户上下文。"
+        recent = user_messages[-max_messages:]
+        return "\n".join(f"- {item}" for item in recent)
+
+    def _restore_missing_hard_constraints(
+        self,
+        *,
+        rewritten: str,
+        last_user: str,
+        recent_user_context: str,
+    ) -> str:
+        normalized = re.sub(r"\s+", " ", str(rewritten or "")).strip()
+        if not normalized:
+            normalized = re.sub(r"\s+", " ", str(last_user or "")).strip()
+        context_text = "\n".join(
+            item
+            for item in (
+                str(last_user or "").strip(),
+                str(recent_user_context or "").strip(),
+            )
+            if item
+        )
+        candidate_constraints = self._extract_hard_constraints(context_text)
+        missing = [item for item in candidate_constraints if item not in normalized]
+        if not missing:
+            return normalized
+        suffix = "、".join(missing)
+        return normalized.rstrip("。！？!?，,；; ") + f"，并结合{suffix}等已知条件。"
+
+    def _extract_hard_constraints(self, text: str) -> list[str]:
+        normalized = str(text or "")
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def _add(items: list[str]) -> None:
+            for item in items:
+                cleaned = re.sub(r"\s+", "", str(item or ""))
+                if not cleaned or cleaned in seen:
+                    continue
+                seen.add(cleaned)
+                ordered.append(cleaned)
+
+        _add(re.findall(r"20\d{2}年?", normalized))
+        _add(re.findall(r"\d{3,4}分", normalized))
+        province_pattern = r"(北京|天津|上海|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|台湾|内蒙古|广西|西藏|宁夏|新疆|香港|澳门)"
+        _add(re.findall(province_pattern, normalized))
+        category_pattern = r"(物理类|历史类|理科|文科|首选物理|首选历史|物化|物化生|物理\+化学|物理\+不限|不限)"
+        _add(re.findall(category_pattern, normalized))
+        batch_pattern = r"(本科批|本科一批|本科二批|专科批|一本|二本)"
+        _add(re.findall(batch_pattern, normalized))
+        return ordered
 
     def _compact_text_block(self, text: str, *, limit_chars: int) -> str:
         normalized = re.sub(r"\s+", " ", (text or "")).strip()
