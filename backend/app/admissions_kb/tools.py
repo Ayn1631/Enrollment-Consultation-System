@@ -105,11 +105,38 @@ class StructuredAdmissionsToolset:
             ),
         )
 
+    def major_catalog_fulltext(self) -> StructuredToolPayload:
+        records = self._load_all_major_catalog_records()
+        return StructuredToolPayload(
+            tool_name="major_catalog_lookup",
+            records=records,
+            matched_fields=[],
+            route_reason="专业目录类结构化全量文本返回",
+        )
+
+    def scoreline_fulltext(self) -> StructuredToolPayload:
+        records = self._load_all_scoreline_records()
+        return StructuredToolPayload(
+            tool_name="scoreline_lookup",
+            records=records,
+            matched_fields=[],
+            route_reason="录取分数/位次类结构化全量文本返回",
+        )
+
+    def policy_table_fulltext(self) -> StructuredToolPayload:
+        records = self._load_all_policy_records()
+        return StructuredToolPayload(
+            tool_name="policy_table_lookup",
+            records=records,
+            matched_fields=[],
+            route_reason="政策附表类结构化全量文本返回",
+        )
+
     def render_payload_text(
         self,
         payload: StructuredToolPayload,
         *,
-        max_chars: int = 4200,
+        max_chars: int | None = None,
         max_records: int | None = None,
     ) -> str:
         if not payload.records:
@@ -117,7 +144,7 @@ class StructuredAdmissionsToolset:
         header = [
             f"结构化工具：{payload.tool_name}",
             f"命中记录数：{len(payload.records)}",
-            "以下为渐进式载入的结构化全文内容：",
+            "以下为数据库中的结构化全文内容：",
         ]
         rendered = "\n".join(header)
         shown = 0
@@ -125,14 +152,14 @@ class StructuredAdmissionsToolset:
         for index, record in enumerate(capped_records, start=1):
             block = self._render_record_text(payload.tool_name, record=record, index=index)
             candidate = f"{rendered}\n\n{block}".strip()
-            if shown > 0 and len(candidate) > max_chars:
+            if max_chars is not None and shown > 0 and len(candidate) > max_chars:
                 break
             rendered = candidate
             shown += 1
         if shown < len(payload.records):
             rendered = (
                 f"{rendered}\n\n"
-                f"已渐进式载入前 {shown} / {len(payload.records)} 条记录；如需更多内容，请继续调用当前工具并缩小查询范围。"
+                f"当前仅展示前 {shown} / {len(payload.records)} 条记录。"
             )
         return rendered.strip()
 
@@ -198,41 +225,72 @@ class StructuredAdmissionsToolset:
 
     def _search_major_catalog_fallback(self, *, raw_query: str, filters: dict[str, str], limit: int) -> list[dict]:
         if self._major_cache is None:
-            source_root = Path(self.settings.admissions_source_dir)
-            derived = source_root / "衍生数据" / "中原工学院2025年本科招生章程-结构化附表.xlsx"
-            rows = load_major_catalog_rows(source_root / "2025年招生专业详情.xlsx", source_dataset="major_catalog")
-            if derived.exists():
-                rows.extend(load_major_catalog_rows(derived, source_dataset="major_catalog"))
-            self._major_cache = rows
+            self._major_cache = self._load_major_cache()
         return self._filter_rows(self._major_cache, raw_query=raw_query, filters=filters, limit=limit)
 
     def _search_scoreline_fallback(self, *, raw_query: str, filters: dict[str, str], limit: int) -> list[dict]:
         if self._score_cache is None:
-            try:
-                self._score_cache = load_score_line_rows(Path(self.settings.admissions_source_dir) / "2025年录取分数线.xls")
-            except Exception:
-                self._score_cache = []
+            self._score_cache = self._load_score_cache()
         return self._filter_rows(self._score_cache, raw_query=raw_query, filters=filters, limit=limit)
 
     def _search_policy_fallback(self, *, raw_query: str, filters: dict[str, str], limit: int) -> list[dict]:
         if self._policy_cache is None:
-            self._policy_cache = []
-            for row in self._search_major_catalog_fallback(raw_query="", filters={}, limit=400):
-                if not row.get("source_table_title"):
-                    continue
-                self._policy_cache.append(
-                    {
-                        "source_dataset": "policy_tables",
-                        "source_file": row.get("source_file", ""),
-                        "source_doc": row.get("source_doc", ""),
-                        "table_topic": row.get("source_table_title", ""),
-                        "source_row_no": row.get("source_row_no", ""),
-                        "field_name": "evidence_text",
-                        "field_value": row.get("evidence_text", ""),
-                        "evidence_text": row.get("evidence_text", ""),
-                    }
-                )
+            self._policy_cache = self._load_policy_cache()
         return self._filter_rows(self._policy_cache, raw_query=raw_query, filters=filters, limit=limit)
+
+    def _load_all_major_catalog_records(self) -> list[dict]:
+        try:
+            records = self.repository.search_major_catalog(raw_query="", filters={}, limit=None)
+        except Exception:
+            records = self._load_major_cache()
+        return [dict(record, _retrieval_score=0.0) for record in records]
+
+    def _load_all_scoreline_records(self) -> list[dict]:
+        try:
+            records = self.repository.search_score_lines(raw_query="", filters={}, limit=None)
+        except Exception:
+            records = self._load_score_cache()
+        return [dict(record, _retrieval_score=0.0) for record in records]
+
+    def _load_all_policy_records(self) -> list[dict]:
+        try:
+            records = self.repository.search_policy_tables(raw_query="", filters={}, limit=None)
+        except Exception:
+            records = self._load_policy_cache()
+        return [dict(record, _retrieval_score=0.0) for record in records]
+
+    def _load_major_cache(self) -> list[dict]:
+        source_root = Path(self.settings.admissions_source_dir)
+        derived = source_root / "衍生数据" / "中原工学院2025年本科招生章程-结构化附表.xlsx"
+        rows = load_major_catalog_rows(source_root / "2025年招生专业详情.xlsx", source_dataset="major_catalog")
+        if derived.exists():
+            rows.extend(load_major_catalog_rows(derived, source_dataset="major_catalog"))
+        return rows
+
+    def _load_score_cache(self) -> list[dict]:
+        try:
+            return load_score_line_rows(Path(self.settings.admissions_source_dir) / "2025年录取分数线.xls")
+        except Exception:
+            return []
+
+    def _load_policy_cache(self) -> list[dict]:
+        rows: list[dict] = []
+        for row in self._load_major_cache():
+            if not row.get("source_table_title"):
+                continue
+            rows.append(
+                {
+                    "source_dataset": "policy_tables",
+                    "source_file": row.get("source_file", ""),
+                    "source_doc": row.get("source_doc", ""),
+                    "table_topic": row.get("source_table_title", ""),
+                    "source_row_no": row.get("source_row_no", ""),
+                    "field_name": "evidence_text",
+                    "field_value": row.get("evidence_text", ""),
+                    "evidence_text": row.get("evidence_text", ""),
+                }
+            )
+        return rows
 
     def _filter_rows(self, rows: list[dict], *, raw_query: str, filters: dict[str, str], limit: int) -> list[dict]:
         return self._rank_records(records=rows, raw_query=raw_query, filters=filters, limit=limit)

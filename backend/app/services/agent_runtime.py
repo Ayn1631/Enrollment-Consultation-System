@@ -866,11 +866,15 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
 
         def run_structured_lookup(tool_name: str, tool_query: str, *, limit: int) -> str:
             collector_tool_audit.append(f"agent_tool:{tool_name}")
-            lookup = getattr(structured_toolset, tool_name, None)
-            if lookup is None:
-                return f"结构化工具不存在：{tool_name}"
             try:
-                payload = lookup(raw_query=tool_query, filters={}, limit=limit)
+                if tool_name == "major_catalog_lookup":
+                    payload = structured_toolset.major_catalog_fulltext()
+                elif tool_name == "scoreline_lookup":
+                    payload = structured_toolset.scoreline_fulltext()
+                elif tool_name == "policy_table_lookup":
+                    payload = structured_toolset.policy_table_fulltext()
+                else:
+                    return f"结构化工具不存在：{tool_name}"
             except Exception as exc:
                 return f"结构化检索失败：{exc}"
             if not payload.records:
@@ -884,7 +888,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                     [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in structured_response.sources]],
                     limit=5,
                 )
-            return structured_toolset.render_payload_text(payload, max_records=limit)
+            return structured_toolset.render_payload_text(payload)
 
         @tool_factory("major_catalog_lookup")
         def major_catalog_lookup(tool_query: str) -> str:

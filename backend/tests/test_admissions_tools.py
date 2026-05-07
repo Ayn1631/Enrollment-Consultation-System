@@ -76,7 +76,7 @@ def test_render_payload_text_returns_full_record_text():
 
     rendered = toolset.render_payload_text(payload, max_chars=500, max_records=1)
 
-    assert "以下为渐进式载入的结构化全文内容" in rendered
+    assert "以下为数据库中的结构化全文内容" in rendered
     assert "证据全文：专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院；选考科目：物理+化学" in rendered
 
 
@@ -162,3 +162,25 @@ def test_choose_best_payload_prefers_more_relevant_result():
 
     assert best is not None
     assert best.tool_name == "major_catalog_lookup"
+
+
+def test_major_catalog_fulltext_should_return_all_repository_rows(monkeypatch):
+    toolset = StructuredAdmissionsToolset(Settings())
+    captured: dict[str, object] = {}
+
+    def _fake_search_major_catalog(*, raw_query: str, filters: dict[str, str], limit):
+        captured["raw_query"] = raw_query
+        captured["filters"] = filters
+        captured["limit"] = limit
+        return [
+            {"major_name": "自动化", "source_file": "a.xlsx", "evidence_text": "自动化全文"},
+            {"major_name": "机器人工程", "source_file": "a.xlsx", "evidence_text": "机器人工程全文"},
+        ]
+
+    monkeypatch.setattr(toolset.repository, "search_major_catalog", _fake_search_major_catalog)
+
+    payload = toolset.major_catalog_fulltext()
+
+    assert captured == {"raw_query": "", "filters": {}, "limit": None}
+    assert len(payload.records) == 2
+    assert payload.records[0]["major_name"] == "自动化"

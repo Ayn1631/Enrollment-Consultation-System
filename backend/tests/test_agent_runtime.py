@@ -383,11 +383,11 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
 
     monkeypatch.setattr(
         agent_runtime_module.StructuredAdmissionsToolset,
-        "major_catalog_lookup",
-        lambda self, **_: StructuredToolPayload(
+        "major_catalog_fulltext",
+        lambda self: StructuredToolPayload(
             tool_name="major_catalog_lookup",
-            matched_fields=["major_name"],
-            route_reason="专业目录类结构化查询",
+            matched_fields=[],
+            route_reason="专业目录类结构化全量文本返回",
             records=[
                 {
                     "source_file": "2025年招生专业详情.xlsx",
@@ -416,6 +416,7 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
     result_text = major_lookup("自动化专业学费多少")
 
     assert "结构化工具：major_catalog_lookup" in result_text
+    assert "以下为数据库中的结构化全文内容" in result_text
     assert any("structured:major_catalog_lookup" in item for item in collector_context_blocks)
     assert any(source.title == "自动化 - 自动化与电气工程学院" for source in collector_sources)
     assert "agent_tool:major_catalog_lookup" in collector_tool_audit

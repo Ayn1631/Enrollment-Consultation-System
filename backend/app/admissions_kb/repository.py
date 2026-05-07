@@ -283,7 +283,13 @@ class AdmissionsRepository:
                 )
         return len(rows)
 
-    def search_major_catalog(self, *, raw_query: str, filters: dict[str, str], limit: int = 8) -> list[dict[str, Any]]:
+    def search_major_catalog(
+        self,
+        *,
+        raw_query: str,
+        filters: dict[str, str],
+        limit: int | None = 8,
+    ) -> list[dict[str, Any]]:
         sql = """
             SELECT academic_year, source_dataset, source_file, source_doc, source_table_title, source_row_no,
                    major_code, major_name, duration, tuition, exam_subjects, degree_type, college_name, evidence_text
@@ -292,11 +298,19 @@ class AdmissionsRepository:
         where_parts, params = self._build_major_where(raw_query=raw_query, filters=filters)
         if where_parts:
             sql += " WHERE " + " AND ".join(where_parts)
-        sql += " ORDER BY academic_year DESC, major_code ASC LIMIT %s"
-        params.append(limit)
+        sql += " ORDER BY academic_year DESC, major_code ASC"
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(limit)
         return self._fetch_all(sql, params)
 
-    def search_score_lines(self, *, raw_query: str, filters: dict[str, str], limit: int = 8) -> list[dict[str, Any]]:
+    def search_score_lines(
+        self,
+        *,
+        raw_query: str,
+        filters: dict[str, str],
+        limit: int | None = 8,
+    ) -> list[dict[str, Any]]:
         sql = """
             SELECT source_dataset, source_file, source_sheet, source_row_no, year, province, batch,
                    category, major_name, min_score, min_rank, evidence_text
@@ -305,11 +319,19 @@ class AdmissionsRepository:
         where_parts, params = self._build_scoreline_where(raw_query=raw_query, filters=filters)
         if where_parts:
             sql += " WHERE " + " AND ".join(where_parts)
-        sql += " ORDER BY year DESC, province ASC, major_name ASC LIMIT %s"
-        params.append(limit)
+        sql += " ORDER BY year DESC, province ASC, major_name ASC"
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(limit)
         return self._fetch_all(sql, params)
 
-    def search_policy_tables(self, *, raw_query: str, filters: dict[str, str], limit: int = 12) -> list[dict[str, Any]]:
+    def search_policy_tables(
+        self,
+        *,
+        raw_query: str,
+        filters: dict[str, str],
+        limit: int | None = 12,
+    ) -> list[dict[str, Any]]:
         sql = """
             SELECT source_dataset, source_file, source_doc, table_topic, source_row_no, field_name, field_value, evidence_text
             FROM policy_tables
@@ -317,8 +339,10 @@ class AdmissionsRepository:
         where_parts, params = self._build_policy_where(raw_query=raw_query, filters=filters)
         if where_parts:
             sql += " WHERE " + " AND ".join(where_parts)
-        sql += " ORDER BY table_topic ASC, source_row_no ASC LIMIT %s"
-        params.append(limit)
+        sql += " ORDER BY table_topic ASC, source_row_no ASC"
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(limit)
         return self._fetch_all(sql, params)
 
     def _fetch_all(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
