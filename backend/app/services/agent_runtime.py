@@ -681,138 +681,33 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                         rows.append(str(item.get("text", "")).strip())
                 return "\n".join(item for item in rows if item).strip()
             return str(content or "").strip()
-
-        @tool("local_rag_search")
-        def local_rag_search(tool_query: str) -> str:
-            """检索中原工学院本地知识库，并优先参考当前已收录的招生文档。"""
-            collector_tool_audit.append("agent_tool:local_rag_search")
-            if "rag" not in effective_features:
-                return "当前会话未开启 rag 功能。"
-            rag_result = self.deps.container.isolation.execute(
-                "rag-agent-service",
-                lambda: self.gateway._invoke_rag(
-                    request.session_id,
-                    tool_query,
-                    fail_features,
-                    memory_context_blocks + collector_context_blocks,
-                ),
-            )
-            if not rag_result.ok or rag_result.value is None:
-                return f"RAG 检索失败：{rag_result.error or 'unknown'}"
-            rag_output = rag_result.value
-            collector_context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
-            collector_sources[:] = self.dedupe_sources(
-                [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in rag_output.sources]],
-                limit=5,
-            )
-            if rag_output.degrade_reason:
-                collector_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
-            return "\n".join(item.strip() for item in rag_output.context_blocks[:3] if item.strip()) or "未检索到可靠本地资料。"
-
-        local_rag_search.description = (
-            "检索中原工学院本地知识库。"
-            "当问题与学校概况、学院专业、招生章程、录取规则、学费资助、校园服务等校内资料有关时优先使用。"
-            f"当前知识库已收录的文档包括：{rag_document_catalog}"
-        )
-
-        @tool("general_skill")
-        def general_skill(tool_query: str) -> str:
-            """调用通用技能处理流程化或结构化子任务。"""
-            allowed, reason = self.gateway._guard_skill_request(query=tool_query, saved_skill_id=None)
-            collector_tool_audit.append(f"agent_tool:general_skill:{reason}")
-            if not allowed:
-                return f"技能执行被拦截：{reason}"
-            skill_result = self.deps.container.isolation.execute(
-                "skill-service",
-                lambda: self.gateway._invoke_skill(tool_query, request.session_id, None, fail_features),
-            )
-            if not skill_result.ok or not skill_result.value:
-                return f"技能执行失败：{skill_result.error or 'unknown'}"
-            return str(skill_result.value)
-
-        @tool("saved_skill")
-        def saved_skill(tool_query: str) -> str:
-            """调用已保存技能，仅在当前会话存在 saved_skill_id 时可用。"""
-            if not request.saved_skill_id:
-                return "当前没有可用的历史技能。"
-            allowed, reason = self.gateway._guard_skill_request(query=tool_query, saved_skill_id=request.saved_skill_id)
-            collector_tool_audit.append(f"agent_tool:saved_skill:{reason}")
-            if not allowed:
-                return f"历史技能调用被拦截：{reason}"
-            skill_result = self.deps.container.isolation.execute(
-                "saved-skill-service",
-                lambda: self.gateway._invoke_skill(tool_query, request.session_id, request.saved_skill_id, fail_features),
-            )
-            if not skill_result.ok or not skill_result.value:
-                return f"历史技能执行失败：{skill_result.error or 'unknown'}"
-            return str(skill_result.value)
-
         runtime = self.get_mcp_runtime(trace_id)
         if runtime.notes:
             collector_notes.extend(runtime.notes)
         tools: list[Any] = []
-        runtime_tool_names: set[str] = set()
-        if "rag" in effective_features:
-            tools.append(local_rag_search)
-        if "skill_exec" in effective_features:
-            tools.append(general_skill)
-        if "use_saved_skill" in effective_features and request.saved_skill_id:
-            tools.append(saved_skill)
-        if runtime.tools:
-            normalized_runtime_tools = [self._normalize_agent_tool(item) for item in runtime.tools]
-            runtime_tool_map = {self._get_agent_tool_name(item): item for item in normalized_runtime_tools}
-            runtime_tool_names = set(runtime_tool_map.keys())
-
-            bing_search_tool = runtime_tool_map.get("bing_search")
-            if bing_search_tool is not None:
-
-                @tool("bing_search")
-                async def bing_search(query: str, count: int = 10, offset: int = 0) -> str:
-                    """调用 Bing 搜索工具检索公开网页结果。"""
-                    result = await self._invoke_mcp_tool(
-                        bing_search_tool,
-                        {
-                            "query": query,
-                            "count": count,
-                            "offset": offset,
-                        },
-                    )
-                    search_result_url_map.update(self._extract_uuid_url_map(result))
-                    collector_sources[:] = self.dedupe_sources(
-                        [*collector_sources, *self._extract_chat_sources_from_tool_result(result)],
-                        limit=5,
-                    )
-                    return self._normalize_tool_result_text(result) or "未获取到搜索结果。"
-
-                bing_search.description = self._get_agent_tool_description(bing_search_tool)
-                tools.append(bing_search)
-
-            crawl_webpage_tool = runtime_tool_map.get("crawl_webpage")
-            if crawl_webpage_tool is not None:
-
-                @tool("crawl_webpage")
-                async def crawl_webpage(uuids: list[str], urlMap: dict[str, str] | None = None) -> str:
-                    """根据搜索结果里的 UUID 和 URL 抓取网页正文。"""
-                    payload = self._build_crawl_webpage_payload(
-                        uuids=uuids,
-                        url_map=urlMap,
-                        cached_url_map=search_result_url_map,
-                    )
-                    result = await self._invoke_mcp_tool(crawl_webpage_tool, payload)
-                    collector_sources[:] = self.dedupe_sources(
-                        [*collector_sources, *self._extract_chat_sources_from_tool_result(result)],
-                        limit=5,
-                    )
-                    return self._normalize_tool_result_text(result) or "未获取到网页抓取结果。"
-
-                crawl_webpage.description = self._get_agent_tool_description(crawl_webpage_tool)
-                tools.append(crawl_webpage)
-
-            tools.extend(
-                item
-                for item in normalized_runtime_tools
-                if self._get_agent_tool_name(item) not in {"bing_search", "crawl_webpage"}
+        tools.extend(
+            self._build_local_agent_tools(
+                tool_factory=tool,
+                request=request,
+                effective_features=effective_features,
+                fail_features=fail_features,
+                memory_context_blocks=memory_context_blocks,
+                collector_context_blocks=collector_context_blocks,
+                collector_sources=collector_sources,
+                collector_notes=collector_notes,
+                collector_tool_audit=collector_tool_audit,
+                rag_document_catalog=rag_document_catalog,
             )
+        )
+        runtime_tools, runtime_tool_names = self._build_runtime_agent_tools(
+            tool_factory=tool,
+            runtime=runtime,
+            collector_sources=collector_sources,
+            collector_tool_audit=collector_tool_audit,
+            search_result_url_map=search_result_url_map,
+        )
+        tools.extend(runtime_tools)
+        if runtime.tools:
             collector_tool_audit.append("agent_tool:mcp_runtime:" + ",".join(item.alias for item in runtime.servers))
         elif runtime.servers:
             collector_tool_audit.append("agent_tool:mcp_runtime_unavailable:" + ",".join(item.alias for item in runtime.servers))
@@ -915,6 +810,194 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         if needs_evidence and not result.context_blocks and not result.sources:
             return StepReviewResult(ok=False, message="智能体未拿到可用证据。")
         return StepReviewResult(ok=True, message="智能体已完成子问题。")
+
+    def _build_local_agent_tools(
+        self,
+        *,
+        tool_factory: Callable[..., Any],
+        request: ChatRequest,
+        effective_features: list[FeatureFlag],
+        fail_features: set[str],
+        memory_context_blocks: list[str],
+        collector_context_blocks: list[str],
+        collector_sources: list[ChatSource],
+        collector_notes: list[str],
+        collector_tool_audit: list[str],
+        rag_document_catalog: str,
+    ) -> list[Any]:
+        tools: list[Any] = []
+        effective_feature_set = set(effective_features)
+
+        if "rag" in effective_feature_set:
+
+            @tool_factory("local_rag_search")
+            def local_rag_search(tool_query: str) -> str:
+                """检索中原工学院本地知识库，并优先参考当前已收录的招生文档。"""
+                collector_tool_audit.append("agent_tool:local_rag_search")
+                rag_result = self.deps.container.isolation.execute(
+                    "rag-agent-service",
+                    lambda: self.gateway._invoke_rag(
+                        request.session_id,
+                        tool_query,
+                        fail_features,
+                        memory_context_blocks + collector_context_blocks,
+                    ),
+                )
+                if not rag_result.ok or rag_result.value is None:
+                    return f"RAG 检索失败：{rag_result.error or 'unknown'}"
+                rag_output = rag_result.value
+                collector_context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
+                collector_sources[:] = self.dedupe_sources(
+                    [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in rag_output.sources]],
+                    limit=5,
+                )
+                if rag_output.degrade_reason:
+                    collector_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
+                return "\n".join(item.strip() for item in rag_output.context_blocks[:3] if item.strip()) or "未检索到可靠本地资料。"
+
+            local_rag_search.description = (
+                "检索中原工学院本地知识库。"
+                "当问题与学校概况、学院专业、招生章程、录取规则、学费资助、校园服务等校内资料有关时优先使用。"
+                f"当前知识库已收录的文档包括：{rag_document_catalog}"
+            )
+            tools.append(local_rag_search)
+
+        if "skill_exec" in effective_feature_set:
+
+            @tool_factory("general_skill")
+            def general_skill(tool_query: str) -> str:
+                """调用通用技能处理流程化或结构化子任务。"""
+                allowed, reason = self.gateway._guard_skill_request(query=tool_query, saved_skill_id=None)
+                collector_tool_audit.append(f"agent_tool:general_skill:{reason}")
+                if not allowed:
+                    return f"技能执行被拦截：{reason}"
+                skill_result = self.deps.container.isolation.execute(
+                    "skill-service",
+                    lambda: self.gateway._invoke_skill(tool_query, request.session_id, None, fail_features),
+                )
+                if not skill_result.ok or not skill_result.value:
+                    return f"技能执行失败：{skill_result.error or 'unknown'}"
+                return str(skill_result.value)
+
+            tools.append(general_skill)
+
+        if "use_saved_skill" in effective_feature_set and request.saved_skill_id:
+
+            @tool_factory("saved_skill")
+            def saved_skill(tool_query: str) -> str:
+                """调用已保存技能，仅在当前会话存在 saved_skill_id 时可用。"""
+                allowed, reason = self.gateway._guard_skill_request(query=tool_query, saved_skill_id=request.saved_skill_id)
+                collector_tool_audit.append(f"agent_tool:saved_skill:{reason}")
+                if not allowed:
+                    return f"历史技能调用被拦截：{reason}"
+                skill_result = self.deps.container.isolation.execute(
+                    "saved-skill-service",
+                    lambda: self.gateway._invoke_skill(tool_query, request.session_id, request.saved_skill_id, fail_features),
+                )
+                if not skill_result.ok or not skill_result.value:
+                    return f"历史技能执行失败：{skill_result.error or 'unknown'}"
+                return str(skill_result.value)
+
+            tools.append(saved_skill)
+
+        return tools
+
+    def _build_runtime_agent_tools(
+        self,
+        *,
+        tool_factory: Callable[..., Any],
+        runtime: McpToolRuntime,
+        collector_sources: list[ChatSource],
+        collector_tool_audit: list[str],
+        search_result_url_map: dict[str, str],
+    ) -> tuple[list[Any], set[str]]:
+        if not runtime.tools:
+            return [], set()
+
+        normalized_runtime_tools = [self._normalize_agent_tool(item) for item in runtime.tools]
+        runtime_tools: list[Any] = []
+
+        for runtime_tool in normalized_runtime_tools:
+            tool_name = self._get_agent_tool_name(runtime_tool)
+            if tool_name == "bing_search":
+                runtime_tools.append(
+                    self._build_wrapped_bing_search_tool(
+                        tool_factory=tool_factory,
+                        runtime_tool=runtime_tool,
+                        collector_sources=collector_sources,
+                        search_result_url_map=search_result_url_map,
+                    )
+                )
+                continue
+            if tool_name == "crawl_webpage":
+                runtime_tools.append(
+                    self._build_wrapped_crawl_webpage_tool(
+                        tool_factory=tool_factory,
+                        runtime_tool=runtime_tool,
+                        collector_sources=collector_sources,
+                        search_result_url_map=search_result_url_map,
+                    )
+                )
+                continue
+            runtime_tools.append(runtime_tool)
+
+        runtime_tool_names = {self._get_agent_tool_name(item) for item in normalized_runtime_tools}
+        return runtime_tools, runtime_tool_names
+
+    def _build_wrapped_bing_search_tool(
+        self,
+        *,
+        tool_factory: Callable[..., Any],
+        runtime_tool: Any,
+        collector_sources: list[ChatSource],
+        search_result_url_map: dict[str, str],
+    ) -> Any:
+        @tool_factory("bing_search")
+        async def bing_search(query: str, count: int = 10, offset: int = 0) -> str:
+            """调用 Bing 搜索工具检索公开网页结果。"""
+            result = await self._invoke_mcp_tool(
+                runtime_tool,
+                {
+                    "query": query,
+                    "count": count,
+                    "offset": offset,
+                },
+            )
+            search_result_url_map.update(self._extract_uuid_url_map(result))
+            collector_sources[:] = self.dedupe_sources(
+                [*collector_sources, *self._extract_chat_sources_from_tool_result(result)],
+                limit=5,
+            )
+            return self._normalize_tool_result_text(result) or "未获取到搜索结果。"
+
+        bing_search.description = self._get_agent_tool_description(runtime_tool)
+        return bing_search
+
+    def _build_wrapped_crawl_webpage_tool(
+        self,
+        *,
+        tool_factory: Callable[..., Any],
+        runtime_tool: Any,
+        collector_sources: list[ChatSource],
+        search_result_url_map: dict[str, str],
+    ) -> Any:
+        @tool_factory("crawl_webpage")
+        async def crawl_webpage(uuids: list[str], urlMap: dict[str, str] | None = None) -> str:
+            """根据搜索结果里的 UUID 和 URL 抓取网页正文。"""
+            payload = self._build_crawl_webpage_payload(
+                uuids=uuids,
+                url_map=urlMap,
+                cached_url_map=search_result_url_map,
+            )
+            result = await self._invoke_mcp_tool(runtime_tool, payload)
+            collector_sources[:] = self.dedupe_sources(
+                [*collector_sources, *self._extract_chat_sources_from_tool_result(result)],
+                limit=5,
+            )
+            return self._normalize_tool_result_text(result) or "未获取到网页抓取结果。"
+
+        crawl_webpage.description = self._get_agent_tool_description(runtime_tool)
+        return crawl_webpage
 
     async def _invoke_mcp_tool(self, tool: Any, query: str) -> Any:
         if hasattr(tool, "ainvoke"):
