@@ -141,26 +141,16 @@ class StructuredAdmissionsToolset:
     ) -> str:
         if not payload.records:
             return "未检索到匹配的结构化记录。"
+        table_text = self._render_payload_as_table(payload=payload, max_records=max_records)
         header = [
             f"结构化工具：{payload.tool_name}",
             f"命中记录数：{len(payload.records)}",
-            "以下为数据库中的结构化全文内容：",
+            "以下为 xlsx 原表格式输出：",
         ]
-        rendered = "\n".join(header)
-        shown = 0
-        capped_records = payload.records if max_records is None else payload.records[:max_records]
-        for index, record in enumerate(capped_records, start=1):
-            block = self._render_record_text(payload.tool_name, record=record, index=index)
-            candidate = f"{rendered}\n\n{block}".strip()
-            if max_chars is not None and shown > 0 and len(candidate) > max_chars:
-                break
-            rendered = candidate
-            shown += 1
-        if shown < len(payload.records):
-            rendered = (
-                f"{rendered}\n\n"
-                f"当前仅展示前 {shown} / {len(payload.records)} 条记录。"
-            )
+        rendered = "\n".join([*header, "", table_text]).strip()
+        if max_chars is not None and len(rendered) > max_chars:
+            trimmed = rendered[: max_chars - 64].rstrip()
+            rendered = f"{trimmed}\n\n内容过长，已截断显示。"
         return rendered.strip()
 
     def to_rag_response(self, *, payload: StructuredToolPayload, trace_id: str) -> RagQueryResponse | None:
@@ -421,23 +411,90 @@ class StructuredAdmissionsToolset:
         top_record_score = float(payload.records[0].get("_retrieval_score", 0.0) or 0.0)
         return top_record_score + min(len(payload.records), 5) * 0.5
 
-    def _render_record_text(self, tool_name: str, *, record: dict, index: int) -> str:
-        title = self._resolve_title(tool_name, record)
-        source_file = str(record.get("source_file", "")).strip() or "unknown_source"
-        evidence_text = str(record.get("evidence_text", "")).strip() or "无"
-        lines = [
-            f"[{index}] {title}",
-            f"来源文件：{source_file}",
-            f"证据全文：{evidence_text}",
-        ]
+    def _render_payload_as_table(self, *, payload: StructuredToolPayload, max_records: int | None) -> str:
+        if payload.tool_name == "policy_table_lookup":
+            return self._render_policy_payload_as_table(payload=payload, max_records=max_records)
+        headers = self._headers_for_tool(payload.tool_name)
+        rows = payload.records if max_records is None else payload.records[:max_records]
+        table_rows = ["\t".join(headers.values())]
+        for record in rows:
+            values = [self._format_table_value(record.get(field, "")) for field, _ in headers.items()]
+            table_rows.append("\t".join(values))
+        if max_records is not None and len(payload.records) > max_records:
+            table_rows.append(f"... 共 {len(payload.records)} 条，仅展示前 {max_records} 条")
+        return "\n".join(table_rows).strip()
+
+    def _render_policy_payload_as_table(self, *, payload: StructuredToolPayload, max_records: int | None) -> str:
+        grouped_rows: dict[tuple[str, str, str], dict[str, str]] = {}
+        ordered_keys: list[tuple[str, str, str]] = []
+        discovered_fields: list[str] = []
+        for record in payload.records:
+            key = (
+                str(record.get("source_file", "")).strip(),
+                str(record.get("table_topic", "")).strip(),
+                str(record.get("source_row_no", "")).strip(),
+            )
+            if key not in grouped_rows:
+                grouped_rows[key] = {
+                    "source_file": key[0],
+                    "table_topic": key[1],
+                    "source_row_no": key[2],
+                }
+                ordered_keys.append(key)
+            field_name = str(record.get("field_name", "")).strip()
+            field_value = self._format_table_value(record.get("field_value", ""))
+            if field_name:
+                grouped_rows[key][field_name] = field_value
+                if field_name not in discovered_fields:
+                    discovered_fields.append(field_name)
+        headers = ["source_file", "table_topic", "source_row_no", *discovered_fields]
+        label_map = {
+            "source_file": "来源文件",
+            "table_topic": "表主题",
+            "source_row_no": "源行号",
+        }
+        limited_keys = ordered_keys if max_records is None else ordered_keys[:max_records]
+        table_rows = ["\t".join(label_map.get(field, field) for field in headers)]
+        for key in limited_keys:
+            row = grouped_rows[key]
+            table_rows.append("\t".join(self._format_table_value(row.get(field, "")) for field in headers))
+        if max_records is not None and len(ordered_keys) > max_records:
+            table_rows.append(f"... 共 {len(ordered_keys)} 条，仅展示前 {max_records} 条")
+        return "\n".join(table_rows).strip()
+
+    def _headers_for_tool(self, tool_name: str) -> dict[str, str]:
+        if tool_name == "major_catalog_lookup":
+            return {
+                "major_code": "专业代码",
+                "major_name": "专业名称",
+                "duration": "学制",
+                "tuition": "学费（元）",
+                "exam_subjects": "选考科目",
+                "degree_type": "学位授予门类",
+                "college_name": "所在院系",
+            }
         if tool_name == "scoreline_lookup":
-            if record.get("source_sheet"):
-                lines.append(f"工作表：{record.get('source_sheet', '')}")
-        else:
-            source_doc = str(record.get("source_doc", "")).strip()
-            if source_doc:
-                lines.append(f"来源文档：{source_doc}")
-        return "\n".join(lines).strip()
+            return {
+                "year": "年份",
+                "province": "省份",
+                "batch": "批次",
+                "category": "科类/选科",
+                "major_name": "专业名称",
+                "min_score": "最低分",
+                "min_rank": "最低位次",
+            }
+        return {
+            "source_file": "来源文件",
+            "source_doc": "来源文档",
+            "table_topic": "表主题",
+            "source_row_no": "源行号",
+            "field_name": "字段名",
+            "field_value": "字段值",
+        }
+
+    def _format_table_value(self, value: object) -> str:
+        text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+        return text
 
     def _normalize_text(self, value: str) -> str:
         return re.sub(r"\s+", "", (value or "").strip()).lower()

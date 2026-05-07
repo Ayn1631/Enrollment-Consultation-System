@@ -391,7 +391,12 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
             records=[
                 {
                     "source_file": "2025年招生专业详情.xlsx",
+                    "major_code": "080801",
                     "major_name": "自动化",
+                    "duration": "四年",
+                    "tuition": "5500",
+                    "exam_subjects": "物理+化学",
+                    "degree_type": "工学",
                     "college_name": "自动化与电气工程学院",
                     "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院",
                 }
@@ -416,7 +421,8 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
     result_text = major_lookup("自动化专业学费多少")
 
     assert "结构化工具：major_catalog_lookup" in result_text
-    assert "以下为数据库中的结构化全文内容" in result_text
+    assert "以下为 xlsx 原表格式输出" in result_text
+    assert "专业代码\t专业名称\t学制\t学费（元）\t选考科目\t学位授予门类\t所在院系" in result_text
     assert any("structured:major_catalog_lookup" in item for item in collector_context_blocks)
     assert any(source.title == "自动化 - 自动化与电气工程学院" for source in collector_sources)
     assert "agent_tool:major_catalog_lookup" in collector_tool_audit

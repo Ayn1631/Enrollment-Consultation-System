@@ -67,7 +67,12 @@ def test_render_payload_text_returns_full_record_text():
             {
                 "source_file": "2025年招生专业详情.xlsx",
                 "source_doc": "2025年招生专业详情.xlsx",
+                "major_code": "080801",
                 "major_name": "自动化",
+                "duration": "四年",
+                "tuition": "5500",
+                "exam_subjects": "物理+化学",
+                "degree_type": "工学",
                 "college_name": "自动化与电气工程学院",
                 "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院；选考科目：物理+化学",
             }
@@ -76,8 +81,9 @@ def test_render_payload_text_returns_full_record_text():
 
     rendered = toolset.render_payload_text(payload, max_chars=500, max_records=1)
 
-    assert "以下为数据库中的结构化全文内容" in rendered
-    assert "证据全文：专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院；选考科目：物理+化学" in rendered
+    assert "以下为 xlsx 原表格式输出" in rendered
+    assert "专业代码\t专业名称\t学制\t学费（元）\t选考科目\t学位授予门类\t所在院系" in rendered
+    assert "080801\t自动化\t四年\t5500\t物理+化学\t工学\t自动化与电气工程学院" in rendered
 
 
 def test_filter_rows_prefers_exact_major_match():
@@ -184,3 +190,33 @@ def test_major_catalog_fulltext_should_return_all_repository_rows(monkeypatch):
     assert captured == {"raw_query": "", "filters": {}, "limit": None}
     assert len(payload.records) == 2
     assert payload.records[0]["major_name"] == "自动化"
+
+
+def test_render_policy_payload_text_should_pivot_to_table_rows():
+    toolset = StructuredAdmissionsToolset(Settings())
+    payload = StructuredToolPayload(
+        tool_name="policy_table_lookup",
+        matched_fields=[],
+        route_reason="政策附表类结构化全量文本返回",
+        records=[
+            {
+                "source_file": "附表.xlsx",
+                "table_topic": "专业情况汇总表",
+                "source_row_no": "26",
+                "field_name": "专业名称",
+                "field_value": "英语",
+            },
+            {
+                "source_file": "附表.xlsx",
+                "table_topic": "专业情况汇总表",
+                "source_row_no": "26",
+                "field_name": "学费（元）",
+                "field_value": "4400",
+            },
+        ],
+    )
+
+    rendered = toolset.render_payload_text(payload, max_records=10)
+
+    assert "来源文件\t表主题\t源行号\t专业名称\t学费（元）" in rendered
+    assert "附表.xlsx\t专业情况汇总表\t26\t英语\t4400" in rendered
