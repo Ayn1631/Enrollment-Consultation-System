@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ChatMessage } from '../types'
+import type { ChatMessage, ChatSource } from '../types'
 import MarkdownContent from './MarkdownContent.vue'
 
 const props = defineProps<{ message: ChatMessage }>()
@@ -36,6 +36,16 @@ const roleLabel = computed(() => {
   if (props.message.role === 'assistant') return '专家'
   return '系统'
 })
+
+const isLocalKnowledgeSource = (source: ChatSource) => {
+  const url = source.url.trim()
+  if (!url) return true
+  if (/^https?:\/\//i.test(url)) return false
+  if (/^[a-z]:\\/i.test(url)) return true
+  if (url.startsWith('docs/') || url.startsWith('docs\\')) return true
+  if (url.startsWith('./') || url.startsWith('../')) return true
+  return !/^[a-z][a-z0-9+.-]*:/i.test(url)
+}
 </script>
 
 <template>
@@ -55,7 +65,8 @@ const roleLabel = computed(() => {
     <div v-if="shouldShowSources" class="sources">
       <div class="source" v-for="source in props.message.sources" :key="source.url">
         <span class="source-title">{{ source.title }}</span>
-        <a :href="source.url" target="_blank" rel="noreferrer">查看来源</a>
+        <span v-if="isLocalKnowledgeSource(source)" class="source-badge">来自本地知识库</span>
+        <a v-else :href="source.url" target="_blank" rel="noreferrer">查看来源</a>
       </div>
     </div>
 
@@ -169,6 +180,11 @@ const roleLabel = computed(() => {
 
 .source-title {
   color: var(--ink-1);
+}
+
+.source-badge {
+  color: var(--ink-2);
+  font-weight: 600;
 }
 
 a {
