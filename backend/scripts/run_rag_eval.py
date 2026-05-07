@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
 from dataclasses import dataclass
 import json
 from math import log2
@@ -14,6 +15,7 @@ import uuid
 from typing import Any
 
 from fastapi.testclient import TestClient
+from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -85,21 +87,24 @@ def run_eval(
     normalized_workers = max(1, int(workers or 1))
     if normalized_workers == 1:
         context = _build_eval_worker_context(settings)
-        return [_evaluate_case(case=case, context=context, answer_mode=answer_mode) for case in cases]
+        rows: list[dict[str, Any]] = []
+        for case in tqdm(cases, desc="RAG评测", total=len(cases), ncols=100):
+            rows.append(_evaluate_case(case=case, context=context, answer_mode=answer_mode))
+        return rows
 
     ordered_rows: list[dict[str, Any] | None] = [None] * len(cases)
     with ThreadPoolExecutor(max_workers=normalized_workers) as executor:
-        futures = [
+        futures = {
             executor.submit(
                 _evaluate_case_indexed,
                 index=index,
                 case=case,
                 settings=settings,
                 answer_mode=answer_mode,
-            )
+            ): index
             for index, case in enumerate(cases)
-        ]
-        for future in futures:
+        }
+        for future in tqdm(as_completed(futures), total=len(futures), desc="RAG评测", ncols=100):
             index, row = future.result()
             ordered_rows[index] = row
     return [row for row in ordered_rows if isinstance(row, dict)]
