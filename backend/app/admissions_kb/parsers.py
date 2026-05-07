@@ -320,7 +320,7 @@ def load_score_line_rows(input_path: Path) -> list[dict[str, str]]:
     headers = rows[header_index]
     aliases = {
         "年份": {"年份", "年度"},
-        "省份": {"省份", "生源省份"},
+        "省份": {"省份", "生源省份", "省市"},
         "批次": {"批次", "录取批次"},
         "category": {"科类", "选科", "科类/选科"},
         "major_name": {"专业", "专业名称"},

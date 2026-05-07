@@ -58,3 +58,32 @@ def test_load_score_line_rows_uses_xlrd_like_module(monkeypatch, tmp_path: Path)
     assert rows[0]["major_name"] == "自动化"
     assert rows[0]["min_score"] == "560"
     assert rows[0]["min_rank"] == "51000"
+
+
+def test_load_score_line_rows_should_recognize_shengshi_header(monkeypatch, tmp_path: Path):
+    class _FakeSheet:
+        name = "Sheet1"
+        nrows = 2
+        ncols = 7
+        data = [
+            ["年份", "省市", "科类", "专业", "最高分", "最低分", "平均分"],
+            ["2025", "河南", "历史", "金融学", "562", "560", "561.3"],
+        ]
+
+        def cell_value(self, row_idx: int, col_idx: int):
+            return self.data[row_idx][col_idx]
+
+    class _FakeWorkbook:
+        def sheet_by_index(self, _: int):
+            return _FakeSheet()
+
+    fake_module = types.SimpleNamespace(open_workbook=lambda _: _FakeWorkbook())
+    monkeypatch.setitem(sys.modules, "xlrd", fake_module)
+
+    rows = load_score_line_rows(tmp_path / "score.xls")
+
+    assert len(rows) == 1
+    assert rows[0]["province"] == "河南"
+    assert rows[0]["category"] == "历史"
+    assert rows[0]["major_name"] == "金融学"
+    assert rows[0]["min_score"] == "560"
