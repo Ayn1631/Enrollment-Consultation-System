@@ -9,7 +9,8 @@ from app.admissions_kb.tools import StructuredToolPayload
 from app.config import Settings
 from app.models import ChatRequest, ChatSource
 from app.services.ai_stack import McpServerConfig, McpToolRuntime
-from app.services.agent_types import PlanStep, StepExecutionResult
+from app.services.agent_graph import AgentGraphRunner
+from app.services.agent_types import PlanStep, StepExecutionResult, SubproblemState
 from app.services.agent_runtime import AgentRuntime
 import app.services.agent_runtime as agent_runtime_module
 
@@ -371,7 +372,9 @@ def test_run_subproblem_agent_should_offer_all_tools_to_react_agent(monkeypatch)
         plan_step_index=1,
         total_plan_steps=2,
         subproblem=SimpleNamespace(
+            subproblem_id="sp-1",
             query="人工智能学院院长是谁",
+            step_outputs={},
             context_blocks=[],
             sources=[],
             notes=[],
@@ -453,6 +456,8 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
         collector_sources=collector_sources,
         collector_notes=collector_notes,
         collector_tool_audit=collector_tool_audit,
+        subproblem_tool_audit=[],
+        tool_reuse_cache={},
         rag_document_catalog="招生章程.md",
     )
 
@@ -465,6 +470,142 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
     assert any("structured:major_catalog_lookup" in item for item in collector_context_blocks)
     assert any(source.title == "自动化 - 自动化与电气工程学院" for source in collector_sources)
     assert "agent_tool:major_catalog_lookup" in collector_tool_audit
+
+
+def test_build_local_agent_tools_should_reuse_structured_lookup_within_same_subproblem(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s6-local-reuse",
+        messages=[{"role": "user", "content": "自动化专业学费多少"}],
+        mode="agent",
+        features=["rag"],
+    )
+    collector_context_blocks: list[str] = []
+    collector_sources: list[ChatSource] = []
+    collector_notes: list[str] = []
+    collector_tool_audit: list[str] = []
+    invoked = {"count": 0}
+
+    def _tool_factory(name: str):
+        def _decorate(fn):
+            fn.name = name
+            return fn
+
+        return _decorate
+
+    def _fake_major_catalog_fulltext(_self):
+        invoked["count"] += 1
+        return StructuredToolPayload(
+            tool_name="major_catalog_lookup",
+            matched_fields=[],
+            route_reason="专业目录类结构化全量文本返回",
+            records=[
+                {
+                    "source_file": "2025年招生专业详情.xlsx",
+                    "major_code": "080801",
+                    "major_name": "自动化",
+                    "duration": "四年",
+                    "tuition": "5500",
+                    "exam_subjects": "物理+化学",
+                    "degree_type": "工学",
+                    "college_name": "自动化与电气工程学院",
+                    "evidence_text": "专业名称：自动化；学费（元）：5500；所在院系：自动化与电气工程学院",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(
+        agent_runtime_module.StructuredAdmissionsToolset,
+        "major_catalog_fulltext",
+        _fake_major_catalog_fulltext,
+    )
+
+    tools = runtime._build_local_agent_tools(
+        tool_factory=_tool_factory,
+        request=request,
+        effective_features=["rag"],
+        fail_features=set(),
+        memory_context_blocks=[],
+        collector_context_blocks=collector_context_blocks,
+        collector_sources=collector_sources,
+        collector_notes=collector_notes,
+        collector_tool_audit=collector_tool_audit,
+        subproblem_tool_audit=["agent_tool:major_catalog_lookup"],
+        tool_reuse_cache={},
+        rag_document_catalog="招生章程.md",
+    )
+
+    major_lookup = next(item for item in tools if getattr(item, "name", "") == "major_catalog_lookup")
+    result_text = major_lookup("自动化专业学费多少")
+
+    assert "已经返回过完整结果" in result_text
+    assert "前面步骤记忆" in result_text
+    assert invoked["count"] == 0
+    assert collector_context_blocks == []
+    assert collector_sources == []
+    assert collector_tool_audit == ["agent_tool:major_catalog_lookup:reused"]
+
+
+def test_run_subproblem_agent_should_include_prior_step_memory_in_prompt(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s-prior-memory",
+        messages=[{"role": "user", "content": "河南物理类500分能报什么专业"}],
+        mode="agent",
+        features=["rag"],
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeLlm:
+        pass
+
+    class _FakeAiMessage:
+        type = "ai"
+        content = "已完成当前步骤。"
+
+    class _FakeAgent:
+        async def ainvoke(self, payload):
+            captured["payload"] = payload
+            return {"messages": [_FakeAiMessage()]}
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+    monkeypatch.setattr(runtime, "get_mcp_runtime", lambda _trace_id: McpToolRuntime(client=None, tools=[], servers=[], notes=[]))
+    monkeypatch.setattr("langgraph.prebuilt.create_react_agent", lambda *_args, **_kwargs: _FakeAgent())
+
+    result = runtime.run_subproblem_agent(
+        step=PlanStep("基于前面证据判断500分可报范围。"),
+        plan_step_index=2,
+        total_plan_steps=3,
+        subproblem=SimpleNamespace(
+            subproblem_id="sp-2",
+            query="河南物理类500分可以报考中原工学院哪些专业",
+            step_outputs={"1": "已确认用户条件为 2026 年河南物理类 500 分，并要求参考 2025 年情况。"},
+            context_blocks=["[plan-step:1] 已确认用户条件为 2026 年河南物理类 500 分。"],
+            sources=[],
+            notes=[],
+            tool_audit=["agent_tool:major_catalog_lookup"],
+        ),
+        request=request,
+        fail_features=set(),
+        effective_features=["rag"],
+        memory_context_blocks=["[memory] 用户上一轮问的是河南考生志愿推荐。"],
+        memory_text="短期记忆：用户上一轮问的是河南考生志愿推荐。",
+        trace_id="trace-prior-memory",
+        route_label="policy",
+        step_events=[],
+        sink=None,
+        attempt=1,
+    )
+
+    assert result.ok is True
+    payload = captured["payload"]
+    prompt_text = str(payload["messages"][-1].content)
+    assert "前面步骤记忆" in prompt_text
+    assert "已确认用户条件为 2026 年河南物理类 500 分，并要求参考 2025 年情况。" in prompt_text
+    assert "当前已拿到的历史证据" in prompt_text
+    assert "[memory] 用户上一轮问的是河南考生志愿推荐。" in prompt_text
 
 
 def test_run_subproblem_agent_should_emit_tool_input_and_output_trace(monkeypatch, tmp_path: Path):
@@ -519,6 +660,7 @@ def test_run_subproblem_agent_should_emit_tool_input_and_output_trace(monkeypatc
         subproblem=SimpleNamespace(
             subproblem_id="sp-1",
             query="自动化专业学费多少",
+            step_outputs={},
             context_blocks=[],
             sources=[],
             notes=[],
@@ -550,6 +692,63 @@ def test_run_subproblem_agent_should_emit_tool_input_and_output_trace(monkeypatc
     assert payload["tool_name"] == "major_catalog_lookup"
     assert payload["tool_args"]["tool_query"] == "自动化专业学费多少"
     assert "命中记录数：1" in payload["tool_output"]
+
+
+def test_execute_subproblem_should_not_duplicate_previous_context_blocks(monkeypatch):
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+    runner = AgentGraphRunner(runtime)
+    request = ChatRequest(
+        session_id="s-graph",
+        messages=[{"role": "user", "content": "河南物理类500分能报什么专业"}],
+        mode="agent",
+        features=["rag"],
+    )
+    subproblem = SubproblemState(
+        subproblem_id="sp-graph-1",
+        query="河南物理类500分能报什么专业",
+        plan_steps=[PlanStep("先汇总可报专业范围。")],
+        step_outputs={},
+        notes=["旧备注"],
+        context_blocks=["旧证据"],
+        sources=[ChatSource(title="旧来源", url="https://example.com/old")],
+        tool_audit=["agent_tool:major_catalog_lookup"],
+    )
+
+    monkeypatch.setattr(
+        runtime,
+        "run_subproblem_agent",
+        lambda **_kwargs: StepExecutionResult(
+            ok=True,
+            message="新结论",
+            context_blocks=["旧证据", "新证据"],
+            sources=[ChatSource(title="新来源", url="https://example.com/new")],
+            tool_audit=["agent_tool:scoreline_lookup"],
+            notes=["新备注"],
+        ),
+    )
+    monkeypatch.setattr(runtime, "review_step", lambda *args, **kwargs: SimpleNamespace(ok=True, message="步骤满足要求。"))
+
+    result = runner._execute_subproblem(
+        subproblem,
+        {
+            "agent_strategy": "quality",
+            "step_events": [],
+            "request": request,
+            "fail_features": set(),
+            "effective_features": ["rag"],
+            "memory_context": [],
+            "memory_text": "当前没有可用记忆。",
+            "trace_id": "trace-graph-1",
+            "route_label": "policy",
+        },
+        None,
+    )
+
+    assert result.context_blocks == ["旧证据", "新证据"]
+    assert result.step_outputs["1"] == "新结论"
+    assert result.notes == ["旧备注", "新备注"]
+    assert result.tool_audit == ["agent_tool:major_catalog_lookup", "agent_tool:scoreline_lookup"]
+    assert result.sources[0].title == "新来源"
 
 
 def test_normalize_agent_tool_should_unwrap_bound_tool_name_and_description():

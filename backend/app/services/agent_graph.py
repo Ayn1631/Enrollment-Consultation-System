@@ -427,10 +427,12 @@ class AgentGraphRunner:
                     is_final_step=is_final_step,
                     accumulated_tool_audit=working.tool_audit,
                 )
-                working.tool_audit.extend(result.tool_audit)
-                working.notes.extend(result.notes)
-                working.context_blocks.extend(result.context_blocks)
-                working.sources = self.runtime.dedupe_sources([*working.sources, *result.sources], limit=5)
+                working.tool_audit = list(dict.fromkeys([*working.tool_audit, *result.tool_audit]))
+                working.notes = list(dict.fromkeys([*working.notes, *result.notes]))
+                if result.context_blocks:
+                    working.context_blocks = list(dict.fromkeys(result.context_blocks))
+                if result.sources:
+                    working.sources = self.runtime.dedupe_sources(list(result.sources), limit=5)
                 if review.ok:
                     working.step_outputs[str(idx)] = result.message
                     working.current_step_index = idx

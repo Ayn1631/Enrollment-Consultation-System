@@ -812,6 +812,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         collector_notes = list(subproblem.notes)
         collector_tool_audit: list[str] = []
         search_result_url_map: dict[str, str] = {}
+        tool_reuse_cache: dict[str, str] = {}
         rag_document_catalog = self._get_rag_document_catalog_text()
 
         def normalize_content(content: Any) -> str:
@@ -841,6 +842,8 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 collector_sources=collector_sources,
                 collector_notes=collector_notes,
                 collector_tool_audit=collector_tool_audit,
+                subproblem_tool_audit=list(subproblem.tool_audit),
+                tool_reuse_cache=tool_reuse_cache,
                 rag_document_catalog=rag_document_catalog,
             )
         )
@@ -859,7 +862,8 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
 
         history_messages = self.gateway._build_langchain_history_messages(request.messages[:-1])
         memory_blocks_text = "\n".join(memory_context_blocks) if memory_context_blocks else "当前没有可用记忆片段。"
-        prior_evidence = "\n".join(collector_context_blocks[:8]) if collector_context_blocks else "当前没有已有证据。"
+        prior_step_memory_text = self._build_subproblem_step_memory_text(subproblem)
+        prior_evidence = self._build_agent_prior_evidence_text(collector_context_blocks)
         available_tools = (
                     "\n".join(
                         self._format_agent_tool_prompt_line(item)
@@ -878,7 +882,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "你必须把短期记忆、长期记忆、特殊记忆都当作真实可用上下文，并在整个推理过程中持续参考。"
             "不要机械调用工具；只有当已有证据不足、问题要求最新信息、需要公开网页核验、需要外部搜索，或当前问题在询问人物身份、现任职务、院系领导、部门负责人、联系方式等开放网页事实时才调用合适工具。"
             "如果本地资料不足，你应主动判断是否需要外部工具补充证据。"
-            "你做事非常负责, 你会尽可能找到信息, 哪怕进行深度思考与多轮无上限次数的工具调用!"
         )
         human_prompt = (
             f"执行策略：{request.agent_strategy}\n"
@@ -890,6 +893,8 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             f"{memory_text or '当前没有可用记忆。'}\n\n"
             "记忆上下文片段：\n"
             f"{memory_blocks_text}\n\n"
+            "前面步骤记忆：\n"
+            f"{prior_step_memory_text}\n\n"
             "当前已拿到的历史证据：\n"
             f"{prior_evidence}\n\n"
             "当前可用工具：\n"
@@ -901,13 +906,16 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "5. If a tool exposes args_schema, you must fill every required field before calling it.\n"
             "6. If a crawl tool needs search results, pass both `uuids` and `urlMap`; `urlMap` must be an object mapping each UUID to its URL.\n\n"
             "补充判断规则：\n"
-            "1. 如果问题涉及最新公告、近年录取、分省计划、分数线、位次或公开通知，而当前证据不足，可优先考虑 MCP 搜索或抓取工具。\n"
-            "2. 如果问题在问某个人是谁、某个职务由谁担任、院系领导或部门负责人是谁、联系电话/邮箱/办公地点是什么，而当前证据不足，也应优先考虑 MCP 搜索或抓取工具。\n"
-            "3. 如果本地知识库文档已经足够支撑当前步骤，就不要硬调外部工具。\n"
-            "4. 当前步骤的目标优先于工具偏好；工具只是手段，不是目标本身。\n"
-            "5. 如果需要调用 local_rag_search，可优先参考工具描述中的文档清单来判断本地库是否可能命中。\n\n"
+            "1. 如果当前子问题前面步骤已经拿到完整结构化表格，就不要重复调用同一份全量结构化工具，优先基于前面步骤记忆继续分析。\n"
+            "2. 如果问题涉及最新公告、近年录取、分省计划、分数线、位次或公开通知，而当前证据不足，可优先考虑 MCP 搜索或抓取工具。\n"
+            "3. 如果问题在问某个人是谁、某个职务由谁担任、院系领导或部门负责人是谁、联系电话/邮箱/办公地点是什么，而当前证据不足，也应优先考虑 MCP 搜索或抓取工具。\n"
+            "4. 如果本地知识库文档已经足够支撑当前步骤，就不要硬调外部工具。\n"
+            "5. 当前步骤的目标优先于工具偏好；工具只是手段，不是目标本身。\n"
+            "6. 如果需要调用 local_rag_search，可优先参考工具描述中的文档清单来判断本地库是否可能命中。\n\n"
+            "如果本地知识库文档已经足够支撑当前步骤，就不要硬调外部工具。\n"
             "请使用 ReAct 方式执行当前计划节点。"
             "只输出本步骤的执行结果。"
+            "你尽可能的快速完成任务, 而不是对简单问题反复思考"
         )
 
         agent = create_react_agent(llm, tools, prompt=prompt, version="v2")
@@ -1004,11 +1012,14 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         collector_sources: list[ChatSource],
         collector_notes: list[str],
         collector_tool_audit: list[str],
+        subproblem_tool_audit: list[str],
+        tool_reuse_cache: dict[str, str],
         rag_document_catalog: str,
     ) -> list[Any]:
         tools: list[Any] = []
         effective_feature_set = set(effective_features)
         structured_toolset = StructuredAdmissionsToolset(self.deps.services.settings)
+        prior_loaded_tools = self._extract_structured_tool_names(subproblem_tool_audit)
 
         if "rag" in effective_feature_set:
 
@@ -1016,6 +1027,10 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             def local_rag_search(tool_query: str) -> str:
                 """检索中原工学院本地知识库，并优先参考当前已收录的招生文档。"""
                 collector_tool_audit.append("agent_tool:local_rag_search")
+                normalized_query = re.sub(r"\s+", " ", str(tool_query or "")).strip()
+                cache_key = f"local_rag_search::{normalized_query}"
+                if normalized_query and cache_key in tool_reuse_cache:
+                    return "local_rag_search 在当前步骤中已执行过相同查询，本次直接复用前一次结果。"
                 rag_result = self.deps.container.isolation.execute(
                     "rag-agent-service",
                     lambda: self.gateway._invoke_rag(
@@ -1035,7 +1050,10 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 )
                 if rag_output.degrade_reason:
                     collector_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
-                return "\n".join(item.strip() for item in rag_output.context_blocks[:3] if item.strip()) or "未检索到可靠本地资料。"
+                result_text = "\n".join(item.strip() for item in rag_output.context_blocks[:3] if item.strip()) or "未检索到可靠本地资料。"
+                if normalized_query:
+                    tool_reuse_cache[cache_key] = result_text
+                return result_text
 
             local_rag_search.description = (
                 "检索中原工学院本地知识库。"
@@ -1044,8 +1062,14 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             )
             tools.append(local_rag_search)
 
-        def run_structured_lookup(tool_name: str, tool_query: str, *, limit: int) -> str:
-            collector_tool_audit.append(f"agent_tool:{tool_name}")
+        def run_structured_lookup(tool_name: str, tool_query: str) -> str:
+            loaded_before = tool_name in prior_loaded_tools or tool_name in tool_reuse_cache
+            collector_tool_audit.append(f"agent_tool:{tool_name}{':reused' if loaded_before else ''}")
+            if loaded_before:
+                return (
+                    f"{tool_name} 在当前子问题中已经返回过完整结果，"
+                    "本次不再重复展开同一份表格，请直接基于前面步骤记忆和既有证据继续分析。"
+                )
             try:
                 if tool_name == "major_catalog_lookup":
                     payload = structured_toolset.major_catalog_fulltext()
@@ -1068,12 +1092,14 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                     [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in structured_response.sources]],
                     limit=5,
                 )
-            return structured_toolset.render_payload_text(payload)
+            rendered = structured_toolset.render_payload_text(payload)
+            tool_reuse_cache[tool_name] = rendered
+            return rendered
 
         @tool_factory("major_catalog_lookup")
         def major_catalog_lookup(tool_query: str) -> str:
             """查询招生专业目录类结构化知识库。"""
-            return run_structured_lookup("major_catalog_lookup", tool_query, limit=8)
+            return run_structured_lookup("major_catalog_lookup", tool_query)
 
         major_catalog_lookup.description = (
             "查询专业目录类结构化知识库（xlsx/xls）。"
@@ -1084,7 +1110,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         @tool_factory("scoreline_lookup")
         def scoreline_lookup(tool_query: str) -> str:
             """查询录取分数线类结构化知识库。"""
-            return run_structured_lookup("scoreline_lookup", tool_query, limit=8)
+            return run_structured_lookup("scoreline_lookup", tool_query)
 
         scoreline_lookup.description = (
             "查询录取分数线类结构化知识库（xlsx/xls）。"
@@ -1095,7 +1121,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         @tool_factory("policy_table_lookup")
         def policy_table_lookup(tool_query: str) -> str:
             """查询招生章程或政策附表类结构化知识库。"""
-            return run_structured_lookup("policy_table_lookup", tool_query, limit=12)
+            return run_structured_lookup("policy_table_lookup", tool_query)
 
         policy_table_lookup.description = (
             "查询政策附表类结构化知识库（xlsx/xls）。"
@@ -1681,6 +1707,59 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "uuids": normalized_uuids,
             "urlMap": {uuid_value: merged_url_map[uuid_value] for uuid_value in normalized_uuids},
         }
+
+    def _extract_structured_tool_names(self, tool_audit: list[str]) -> set[str]:
+        structured_names = {"major_catalog_lookup", "scoreline_lookup", "policy_table_lookup"}
+        loaded: set[str] = set()
+        for item in tool_audit:
+            normalized = str(item or "").strip()
+            if not normalized.startswith("agent_tool:"):
+                continue
+            name = normalized.split(":", 2)[1] if normalized.count(":") >= 1 else ""
+            if name in structured_names:
+                loaded.add(name)
+        return loaded
+
+    def _build_subproblem_step_memory_text(self, subproblem: SubproblemState, *, limit: int = 4) -> str:
+        if not subproblem.step_outputs:
+            return "当前还没有前面步骤的结论记忆。"
+        def _step_sort_key(value: tuple[str, str]) -> int:
+            try:
+                return int(str(value[0]))
+            except Exception:
+                return 0
+        ordered_items = sorted(
+            subproblem.step_outputs.items(),
+            key=_step_sort_key,
+        )
+        selected = ordered_items[-limit:]
+        rows = []
+        for step_no, content in selected:
+            normalized = self._compact_text_block(str(content or "").strip(), limit_chars=260)
+            if not normalized:
+                continue
+            rows.append(f"- 步骤{step_no}：{normalized}")
+        return "\n".join(rows) if rows else "当前还没有前面步骤的结论记忆。"
+
+    def _build_agent_prior_evidence_text(self, context_blocks: list[str], *, limit: int = 8) -> str:
+        if not context_blocks:
+            return "当前没有已有证据。"
+        rows: list[str] = []
+        seen: set[str] = set()
+        for item in reversed(context_blocks):
+            normalized = self._compact_text_block(str(item or "").strip(), limit_chars=260)
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(normalized)
+            if len(rows) >= limit:
+                break
+        if not rows:
+            return "当前没有已有证据。"
+        return "\n".join(reversed(rows))
 
     def get_mcp_runtime(self, trace_id: str) -> McpToolRuntime:
         with self._mcp_runtime_guard:
