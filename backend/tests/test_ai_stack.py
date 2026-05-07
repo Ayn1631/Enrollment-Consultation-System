@@ -308,3 +308,77 @@ def test_build_langchain_mcp_runtime_should_use_single_multiserver_client(monkey
     assert set(captured_connections[0].keys()) == {"math_server", "weather_server"}
     assert len(runtime.tools) == 1
     assert [item.alias for item in runtime.servers] == ["math_server", "weather_server"]
+
+
+def test_load_mcp_server_configs_should_preserve_streamable_http_transport(tmp_path):
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "web-search-prime": {
+                        "type": "streamable_http",
+                        "url": "https://example.com/mcp",
+                        "headers": {"Authorization": "Bearer test-token"},
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(MCP_ENABLED=True, MCP_CONFIG_PATH=str(config_path))
+
+    servers, notes = load_mcp_server_configs(settings)
+
+    assert len(servers) == 1
+    assert servers[0].transport == "streamable_http"
+    assert servers[0].url == "https://example.com/mcp"
+    assert any("MCP 配置已加载" in note for note in notes)
+
+
+def test_build_langchain_mcp_runtime_should_pass_streamable_http_transport(monkeypatch, tmp_path):
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "web-search-prime": {
+                        "type": "streamable_http",
+                        "url": "https://example.com/mcp",
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(MCP_ENABLED=True, MCP_CONFIG_PATH=str(config_path))
+    captured_connections: list[dict[str, dict[str, str]]] = []
+
+    class _FakeClient:
+        def __init__(
+            self,
+            connections=None,
+            *,
+            callbacks=None,
+            tool_interceptors=None,
+            tool_name_prefix=False,
+        ):
+            captured_connections.append(connections or {})
+
+        async def get_tools(self):
+            return [SimpleNamespace(name="web_search_prime", description="search the web")]
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr("langchain_mcp_adapters.client.MultiServerMCPClient", _FakeClient)
+
+    runtime = asyncio.run(build_langchain_mcp_runtime(settings))
+
+    assert len(captured_connections) == 1
+    assert captured_connections[0]["web_search_prime"]["transport"] == "streamable_http"
+    assert captured_connections[0]["web_search_prime"]["url"] == "https://example.com/mcp"
+    assert len(runtime.tools) == 1
+    asyncio.run(runtime.aclose())

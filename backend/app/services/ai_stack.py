@@ -351,8 +351,6 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
         alias = alias_base if alias_index == 0 else f"{alias_base}_{alias_index + 1}"
 
         transport = str(raw.get("transport") or raw.get("type") or "stdio").strip().lower()
-        if transport == "streamable_http":
-            transport = "http"
         timeout_seconds = raw.get("timeout")
         normalized_timeout = float(timeout_seconds) if timeout_seconds is not None else None
 
@@ -397,7 +395,7 @@ def load_mcp_server_configs(settings: Settings) -> tuple[list[McpServerConfig], 
             )
             continue
 
-        if transport in {"http", "sse"}:
+        if transport in {"http", "sse", "streamable_http"}:
             url = _expand_text_value(str(raw.get("url") or raw.get("serverUrl") or raw.get("endpoint") or ""))
             if not url:
                 _append_note(notes, f"MCP 服务 {original_name} 缺少 url/serverUrl，已跳过。")
