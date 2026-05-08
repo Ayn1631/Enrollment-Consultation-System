@@ -9,6 +9,8 @@ backend/reports/
 reports/
 backend/data/
 
+.codex/
+
 # Vue
 node_modules/
 

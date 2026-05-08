@@ -463,11 +463,11 @@ def test_build_local_agent_tools_should_include_executable_structured_lookup(mon
 
     monkeypatch.setattr(
         agent_runtime_module.StructuredAdmissionsToolset,
-        "major_catalog_fulltext",
-        lambda self: StructuredToolPayload(
+        "major_catalog_lookup",
+        lambda self, raw_query, filters=None: StructuredToolPayload(
             tool_name="major_catalog_lookup",
             matched_fields=[],
-            route_reason="专业目录类结构化全量文本返回",
+            route_reason="专业目录类结构化查询",
             records=[
                 {
                     "source_file": "2025年招生专业详情.xlsx",
@@ -532,12 +532,12 @@ def test_build_local_agent_tools_should_reuse_structured_lookup_within_same_subp
 
         return _decorate
 
-    def _fake_major_catalog_fulltext(_self):
+    def _fake_major_catalog_lookup(_self, raw_query, filters=None):
         invoked["count"] += 1
         return StructuredToolPayload(
             tool_name="major_catalog_lookup",
             matched_fields=[],
-            route_reason="专业目录类结构化全量文本返回",
+            route_reason="专业目录类结构化查询",
             records=[
                 {
                     "source_file": "2025年招生专业详情.xlsx",
@@ -555,8 +555,8 @@ def test_build_local_agent_tools_should_reuse_structured_lookup_within_same_subp
 
     monkeypatch.setattr(
         agent_runtime_module.StructuredAdmissionsToolset,
-        "major_catalog_fulltext",
-        _fake_major_catalog_fulltext,
+        "major_catalog_lookup",
+        _fake_major_catalog_lookup,
     )
 
     tools = runtime._build_local_agent_tools(
@@ -569,20 +569,134 @@ def test_build_local_agent_tools_should_reuse_structured_lookup_within_same_subp
         collector_sources=collector_sources,
         collector_notes=collector_notes,
         collector_tool_audit=collector_tool_audit,
-        subproblem_tool_audit=["agent_tool:major_catalog_lookup"],
-        tool_reuse_cache={},
+        subproblem_tool_audit=[],
+        tool_reuse_cache={"major_catalog_lookup::自动化专业学费多少": "cached-major-result"},
         rag_document_catalog="招生章程.md",
     )
 
     major_lookup = next(item for item in tools if getattr(item, "name", "") == "major_catalog_lookup")
     result_text = major_lookup("自动化专业学费多少")
 
-    assert "已经返回过完整结果" in result_text
+    assert "已经返回过相同查询结果" in result_text
     assert "前面步骤记忆" in result_text
     assert invoked["count"] == 0
     assert collector_context_blocks == []
     assert collector_sources == []
     assert collector_tool_audit == ["agent_tool:major_catalog_lookup:reused"]
+
+
+def test_load_memory_context_should_keep_all_memory_entries():
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    runtime.deps.services.read_memory = lambda session_id, kind: SimpleNamespace(
+        entries=[
+            SimpleNamespace(key=f"{kind}-{idx}", value=f"{kind}-value-{idx}")
+            for idx in range(1, 5)
+        ]
+        if kind == "short"
+        else []
+    )
+    runtime.deps.container.isolation.execute = lambda _name, fn: SimpleNamespace(ok=True, value=fn(), error=None)
+
+    context_blocks, memory_text, notes = runtime.load_memory_context("session-memory")
+
+    assert context_blocks == [
+        "[memory] short-value-1",
+        "[memory] short-value-2",
+        "[memory] short-value-3",
+        "[memory] short-value-4",
+    ]
+    assert "- short-4: short-value-4" in memory_text
+    assert notes == ["短期记忆已接入上下文。"]
+
+
+def test_build_subproblem_step_memory_text_should_keep_full_previous_step_outputs():
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+    long_step_1 = "证据A" * 120
+    long_step_2 = "证据B" * 120
+
+    text = runtime._build_subproblem_step_memory_text(
+        SimpleNamespace(
+            step_outputs={
+                "1": long_step_1,
+                "2": long_step_2,
+            }
+        )
+    )
+
+    assert long_step_1 in text
+    assert long_step_2 in text
+    assert "..." not in text
+
+
+def test_build_agent_prior_evidence_text_should_keep_full_evidence_blocks():
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+    long_block = "关键证据" * 160
+
+    text = runtime._build_agent_prior_evidence_text(
+        [
+            "[memory] 已知条件",
+            long_block,
+            long_block,
+            "[plan-step:1] 结论",
+        ]
+    )
+
+    assert long_block in text
+    assert text.count(long_block) == 1
+    assert "..." not in text
+
+
+def test_build_local_agent_tools_should_return_full_local_rag_result_but_only_collect_top_k():
+    settings = Settings(MCP_ENABLED=False)
+    settings.rag_final_top_k = 2
+    runtime = AgentRuntime(_GatewayStub(settings))
+    request = ChatRequest(
+        session_id="s-rag-full-output",
+        messages=[{"role": "user", "content": "网络空间安全专业学费和选科要求"}],
+        mode="agent",
+        features=["rag"],
+    )
+    collector_context_blocks: list[str] = []
+    collector_sources: list[ChatSource] = []
+    collector_notes: list[str] = []
+    collector_tool_audit: list[str] = []
+    runtime.deps.container.isolation.execute = lambda _name, fn: SimpleNamespace(ok=True, value=fn(), error=None)
+    runtime.gateway._invoke_rag = lambda *_args, **_kwargs: SimpleNamespace(
+        context_blocks=["证据1", "证据2", "证据3", "证据4"],
+        sources=[ChatSource(title="来源1", url="https://example.com/1")],
+        degrade_reason=None,
+    )
+
+    def _tool_factory(name: str):
+        def _decorate(fn):
+            fn.name = name
+            return fn
+
+        return _decorate
+
+    tools = runtime._build_local_agent_tools(
+        tool_factory=_tool_factory,
+        request=request,
+        effective_features=["rag"],
+        fail_features=set(),
+        memory_context_blocks=[],
+        collector_context_blocks=collector_context_blocks,
+        collector_sources=collector_sources,
+        collector_notes=collector_notes,
+        collector_tool_audit=collector_tool_audit,
+        subproblem_tool_audit=[],
+        tool_reuse_cache={},
+        rag_document_catalog="招生章程.md",
+    )
+
+    local_rag = next(item for item in tools if getattr(item, "name", "") == "local_rag_search")
+    result_text = local_rag("网络空间安全专业学费和选科要求")
+
+    assert result_text == "证据1\n证据2\n证据3\n证据4"
+    assert collector_context_blocks == ["证据1", "证据2"]
+    assert collector_sources[0].title == "来源1"
+    assert collector_tool_audit == ["agent_tool:local_rag_search"]
 
 
 def test_run_subproblem_agent_should_include_prior_step_memory_in_prompt(monkeypatch):
@@ -791,6 +905,97 @@ def test_execute_subproblem_should_not_duplicate_previous_context_blocks(monkeyp
     assert result.sources[0].title == "新来源"
 
 
+def test_merge_subproblem_results_should_prioritize_subproblem_step_outputs():
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+    runner = AgentGraphRunner(runtime)
+    state = {
+        "step_events": [],
+        "agent_strategy": "quality",
+        "_step_sink": None,
+        "degraded_features": [],
+        "subproblem_results": [
+            SubproblemState(
+                subproblem_id="sp-1",
+                query="2025年会计学专业的学费是多少",
+                status="completed",
+                step_outputs={"1": "已确认会计学专业学费为 4400 元/年。"},
+                notes=[],
+                context_blocks=["[structured:major_catalog_lookup] 会计学 学费 4400"],
+                sources=[],
+                tool_audit=[],
+            )
+        ],
+        "sources": [],
+        "notes": [],
+        "generation_context_blocks": [],
+        "merge_summary": "",
+        "tool_audit": [],
+    }
+
+    result = runner._merge_subproblem_results(state)
+
+    assert result["generation_context_blocks"][0] == "[subproblem-answer:sp-1] 已确认会计学专业学费为 4400 元/年。"
+    assert result["generation_context_blocks"] == ["[subproblem-answer:sp-1] 已确认会计学专业学费为 4400 元/年。"]
+    assert result["merge_summary"] == "\n".join(
+        [
+            "[sp-1][completed] 2025年会计学专业的学费是多少",
+            "[sp-1] 当前结论：已确认会计学专业学费为 4400 元/年。",
+        ]
+    )
+    assert result["notes"] == [
+        "子问题汇总：\n[sp-1][completed] 2025年会计学专业的学费是多少\n[sp-1] 当前结论：已确认会计学专业学费为 4400 元/年。"
+    ]
+
+
+def test_generate_final_answer_should_only_use_memory_and_subproblem_summary(monkeypatch):
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+    runner = AgentGraphRunner(runtime)
+    captured = {}
+    runtime.deps.container.isolation.execute = lambda _name, fn: SimpleNamespace(ok=True, value=fn(), error=None)
+    runtime.gateway._invoke_generation = lambda **kwargs: (
+        captured.update(kwargs) or SimpleNamespace(text="最终回答", route="light", model="test-model", cache_hit=False)
+    )
+    state = {
+        "step_events": [],
+        "agent_strategy": "quality",
+        "_step_sink": None,
+        "memory_context": ["[memory] 用户倾向低学费专业"],
+        "memory_text": "短期记忆：用户倾向低学费专业。",
+        "generation_context_blocks": ["[subproblem-answer:sp-1] 会计学学费为 4400 元/年。"],
+        "merge_summary": "[sp-1][completed] 2025年会计学专业的学费是多少\n[sp-1] 当前结论：会计学学费为 4400 元/年。",
+        "notes": [
+            "路由：faq",
+            "子问题汇总：\n[sp-1][completed] 2025年会计学专业的学费是多少\n[sp-1] 当前结论：会计学学费为 4400 元/年。",
+            "不应进入最终生成的执行细节",
+        ],
+        "tool_audit": [],
+        "request": ChatRequest(
+            session_id="s-final-only-summary",
+            messages=[{"role": "user", "content": "2025年会计学专业的学费是什么？"}],
+            mode="agent",
+            features=["rag"],
+        ),
+        "fail_features": set(),
+        "last_user": "2025年会计学专业的学费是什么？",
+        "final_text": "",
+        "status": "ok",
+        "failure_reason": None,
+        "generation_notes": [],
+    }
+
+    result = runner._generate_final_answer(state)
+
+    assert result["final_text"] == "最终回答"
+    assert captured["context_blocks"] == [
+        "[memory] 用户倾向低学费专业",
+        "[subproblem-answer:sp-1] 会计学学费为 4400 元/年。",
+    ]
+    assert captured["feature_notes"] == [
+        "短期记忆：用户倾向低学费专业。",
+        "[sp-1][completed] 2025年会计学专业的学费是多少\n[sp-1] 当前结论：会计学学费为 4400 元/年。",
+    ]
+
+
 def test_execute_subproblem_should_preserve_tool_reuse_cache_between_steps(monkeypatch):
     runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
     runner = AgentGraphRunner(runtime)
@@ -849,6 +1054,49 @@ def test_normalize_agent_tool_should_unwrap_bound_tool_name_and_description():
     assert normalized is wrapped.bound
     assert runtime._get_agent_tool_name(wrapped) == "bing_search"
     assert runtime._get_agent_tool_description(wrapped) == "search official pages"
+
+
+def test_get_agent_tool_args_schema_text_should_keep_full_schema():
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+
+    class _SchemaTool:
+        args_schema = "x" * 500
+
+    rendered = runtime._get_agent_tool_args_schema_text(_SchemaTool())
+
+    assert rendered == "x" * 500
+
+
+def test_review_step_should_pass_all_sources_to_llm(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+    captured = {}
+
+    class _FakeResponse:
+        content = '{"ok": true, "message": "来源充分，可以通过。"}'
+
+    class _FakeLlm:
+        def invoke(self, messages):
+            captured["prompt"] = str(messages[1].content)
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+
+    review = runtime.review_step(
+        PlanStep("确认网络空间安全专业学费与选科要求。"),
+        StepExecutionResult(
+            ok=True,
+            message="已确认网络空间安全专业学费和选科要求。",
+            sources=[
+                ChatSource(title=f"来源{i}", url=f"https://example.com/{i}")
+                for i in range(1, 6)
+            ],
+        ),
+        is_final_step=True,
+    )
+
+    assert review.ok is True
+    assert "来源5 https://example.com/5" in captured["prompt"]
 
 
 def test_build_crawl_webpage_payload_should_fill_urlmap_from_cache():

@@ -34,7 +34,7 @@ class GenerationService:
             timeout=self.settings.llm_timeout_seconds,
             max_retries=0,
         )
-        print(f'~ LLM Client initialized with base URL: {self._client.base_url}, Key present: {self._client.api_key}')
+        # print(f'~ LLM Client initialized with base URL: {self._client.base_url}, Key present: {self._client.api_key}')
 
     def close(self) -> None:
         self._client.close()
@@ -225,8 +225,8 @@ class GenerationService:
         payload = {
             "model": model,
             "user_query": self._sanitize_external_text(user_query),
-            "context_blocks": self._sanitize_context_blocks(context_blocks)[:6],
-            "feature_notes": [self._sanitize_external_text(item) for item in feature_notes[:8]],
+            "context_blocks": self._sanitize_context_blocks(context_blocks),
+            "feature_notes": [self._sanitize_external_text(item) for item in feature_notes],
             "temperature": 0.4 if temperature is None else temperature,
             "top_p": 0.9 if top_p is None else top_p,
         }
@@ -281,8 +281,13 @@ class GenerationService:
         """调用 OpenAI 官方 SDK 访问兼容 LLM 接口生成答案。"""
         safe_query = self._sanitize_external_text(user_query)
         safe_context_blocks = self._sanitize_context_blocks(context_blocks)
-        context_text = "\n".join(f"- {item}" for item in safe_context_blocks[:6]) or "- 无可靠检索证据"
-        note_text = "\n".join(f"- {item}" for item in feature_notes) or "- 无"
+        safe_feature_notes = []
+        for item in feature_notes:
+            cleaned_note = self._sanitize_external_text(item)
+            if cleaned_note:
+                safe_feature_notes.append(cleaned_note)
+        context_text = "\n".join(f"- {item}" for item in safe_context_blocks) or "- 无可靠检索证据"
+        note_text = "\n".join(f"- {item}" for item in safe_feature_notes) or "- 无"
 
         messages: list[dict[str, Any]] = [
             {
@@ -293,7 +298,8 @@ class GenerationService:
                 "role": "user",
                 "content": (
                     f"用户问题：{safe_query}\n\n证据：\n{context_text}\n\n"
-                    f"执行备注：\n{note_text}\n\n请给出简明回答。"
+                    f"执行备注：\n{note_text}\n\n"
+                    "请先直接回答用户问题，再用最相关的证据支撑结论，并说明适用范围或不确定性。"
                 ),
             },
         ]
@@ -325,8 +331,13 @@ class GenerationService:
         """调用 OpenAI 兼容接口，以流式方式输出回答增量。"""
         safe_query = self._sanitize_external_text(user_query)
         safe_context_blocks = self._sanitize_context_blocks(context_blocks)
-        context_text = "\n".join(f"- {item}" for item in safe_context_blocks[:6]) or "- 无可靠检索证据"
-        note_text = "\n".join(f"- {item}" for item in feature_notes) or "- 无"
+        safe_feature_notes = []
+        for item in feature_notes:
+            cleaned_note = self._sanitize_external_text(item)
+            if cleaned_note:
+                safe_feature_notes.append(cleaned_note)
+        context_text = "\n".join(f"- {item}" for item in safe_context_blocks) or "- 无可靠检索证据"
+        note_text = "\n".join(f"- {item}" for item in safe_feature_notes) or "- 无"
 
         messages: list[dict[str, Any]] = [
             {
@@ -337,7 +348,8 @@ class GenerationService:
                 "role": "user",
                 "content": (
                     f"用户问题：{safe_query}\n\n证据：\n{context_text}\n\n"
-                    f"执行备注：\n{note_text}\n\n请给出简明回答。"
+                    f"执行备注：\n{note_text}\n\n"
+                    "请先直接回答用户问题，再用最相关的证据支撑结论，并说明适用范围或不确定性。"
                 ),
             },
         ]

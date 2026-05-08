@@ -250,7 +250,7 @@ def test_agent_mode_failure_should_not_fallback_to_plain_chat():
     assert parsed["done"]["error_message"]
 
 
-def test_agent_mode_generation_timeout_should_degrade_with_rule_based_summary(monkeypatch: pytest.MonkeyPatch):
+def test_agent_mode_generation_timeout_should_fail_without_rule_based_fallback(monkeypatch: pytest.MonkeyPatch):
     from app import main as main_module
 
     client = TestClient(app)
@@ -269,14 +269,14 @@ def test_agent_mode_generation_timeout_should_degrade_with_rule_based_summary(mo
     res = client.post("/api/chat", json=payload)
     assert res.status_code == 200
     data = res.json()
-    assert data["status"] == "degraded"
+    assert data["status"] == "failed"
 
     stream_res = client.get(f"/api/chat/stream?session_id={data['session_id']}")
     assert stream_res.status_code == 200
     parsed = _parse_sse_body(stream_res.text)
-    assert "当前最终生成阶段超时" in parsed["text"]
-    assert "generation:fallback:rule_based" in stream_res.text
-    assert any(step["status"] == "degraded" and step["node"] == "generate_final_answer" for step in parsed["steps"])
+    assert "当前专家模式在最终生成阶段超时" in parsed["text"]
+    assert "generation:fallback:rule_based" not in stream_res.text
+    assert any(step["status"] == "failed" and step["node"] == "generate_final_answer" for step in parsed["steps"])
 
 
 def test_use_saved_skill_requires_id():

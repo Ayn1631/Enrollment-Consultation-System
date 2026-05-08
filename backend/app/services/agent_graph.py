@@ -603,16 +603,30 @@ class AgentGraphRunner:
         degraded_features = list(state["degraded_features"])
         for item in state["subproblem_results"]:
             notes.append(f"[{item.subproblem_id}][{item.status}] {item.query}")
-            notes.extend(item.notes[:4])
-            context_blocks.extend(item.context_blocks[:6])
+            ordered_step_outputs = []
+            for step_no, content in sorted(
+                item.step_outputs.items(),
+                key=lambda value: int(str(value[0])) if str(value[0]).isdigit() else 0,
+            ):
+                normalized = str(content or "").strip()
+                if not normalized:
+                    continue
+                ordered_step_outputs.append((str(step_no), normalized))
+            if ordered_step_outputs:
+                notes.append(f"[{item.subproblem_id}] 当前结论：{ordered_step_outputs[-1][1]}")
+                context_blocks.append(f"[subproblem-answer:{item.subproblem_id}] {ordered_step_outputs[-1][1]}")
+            elif str(item.status or "").strip() == "failed":
+                failure_note = next((str(note).strip() for note in reversed(item.notes) if str(note).strip()), "当前子问题未得到可靠结果。")
+                notes.append(f"[{item.subproblem_id}] 未完成原因：{failure_note}")
             sources.extend(item.sources)
             state["tool_audit"].extend(item.tool_audit)
             if item.status == "failed":
                 degraded_features.append("citation_guard" if not item.sources else "rag")
+        summary_text = "\n".join(notes)
         state["sources"] = self.runtime.dedupe_sources(sources, limit=5)
-        state["notes"].extend(notes)
-        state["generation_context_blocks"] = context_blocks[:12]
-        state["merge_summary"] = "\n".join(notes[:10])
+        state["notes"].append(f"子问题汇总：\n{summary_text}")
+        state["generation_context_blocks"] = context_blocks
+        state["merge_summary"] = summary_text
         state["degraded_features"] = list(dict.fromkeys(degraded_features))
         self.runtime.emit_step(
             events=state["step_events"],
@@ -640,7 +654,7 @@ class AgentGraphRunner:
             generation_context_blocks.append(normalized)
         generation_notes: list[str] = []
         seen_notes: set[str] = set()
-        for item in [state["memory_text"], *state["notes"]]:
+        for item in [state["memory_text"], state["merge_summary"]]:
             normalized = str(item or "").strip()
             if not normalized:
                 continue
@@ -682,26 +696,6 @@ class AgentGraphRunner:
         if not generation_result.ok or generation_result.value is None:
             error_message = generation_result.error or "generation failed"
             state["tool_audit"].append(f"generation:error:{error_message}")
-            if self.runtime.should_degrade_generation_error(error_message):
-                state["final_text"] = self.runtime.build_rule_based_final_answer(
-                    query=state["last_user"],
-                    context_blocks=generation_context_blocks,
-                    notes=generation_notes,
-                    error_message=error_message,
-                )
-                state["status"] = "degraded"
-                state["failure_reason"] = error_message
-                state["tool_audit"].append("generation:fallback:rule_based")
-                self.runtime.emit_step(
-                    events=state["step_events"],
-                    sink=sink,
-                    strategy=state["agent_strategy"],
-                    node="generate_final_answer",
-                    title="生成最终回答",
-                    status="degraded",
-                    message=f"最终生成超时，已切换保守汇总：{error_message}",
-                )
-                return state
             state["status"] = "failed"
             state["failure_reason"] = error_message
             self.runtime.emit_step(

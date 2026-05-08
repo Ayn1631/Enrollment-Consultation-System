@@ -20,6 +20,12 @@ class StructuredToolPayload:
 
 
 class StructuredAdmissionsToolset:
+    _LOOKUP_LIMITS = {
+        "major_catalog_lookup": 9999,
+        "scoreline_lookup": 9999,
+        "policy_table_lookup": 9999,
+    }
+
     def __init__(self, settings):
         self.settings = settings
         self.repository = AdmissionsRepository(settings)
@@ -32,9 +38,10 @@ class StructuredAdmissionsToolset:
         *,
         raw_query: str,
         filters: dict[str, str] | None = None,
-        limit: int = 8,
+        limit: int | None = None,
     ) -> StructuredToolPayload:
         filters = dict(filters or {})
+        limit = self._LOOKUP_LIMITS["major_catalog_lookup"] if limit is None else limit
         try:
             records = self.repository.search_major_catalog(raw_query=raw_query, filters=filters, limit=limit)
         except Exception:
@@ -54,9 +61,10 @@ class StructuredAdmissionsToolset:
         *,
         raw_query: str,
         filters: dict[str, str] | None = None,
-        limit: int = 8,
+        limit: int | None = None,
     ) -> StructuredToolPayload:
         filters = dict(filters or {})
+        limit = self._LOOKUP_LIMITS["scoreline_lookup"] if limit is None else limit
         try:
             records = self.repository.search_score_lines(raw_query=raw_query, filters=filters, limit=limit)
         except Exception:
@@ -76,9 +84,10 @@ class StructuredAdmissionsToolset:
         *,
         raw_query: str,
         filters: dict[str, str] | None = None,
-        limit: int = 12,
+        limit: int | None = None,
     ) -> StructuredToolPayload:
         filters = dict(filters or {})
+        limit = self._LOOKUP_LIMITS["policy_table_lookup"] if limit is None else limit
         try:
             records = self.repository.search_policy_tables(raw_query=raw_query, filters=filters, limit=limit)
         except Exception:
@@ -132,30 +141,17 @@ class StructuredAdmissionsToolset:
             route_reason="政策附表类结构化全量文本返回",
         )
 
-    def render_payload_text(
-        self,
-        payload: StructuredToolPayload,
-        *,
-        max_chars: int | None = None,
-        max_records: int | None = None,
-    ) -> str:
+    def render_payload_text(self, payload: StructuredToolPayload) -> str:
         if not payload.records:
             return "未检索到匹配的结构化记录。"
-        if self._is_fulltext_payload(payload):
-            max_chars = None
-            max_records = None
         display_count = self._payload_display_count(payload)
-        table_text = self._render_payload_as_table(payload=payload, max_records=max_records)
+        table_text = self._render_payload_as_table(payload=payload)
         header = [
             f"结构化工具：{payload.tool_name}",
             f"命中记录数：{display_count}",
             "以下为 xlsx 原表格式输出：",
         ]
-        rendered = "\n".join([*header, "", table_text]).strip()
-        if max_chars is not None and len(rendered) > max_chars:
-            trimmed = rendered[: max_chars - 64].rstrip()
-            rendered = f"{trimmed}\n\n内容过长，已截断显示。"
-        return rendered.strip()
+        return "\n".join([*header, "", table_text]).strip()
 
     def to_rag_response(self, *, payload: StructuredToolPayload, trace_id: str) -> RagQueryResponse | None:
         if not payload.records:
@@ -401,20 +397,17 @@ class StructuredAdmissionsToolset:
         top_record_score = float(payload.records[0].get("_retrieval_score", 0.0) or 0.0)
         return top_record_score + min(len(payload.records), 5) * 0.5
 
-    def _render_payload_as_table(self, *, payload: StructuredToolPayload, max_records: int | None) -> str:
+    def _render_payload_as_table(self, *, payload: StructuredToolPayload) -> str:
         if payload.tool_name == "policy_table_lookup":
-            return self._render_policy_payload_as_table(payload=payload, max_records=max_records)
+            return self._render_policy_payload_as_table(payload=payload)
         headers = self._headers_for_tool(payload.tool_name)
-        rows = payload.records if max_records is None else payload.records[:max_records]
         table_rows = ["\t".join(headers.values())]
-        for record in rows:
+        for record in payload.records:
             values = [self._format_table_value(record.get(field, "")) for field, _ in headers.items()]
             table_rows.append("\t".join(values))
-        if max_records is not None and len(payload.records) > max_records:
-            table_rows.append(f"... 共 {len(payload.records)} 条，仅展示前 {max_records} 条")
         return "\n".join(table_rows).strip()
 
-    def _render_policy_payload_as_table(self, *, payload: StructuredToolPayload, max_records: int | None) -> str:
+    def _render_policy_payload_as_table(self, *, payload: StructuredToolPayload) -> str:
         grouped_rows: dict[tuple[str, str, str], dict[str, str]] = {}
         ordered_keys: list[tuple[str, str, str]] = []
         discovered_fields: list[str] = []
@@ -452,13 +445,10 @@ class StructuredAdmissionsToolset:
             return "未检索到可还原的政策附表字段。"
         label_map = self._policy_field_labels()
         ordered_keys.sort(key=lambda item: (item[1], self._safe_int(item[2]) or 0))
-        limited_keys = ordered_keys if max_records is None else ordered_keys[:max_records]
         table_rows = ["\t".join(label_map.get(field, field) for field in headers)]
-        for key in limited_keys:
+        for key in ordered_keys:
             row = grouped_rows[key]
             table_rows.append("\t".join(self._format_table_value(row.get(field, "")) for field in headers))
-        if max_records is not None and len(ordered_keys) > max_records:
-            table_rows.append(f"... 共 {len(ordered_keys)} 条，仅展示前 {max_records} 条")
         return "\n".join(table_rows).strip()
 
     def _headers_for_tool(self, tool_name: str) -> dict[str, str]:
@@ -530,9 +520,6 @@ class StructuredAdmissionsToolset:
             for record in payload.records
         }
         return len(grouped_keys)
-
-    def _is_fulltext_payload(self, payload: StructuredToolPayload) -> bool:
-        return "全量文本返回" in str(payload.route_reason or "")
 
     def _normalize_text(self, value: str) -> str:
         return re.sub(r"\s+", "", (value or "").strip()).lower()

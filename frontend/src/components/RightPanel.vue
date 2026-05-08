@@ -70,7 +70,8 @@ const emit = defineEmits<{
         <label>模型选择</label>
         <select :value="props.model" @change="emit('update:model', ($event.target as HTMLSelectElement).value)">
           <!-- <option value="gpt-5.4-mini">gpt-5.4-mini</option> -->
-          <option value="gpt-5.4">gpt-5.4</option>
+          <option value="gpt-5.4-high">gpt-5.4</option>
+          <option value="gpt-5.5">gpt-5.5</option>
           <!-- <option value="zyit-pro">Zyit-Pro</option> -->
         </select>
       </div>

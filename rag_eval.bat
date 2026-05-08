@@ -1,0 +1,2 @@
+D:\Mypower\Anaconda3\envs\graduation\python.exe backend\scripts\run_rag_eval.py --answer-mode extractive --workers 4 --cases backend\reports\rag_eval_cases.jsonl --report backend\reports\rag_eval_report.json --rows backend\reports\rag_eval_rows.jsonl
+D:\Mypower\Anaconda3\envs\graduation\python.exe backend\scripts\render_rag_eval_report.py --report-json backend\reports\rag_eval_report.json --output backend\reports\rag_eval_report.md

@@ -247,7 +247,7 @@ class AgentRuntime:
             if not result.ok or result.value is None:
                 notes.append(f"{label}读取失败，已忽略。")
                 continue
-            entries = result.value.entries[:3]
+            entries = list(result.value.entries or [])
             if not entries:
                 continue
             context_blocks.extend([f"{prefix} {item.value}" for item in entries])
@@ -1056,7 +1056,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 )
                 if rag_output.degrade_reason:
                     collector_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
-                result_text = "\n".join(item.strip() for item in rag_output.context_blocks[:3] if item.strip()) or "未检索到可靠本地资料。"
+                result_text = "\n".join(item.strip() for item in rag_output.context_blocks if item.strip()) or "未检索到可靠本地资料。"
                 if normalized_query:
                     tool_reuse_cache[cache_key] = result_text
                 return result_text
@@ -1069,20 +1069,22 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             tools.append(local_rag_search)
 
         def run_structured_lookup(tool_name: str, tool_query: str) -> str:
-            loaded_before = tool_name in prior_loaded_tools or tool_name in tool_reuse_cache
+            normalized_query = re.sub(r"\s+", " ", str(tool_query or "")).strip()
+            cache_key = f"{tool_name}::{normalized_query.lower()}" if normalized_query else tool_name
+            loaded_before = cache_key in tool_reuse_cache
             collector_tool_audit.append(f"agent_tool:{tool_name}{':reused' if loaded_before else ''}")
             if loaded_before:
                 return (
-                    f"{tool_name} 在当前子问题中已经返回过完整结果，"
-                    "本次不再重复展开同一份表格，请直接基于前面步骤记忆和既有证据继续分析。"
+                    f"{tool_name} 在当前子问题中已经返回过相同查询结果，"
+                    "本次不再重复展开同一份结果，请直接基于前面步骤记忆和既有证据继续分析。"
                 )
             try:
                 if tool_name == "major_catalog_lookup":
-                    payload = structured_toolset.major_catalog_fulltext()
+                    payload = structured_toolset.major_catalog_lookup(raw_query=tool_query, filters={})
                 elif tool_name == "scoreline_lookup":
-                    payload = structured_toolset.scoreline_fulltext()
+                    payload = structured_toolset.scoreline_lookup(raw_query=tool_query, filters={})
                 elif tool_name == "policy_table_lookup":
-                    payload = structured_toolset.policy_table_fulltext()
+                    payload = structured_toolset.policy_table_lookup(raw_query=tool_query, filters={})
                 else:
                     return f"结构化工具不存在：{tool_name}"
             except Exception as exc:
@@ -1092,14 +1094,14 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             structured_response = structured_toolset.to_rag_response(payload=payload, trace_id=request.session_id)
             if structured_response is not None:
                 collector_context_blocks.extend(
-                    structured_response.context_blocks[: self.deps.services.settings.rag_final_top_k]
+                    structured_response.context_blocks
                 )
                 collector_sources[:] = self.dedupe_sources(
                     [*collector_sources, *[ChatSource(title=item.title, url=item.url) for item in structured_response.sources]],
                     limit=5,
                 )
             rendered = structured_toolset.render_payload_text(payload)
-            tool_reuse_cache[tool_name] = rendered
+            tool_reuse_cache[cache_key] = rendered
             return rendered
 
         @tool_factory("major_catalog_lookup")
@@ -1316,13 +1318,13 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             )
         combined_tool_audit = list(dict.fromkeys([*(accumulated_tool_audit or []), *result.tool_audit]))
         context_preview = "\n".join(
-            f"- {self._compact_text_block(str(item or '').strip(), limit_chars=180)}"
-            for item in result.context_blocks[-4:]
+            f"- {str(item or '').strip()}"
+            for item in result.context_blocks
             if str(item or "").strip()
         ) or "无"
         source_preview = "\n".join(
-            f"- {self._compact_text_block(f'{item.title} {item.url}'.strip(), limit_chars=180)}"
-            for item in result.sources[:4]
+            f"- {f'{item.title} {item.url}'.strip()}"
+            for item in result.sources
         ) or "无"
         try:
             response = llm.invoke(
@@ -1352,7 +1354,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                             f"MCP 是否可用：{'是' if self._has_mcp_servers() else '否'}\n"
                             f"是否已使用 MCP：{'是' if any(item.startswith('agent_tool:mcp_tool:') for item in combined_tool_audit) else '否'}\n"
                             f"结果文本：\n{result.message.strip()}\n\n"
-                            f"上下文证据摘要：\n{context_preview}\n\n"
+                            f"上下文证据：\n{context_preview}\n\n"
                             f"来源摘要：\n{source_preview}\n\n"
                             f"工具轨迹：\n{json.dumps(combined_tool_audit, ensure_ascii=False)}\n"
                         )
@@ -1470,22 +1472,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         )
         return generation_output.text
 
-    def should_degrade_generation_error(self, error_message: str | None) -> bool:
-        normalized = (error_message or "").strip().lower()
-        if not normalized:
-            return False
-        soft_tokens = (
-            "timed out",
-            "timeout",
-            "circuit_open:generation-service",
-        )
-        hard_tokens = (
-            "generation failure injected",
-        )
-        if any(token in normalized for token in hard_tokens):
-            return False
-        return any(token in normalized for token in soft_tokens)
-
     def compact_generation_context(self, *, context_blocks: list[str], strategy: AgentStrategy) -> list[str]:
         limit = 4 if strategy == "speed" else 6
         compacted: list[str] = []
@@ -1520,32 +1506,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 break
         return compacted
 
-    def build_rule_based_final_answer(
-        self,
-        *,
-        query: str,
-        context_blocks: list[str],
-        notes: list[str],
-        error_message: str,
-    ) -> str:
-        rows = [
-            "当前最终生成阶段超时，以下为基于已完成步骤的保守汇总：",
-            f"问题：{query}",
-            "",
-        ]
-        evidence_rows = [item.strip() for item in context_blocks if item.strip()][:5]
-        note_rows = [item.strip() for item in notes if item.strip()][:5]
-        if evidence_rows:
-            rows.append("已取得的依据：")
-            rows.extend(f"- {item[:180]}" for item in evidence_rows)
-            rows.append("")
-        if note_rows:
-            rows.append("执行备注：")
-            rows.extend(f"- {item[:160]}" for item in note_rows)
-            rows.append("")
-        rows.append(f"失败原因：{error_message}")
-        rows.append("建议：稍后重试，或切换更快模型/速度优先策略后再试。")
-        return "\n".join(rows).strip()
 
     def _rule_rewrite_query(
         self,
@@ -1670,7 +1630,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             rendered = json.dumps(args_schema, ensure_ascii=False)
         else:
             rendered = str(args_schema)
-        return self._compact_text_block(rendered, limit_chars=320)
+        return rendered
 
     def _format_agent_tool_prompt_line(self, tool: Any) -> str:
         name = self._get_agent_tool_name(tool)
@@ -1809,7 +1769,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 loaded.add(name)
         return loaded
 
-    def _build_subproblem_step_memory_text(self, subproblem: SubproblemState, *, limit: int = 4) -> str:
+    def _build_subproblem_step_memory_text(self, subproblem: SubproblemState) -> str:
         if not subproblem.step_outputs:
             return "当前还没有前面步骤的结论记忆。"
         def _step_sort_key(value: tuple[str, str]) -> int:
@@ -1821,22 +1781,21 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             subproblem.step_outputs.items(),
             key=_step_sort_key,
         )
-        selected = ordered_items[-limit:]
         rows = []
-        for step_no, content in selected:
-            normalized = self._compact_text_block(str(content or "").strip(), limit_chars=260)
+        for step_no, content in ordered_items:
+            normalized = str(content or "").strip()
             if not normalized:
                 continue
             rows.append(f"- 步骤{step_no}：{normalized}")
         return "\n".join(rows) if rows else "当前还没有前面步骤的结论记忆。"
 
-    def _build_agent_prior_evidence_text(self, context_blocks: list[str], *, limit: int = 8) -> str:
+    def _build_agent_prior_evidence_text(self, context_blocks: list[str]) -> str:
         if not context_blocks:
             return "当前没有已有证据。"
         rows: list[str] = []
         seen: set[str] = set()
         for item in reversed(context_blocks):
-            normalized = self._compact_text_block(str(item or "").strip(), limit_chars=260)
+            normalized = str(item or "").strip()
             if not normalized:
                 continue
             key = normalized.lower()
@@ -1844,8 +1803,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 continue
             seen.add(key)
             rows.append(normalized)
-            if len(rows) >= limit:
-                break
         if not rows:
             return "当前没有已有证据。"
         return "\n".join(reversed(rows))

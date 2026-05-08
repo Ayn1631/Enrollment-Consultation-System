@@ -28,6 +28,43 @@ def test_dependency_health_local_mode(isolated_runtime_settings: Settings):
     assert health["generation-service"]["healthy"] is True
 
 
+def test_generation_service_should_pass_all_context_blocks_to_remote_model(monkeypatch):
+    captured = {}
+
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str, base_url: str, timeout: float, max_retries: int):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **kwargs):
+            captured["messages"] = kwargs["messages"]
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="这是远程生成结果"))]
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("app.services.llm.OpenAI", _FakeOpenAI)
+    settings = Settings().model_copy(
+        update={
+            "service_call_mode": "local",
+            "use_mock_generation": False,
+            "llm_api_key": "test-key",
+        }
+    )
+    service = GenerationService(settings)
+
+    service.generate(
+        user_query="2025年会计学专业的学费和选考科目是什么？",
+        context_blocks=[f"证据{i}" for i in range(1, 9)],
+        feature_notes=["备注A", "备注B"],
+    )
+
+    user_prompt = str(captured["messages"][1]["content"])
+    assert "证据8" in user_prompt
+    assert "备注B" in user_prompt
+
+
 def test_service_client_skill_save_and_list(isolated_runtime_settings: Settings):
     settings = _local_settings(isolated_runtime_settings)
     client = ServiceClient(settings=settings)
