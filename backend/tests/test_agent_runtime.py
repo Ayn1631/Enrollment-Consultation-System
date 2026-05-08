@@ -313,10 +313,19 @@ def test_build_plan_prompt_should_surface_open_fact_and_rag_catalog_guidance(mon
     assert "当前可用工具能力" in human_prompt
 
 
-def test_review_step_should_request_more_evidence_when_synthesis_uncertain_without_mcp(monkeypatch):
+def test_review_step_should_follow_llm_reviewer_rejection(monkeypatch):
     settings = Settings(MCP_ENABLED=False)
     runtime = AgentRuntime(_GatewayStub(settings))
     monkeypatch.setattr(runtime, "_has_mcp_servers", lambda: True)
+
+    class _FakeResponse:
+        content = '{"ok": false, "message": "当前结论仍未确认，且尚未使用 MCP 外部工具补强。"}'
+
+    class _FakeLlm:
+        def invoke(self, _messages):
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
 
     review = runtime.review_step(
         PlanStep("综合已有证据并给出结论。"),
@@ -327,6 +336,34 @@ def test_review_step_should_request_more_evidence_when_synthesis_uncertain_witho
 
     assert review.ok is False
     assert "尚未使用 MCP 外部工具补强" in review.message
+
+
+def test_review_step_should_follow_llm_reviewer_acceptance(monkeypatch):
+    settings = Settings(MCP_ENABLED=False)
+    runtime = AgentRuntime(_GatewayStub(settings))
+
+    class _FakeResponse:
+        content = '{"ok": true, "message": "当前步骤已经明确回答了目标字段，可以进入下一步。"}'
+
+    class _FakeLlm:
+        def invoke(self, _messages):
+            return _FakeResponse()
+
+    monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: _FakeLlm())
+
+    review = runtime.review_step(
+        PlanStep("基于已确认的证据给出网络空间安全专业学费结论。"),
+        StepExecutionResult(
+            ok=True,
+            message="中原工学院2025年网络空间安全专业学费为5000元/年·生，属于其余理工类专业收费标准。",
+            sources=[ChatSource(title="中原工学院2025年普通本科招生章程", url="https://zsc.zut.edu.cn/info/1124/2673.htm")],
+        ),
+        is_final_step=True,
+        accumulated_tool_audit=["agent_tool:major_catalog_lookup"],
+    )
+
+    assert review.ok is True
+    assert "明确回答了目标字段" in review.message
 
 
 def test_run_subproblem_agent_should_offer_all_tools_to_react_agent(monkeypatch):

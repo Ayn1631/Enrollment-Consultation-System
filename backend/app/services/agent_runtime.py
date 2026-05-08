@@ -1291,23 +1291,100 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             return StepReviewResult(ok=False, message=result.message or "步骤执行未返回有效结果。")
         if not (result.message or "").strip():
             return StepReviewResult(ok=False, message="步骤执行结果为空。")
-        if is_final_step:
-            normalized = (result.message or "").strip()
-            unresolved_markers = (
-                "不能据此确定",
-                "无法确认",
-                "目前无法确认",
-                "暂未获得可靠依据",
-                "不能确定",
-                "暂时无法确认",
-                "证据不足",
+        llm = build_langchain_chat_model(self.deps.services.settings)
+        if llm is None:
+            return self._rule_review_step(
+                step=step,
+                result=result,
+                is_final_step=is_final_step,
+                accumulated_tool_audit=accumulated_tool_audit,
             )
-            used_mcp = any(
-                item.startswith("agent_tool:mcp_tool:")
-                for item in [*(accumulated_tool_audit or []), *result.tool_audit]
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+        except Exception:
+            return self._rule_review_step(
+                step=step,
+                result=result,
+                is_final_step=is_final_step,
+                accumulated_tool_audit=accumulated_tool_audit,
             )
-            if self._has_mcp_servers() and not used_mcp and any(marker in normalized for marker in unresolved_markers):
-                return StepReviewResult(ok=False, message="当前结论仍未确认，且尚未使用 MCP 外部工具补强。")
+        combined_tool_audit = list(dict.fromkeys([*(accumulated_tool_audit or []), *result.tool_audit]))
+        context_preview = "\n".join(
+            f"- {self._compact_text_block(str(item or '').strip(), limit_chars=180)}"
+            for item in result.context_blocks[-4:]
+            if str(item or "").strip()
+        ) or "无"
+        source_preview = "\n".join(
+            f"- {self._compact_text_block(f'{item.title} {item.url}'.strip(), limit_chars=180)}"
+            for item in result.sources[:4]
+        ) or "无"
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "你是“招生咨询 Agent 步骤审查器”。"
+                            "你的任务是判断某个计划步骤的执行结果，是否已经足够通过审查并进入下一步。"
+                            "你必须依据‘步骤目标、当前结果文本、已拿到的上下文证据、来源、工具轨迹、是否为最终步骤’综合判断，"
+                            "不能使用简单关键词命中来做机械判断。"
+                            "审查标准："
+                            "1. 非最终步骤：只判断当前步骤目标是否基本完成，是否为下一步提供了足够前置证据。"
+                            "2. 最终步骤：必须判断当前子问题是否已经被明确回答，结论是否与目标对齐，是否存在明显证据缺口。"
+                            "3. 如果当前结果虽然有内容，但没有真正回答步骤目标，必须判定为不通过。"
+                            "4. 如果当前结果只是在重复背景、泛泛而谈、没有给出目标字段、或与目标专业/年份/范围不对齐，必须判定为不通过。"
+                            "5. 如果当前结果已经足够支持进入下一步或结束当前子问题，就判定为通过。"
+                            "6. 如果 MCP 可用但当前证据仍明显不足，而外部补强尚未发生，可以据此判定不通过，但要说明理由。"
+                            "输出要求：只能输出 JSON 对象，格式为 "
+                            '{"ok": true, "message": "简短中文说明"}'
+                            "。不要输出解释、Markdown 或其他内容。"
+                        )
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"步骤目标：{step.goal}\n"
+                            f"是否最终步骤：{'是' if is_final_step else '否'}\n"
+                            f"MCP 是否可用：{'是' if self._has_mcp_servers() else '否'}\n"
+                            f"是否已使用 MCP：{'是' if any(item.startswith('agent_tool:mcp_tool:') for item in combined_tool_audit) else '否'}\n"
+                            f"结果文本：\n{result.message.strip()}\n\n"
+                            f"上下文证据摘要：\n{context_preview}\n\n"
+                            f"来源摘要：\n{source_preview}\n\n"
+                            f"工具轨迹：\n{json.dumps(combined_tool_audit, ensure_ascii=False)}\n"
+                        )
+                    ),
+                ]
+            )
+            content = str(getattr(response, "content", "") or "").strip()
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                ok_value = bool(parsed.get("ok"))
+                message = str(parsed.get("message", "") or "").strip()
+                if message:
+                    return StepReviewResult(ok=ok_value, message=message)
+        except Exception:
+            pass
+        return self._rule_review_step(
+            step=step,
+            result=result,
+            is_final_step=is_final_step,
+            accumulated_tool_audit=accumulated_tool_audit,
+        )
+
+    def _rule_review_step(
+        self,
+        *,
+        step: PlanStep,
+        result: StepExecutionResult,
+        is_final_step: bool,
+        accumulated_tool_audit: list[str] | None = None,
+    ) -> StepReviewResult:
+        combined_tool_audit = [*(accumulated_tool_audit or []), *result.tool_audit]
+        used_mcp = any(item.startswith("agent_tool:mcp_tool:") for item in combined_tool_audit)
+        normalized_goal = self._normalize_plan_step_goal(step.goal)
+        normalized_message = (result.message or "").strip()
+        if is_final_step and self._has_mcp_servers() and not used_mcp and not result.sources:
+            return StepReviewResult(ok=False, message="当前结论缺少可核验证据，且尚未进行外部补强。")
+        if "结论" in normalized_goal and len(normalized_message) < 12:
+            return StepReviewResult(ok=False, message="当前步骤结果过短，尚不足以支撑结论。")
         return StepReviewResult(ok=True, message="步骤满足要求。")
 
     def replan_subproblem(self, subproblem: SubproblemState, request: ChatRequest, memory_text: str = "") -> SubproblemState:
