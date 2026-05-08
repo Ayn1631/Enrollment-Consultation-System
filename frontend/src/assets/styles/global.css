@@ -32,8 +32,9 @@ body::before {
   pointer-events: none;
   z-index: -1;
   background:
-    radial-gradient(circle at 16% 20%, rgba(202, 138, 4, 0.08), transparent 18%),
-    radial-gradient(circle at 84% 14%, rgba(28, 25, 23, 0.05), transparent 20%);
+    radial-gradient(circle at 16% 20%, rgba(188, 75, 55, 0.09), transparent 18%),
+    radial-gradient(circle at 82% 14%, rgba(150, 52, 35, 0.07), transparent 20%),
+    radial-gradient(circle at 72% 78%, rgba(255, 255, 255, 0.42), transparent 26%);
 }
 
 a {
@@ -59,12 +60,12 @@ input::placeholder {
 }
 
 ::selection {
-  background: rgba(202, 138, 4, 0.22);
+  background: rgba(188, 75, 55, 0.22);
   color: var(--ink-0);
 }
 
 :focus-visible {
-  outline: 2px solid rgba(202, 138, 4, 0.42);
+  outline: 2px solid rgba(188, 75, 55, 0.42);
   outline-offset: 2px;
 }
 

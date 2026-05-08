@@ -20,25 +20,25 @@ export const modeOptions: ModeDisplay[] = [
   {
     value: 'chat',
     label: '对话模式',
-    eyebrow: 'Direct Dialogue',
-    title: '把复杂招生问题讲清楚，不靠花架子撑场面。',
-    description: '适合连续咨询、政策解释和专业对比。系统会保持语气克制，优先把问题讲明白。',
-    note: '自然问答优先，适合老师、考生和家长进行连续追问。'
+    eyebrow: '直接咨询',
+    title: '把招生问题讲清楚，先回答，再展开。',
+    description: '适合连续咨询、政策解释和专业对比。界面和回答都保持克制，优先把问题讲明白。',
+    note: '自然问答优先，适合老师、考生和家长连续追问。'
   },
   {
     value: 'rag',
     label: 'RAG 问答',
-    eyebrow: 'Retrieval Grounded',
-    title: '把答案拴在资料上，少拍脑袋，多给依据。',
+    eyebrow: '资料核验',
+    title: '把答案落在资料上，少猜测，多依据。',
     description: '适合招生章程、学院介绍、时间节点和政策条款类问题，强调检索支撑与引用约束。',
-    note: '检索与引用约束默认开启，适合需要稳健依据的官方口径场景。'
+    note: '默认开启检索与引用约束，适合需要稳健依据的官方口径场景。'
   },
   {
     value: 'agent',
     label: '专家模式',
-    eyebrow: 'Expert Runtime',
-    title: '让系统自己拆问题、跑步骤、给结果，不在前台卖弄流程。',
-    description: '适合多条件志愿推荐、复杂政策判断和跨资料综合分析，展示必要轨迹，不把界面搞得像监控大屏。',
+    eyebrow: '专家协同',
+    title: '把复杂问题拆开处理，再给出一份能落地的建议。',
+    description: '适合多条件志愿推荐、复杂政策判断和跨资料综合分析，只展示必要轨迹，不打扰主咨询流程。',
     note: '会启用检索、联网和工具链，适合复杂问题与高价值问答。'
   }
 ]
@@ -90,18 +90,18 @@ export const promptSeeds: Record<SupportedMode, PromptSeed[]> = {
 
 export const editorialBriefings: Record<SupportedMode, Array<{ key: string; value: string }>> = {
   chat: [
-    { key: 'tone', value: '口径自然，但不轻浮' },
-    { key: 'focus', value: '把专业、录取、就业差异讲透' },
-    { key: 'scene', value: '适合现场咨询与连续追问' }
+    { key: '咨询口径', value: '自然清楚，不过度包装' },
+    { key: '处理重点', value: '把专业、录取、就业差异讲透' },
+    { key: '适用场景', value: '适合现场咨询与连续追问' }
   ],
   rag: [
-    { key: 'tone', value: '优先资料依据，压缩拍脑袋空间' },
-    { key: 'focus', value: '招生章程、学院资料、时间节点' },
-    { key: 'scene', value: '适合官方口径与政策核对' }
+    { key: '咨询口径', value: '优先资料依据，压缩主观猜测' },
+    { key: '处理重点', value: '招生章程、学院资料、时间节点' },
+    { key: '适用场景', value: '适合官方口径与政策核对' }
   ],
   agent: [
-    { key: 'tone', value: '前台克制，后台拆解' },
-    { key: 'focus', value: '复杂问题分步分析与综合建议' },
-    { key: 'scene', value: '适合高价值问答与多条件筛选' }
+    { key: '咨询口径', value: '前台简洁，后台拆解' },
+    { key: '处理重点', value: '复杂问题分步分析与综合建议' },
+    { key: '适用场景', value: '适合高价值问答与多条件筛选' }
   ]
 }

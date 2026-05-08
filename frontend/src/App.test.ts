@@ -40,7 +40,7 @@ describe('App', () => {
     expect(wrapper.text()).toContain('中原工学院招生咨询系统')
     expect(wrapper.text()).toContain('模式选择')
     expect(wrapper.text()).toContain('模型调优')
-    expect(wrapper.text()).toContain('Prompt Seeds')
+    expect(wrapper.text()).toContain('常用问题')
   })
 
   test('切换到专家模式时显示固定轨迹区域', async () => {

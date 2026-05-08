@@ -1,33 +1,33 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
 :root {
   color-scheme: light;
-  --font-display: 'Playfair Display', 'Noto Serif SC', serif;
-  --font-body: 'Inter', 'Noto Sans SC', sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'Noto Sans SC', sans-serif;
+  --font-body: 'Manrope', 'Noto Sans SC', sans-serif;
 
-  --bg-0: #fafaf9;
-  --bg-1: #f2efe8;
-  --bg-2: #e7dfd2;
+  --bg-0: #fcf8f5;
+  --bg-1: #f4ece6;
+  --bg-2: #ead8cf;
 
-  --panel: rgba(255, 255, 255, 0.74);
-  --panel-strong: rgba(255, 255, 255, 0.9);
+  --panel: rgba(255, 255, 255, 0.8);
+  --panel-strong: rgba(255, 255, 255, 0.92);
   --panel-dark: rgba(28, 25, 23, 0.92);
 
   --ink-0: #0c0a09;
   --ink-1: #1c1917;
-  --ink-2: #57534e;
-  --ink-3: #78716c;
-  --ink-inverse: #fcfbf8;
+  --ink-2: #5e524c;
+  --ink-3: #8a7b73;
+  --ink-inverse: #fffaf7;
 
-  --accent: #ca8a04;
-  --accent-strong: #a16207;
-  --accent-cool: #8b5e00;
+  --accent: #bc4b37;
+  --accent-strong: #9f2f1e;
+  --accent-cool: #7c251b;
 
   --success: #166534;
   --warning: #b45309;
   --danger: #b91c1c;
   --info: #1d4ed8;
 
-  --shadow-soft: 0 20px 50px rgba(28, 25, 23, 0.08);
-  --shadow-strong: 0 34px 80px rgba(28, 25, 23, 0.1);
+  --shadow-soft: 0 20px 50px rgba(66, 30, 18, 0.08);
+  --shadow-strong: 0 34px 80px rgba(66, 30, 18, 0.12);
 }

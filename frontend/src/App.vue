@@ -568,7 +568,7 @@ onMounted(() => {
 
     <header class="masthead">
       <div class="masthead__copy">
-        <p class="masthead__eyebrow">Admissions Intelligence Console</p>
+        <p class="masthead__eyebrow">招生咨询工作台</p>
         <h1>中原工学院招生咨询系统</h1>
         <p class="masthead__deck">{{ modeMeta.description }}</p>
       </div>
@@ -616,8 +616,8 @@ onMounted(() => {
         <section class="rail-section">
           <header class="rail-section__head rail-section__head--split">
             <div>
-              <p>会话序列</p>
-              <span>当前模式下继续追问也不会丢上下文</span>
+              <p>咨询会话</p>
+              <span>继续追问时会自动承接当前上下文</span>
             </div>
             <div class="rail-section__actions">
               <button type="button" class="text-button" @click="handleCreateSession">新建</button>
@@ -646,8 +646,8 @@ onMounted(() => {
 
         <section class="rail-section rail-section--quiet">
           <header class="rail-section__head">
-            <p>Prompt Seeds</p>
-            <span>给操作老师一个顺手的起手式</span>
+            <p>常用问题</p>
+            <span>提供几组常见招生咨询起手模板</span>
           </header>
           <ul class="seed-list">
             <li v-for="item in featuredPrompts" :key="item.label">
@@ -661,35 +661,21 @@ onMounted(() => {
       </aside>
 
       <main class="stage">
-        <section class="hero">
-          <div class="hero__eyebrow">{{ modeMeta.eyebrow }}</div>
-          <div class="briefing-strip" aria-label="当前模式摘要">
-            <div v-for="item in briefingItems" :key="item.key" class="briefing-strip__item">
+        <section class="mode-strip">
+          <div class="mode-strip__lead">
+            <p class="mode-strip__eyebrow">{{ modeMeta.eyebrow }}</p>
+            <div class="mode-strip__summary">
+              <strong>{{ modeMeta.label }}</strong>
+              <span>{{ modeMeta.note }}</span>
+            </div>
+          </div>
+          <div class="mode-strip__chips" aria-label="当前模式摘要">
+            <div v-for="item in briefingItems" :key="item.key" class="mode-strip__chip">
               <span>{{ item.key }}</span>
               <strong>{{ item.value }}</strong>
             </div>
           </div>
-          <div class="hero__grid">
-            <div class="hero__lead">
-              <h2>{{ modeMeta.title }}</h2>
-              <p>{{ modeMeta.note }}</p>
-            </div>
-            <dl class="hero__facts">
-              <div>
-                <dt>当前模式</dt>
-                <dd>{{ modeMeta.label }}</dd>
-              </div>
-              <div>
-                <dt>运行状态</dt>
-                <dd>{{ streaming ? '回答生成中' : healthStateLabel }}</dd>
-              </div>
-              <div>
-                <dt>当前模型</dt>
-                <dd>{{ model }}</dd>
-              </div>
-            </dl>
-          </div>
-          <div v-if="pageNotice" class="hero__notice" :class="pageNotice.type">
+          <div v-if="pageNotice" class="mode-strip__notice" :class="pageNotice.type">
             <span>{{ pageNotice.message }}</span>
             <button type="button" @click="pageNotice = null">关闭</button>
           </div>
@@ -717,8 +703,8 @@ onMounted(() => {
 
         <section ref="messagesRef" class="transcript" aria-live="polite">
           <div v-if="hasOnlyWelcomeMessage" class="transcript__prologue">
-            <p>开场建议</p>
-            <h3>先拿一个明确问题把系统唤醒，再看它怎么组织信息、资料和回答口径。</h3>
+            <p>咨询建议</p>
+            <h3>先提一个明确问题，系统会按当前模式给出更稳的回答。</h3>
             <div class="transcript__prologue-line">
               <span>建议从专业对比、录取规则、学院特色、报考建议四类问题起手。</span>
             </div>
@@ -809,8 +795,8 @@ onMounted(() => {
         <form class="composer" @submit.prevent="handleSend">
           <div class="composer__header">
             <div>
-              <p class="composer__eyebrow">Editorial Prompt Deck</p>
-              <h3>把问题说具体，系统会在后面把检索、上下文和专家步骤兜住。</h3>
+              <p class="composer__eyebrow">问题输入区</p>
+              <h3>把问题说具体，系统会结合上下文、资料和执行策略组织回答。</h3>
             </div>
             <span class="composer__hint">
               {{ blockedReason || (mode === 'chat' ? 'Enter 发送，Shift + Enter 换行' : '当前模式会自动追加检索与引用约束') }}
@@ -848,7 +834,7 @@ onMounted(() => {
           <section class="rail-section">
             <header class="rail-section__head">
               <p>模型调优</p>
-              <span>别把参数区做成会计报表</span>
+              <span>只保留必要控制项，避免打断咨询流程</span>
             </header>
 
             <label class="field">
@@ -963,8 +949,12 @@ onMounted(() => {
 <style scoped>
 .shell {
   position: relative;
-  min-height: 100vh;
-  padding: 1.5rem;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 100dvh;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 1.25rem;
   overflow: hidden;
 }
 
@@ -977,16 +967,17 @@ onMounted(() => {
 
 .shell__wash {
   background:
-    radial-gradient(circle at 12% 18%, rgba(202, 138, 4, 0.12), transparent 22%),
-    radial-gradient(circle at 86% 12%, rgba(41, 37, 36, 0.08), transparent 26%),
+    radial-gradient(circle at 12% 18%, rgba(188, 75, 55, 0.13), transparent 22%),
+    radial-gradient(circle at 86% 12%, rgba(124, 37, 27, 0.08), transparent 26%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.52), transparent 48%);
 }
 
 .shell__grain {
-  opacity: 0.22;
-  background-image: linear-gradient(rgba(28, 25, 23, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(28, 25, 23, 0.02) 1px, transparent 1px);
-  background-size: 22px 22px;
+  opacity: 0.14;
+  background:
+    radial-gradient(circle at 18% 28%, rgba(188, 75, 55, 0.05), transparent 0 18%),
+    radial-gradient(circle at 72% 22%, rgba(255, 255, 255, 0.42), transparent 0 20%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
 }
 
 .masthead,
@@ -1000,40 +991,41 @@ onMounted(() => {
 .masthead {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2rem;
-  align-items: end;
-  padding-bottom: 1.5rem;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.12);
+  gap: 1.5rem;
+  align-items: center;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid rgba(159, 47, 30, 0.16);
 }
 
 .masthead__eyebrow {
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.55rem;
   font-size: 0.72rem;
-  letter-spacing: 0.34em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--accent);
 }
 
 .masthead h1 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(2.8rem, 6vw, 4.6rem);
-  line-height: 0.94;
-  letter-spacing: -0.03em;
-  max-width: 11ch;
+  font-size: clamp(2rem, 3.4vw, 3.05rem);
+  line-height: 0.96;
+  letter-spacing: -0.04em;
+  max-width: none;
+  white-space: nowrap;
 }
 
 .masthead__deck {
-  margin: 1rem 0 0;
-  max-width: 44rem;
-  font-size: 1rem;
-  line-height: 1.65;
+  margin: 0.5rem 0 0;
+  max-width: 46rem;
+  font-size: 0.92rem;
+  line-height: 1.55;
   color: var(--ink-2);
 }
 
 .masthead__aside {
   display: grid;
-  gap: 0.85rem;
+  gap: 0.7rem;
   justify-items: end;
 }
 
@@ -1043,31 +1035,32 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 0.85rem 1.25rem;
   font-size: 0.78rem;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
 
 .masthead__toggle {
   padding: 0.72rem 1.1rem;
-  border: 1px solid rgba(28, 25, 23, 0.14);
+  border: 1px solid rgba(159, 47, 30, 0.16);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.84);
   color: var(--ink-1);
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
 .masthead__toggle:hover {
   transform: translateY(-1px);
-  border-color: rgba(202, 138, 4, 0.34);
+  border-color: rgba(188, 75, 55, 0.34);
 }
 
 .workspace {
   display: grid;
   grid-template-columns: minmax(15rem, 17rem) minmax(0, 1fr) minmax(18rem, 20rem);
   gap: 2rem;
-  padding-top: 1.75rem;
-  min-height: calc(100vh - 13rem);
+  padding-top: 0.9rem;
+  min-height: 0;
+  height: 100%;
 }
 
 .workspace--rail-collapsed {
@@ -1079,18 +1072,23 @@ onMounted(() => {
   display: grid;
   align-content: start;
   gap: 1.5rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.2rem;
 }
 
 .stage {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 1.35rem;
+  gap: 0.75rem;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .rail-section {
-  padding-top: 1rem;
-  border-top: 1px solid rgba(28, 25, 23, 0.1);
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(28, 25, 23, 0.08);
 }
 
 .rail-section:first-child {
@@ -1113,7 +1111,7 @@ onMounted(() => {
 .rail-section__head p {
   margin: 0;
   font-size: 0.72rem;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
@@ -1221,98 +1219,86 @@ onMounted(() => {
   opacity: 0.92;
 }
 
-.hero {
+.mode-strip {
   display: grid;
+  gap: 0.55rem;
+  padding: 0 0 0.7rem;
+  border-bottom: 1px solid rgba(159, 47, 30, 0.12);
+}
+
+.mode-strip__lead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 1rem;
-  padding-bottom: 1.3rem;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.12);
+  flex-wrap: wrap;
 }
 
-.briefing-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.08);
-}
-
-.briefing-strip__item {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.briefing-strip__item span {
-  font-size: 0.68rem;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-.briefing-strip__item strong {
-  font-size: 0.92rem;
-  line-height: 1.55;
-  color: var(--ink-1);
-}
-
-.hero__eyebrow,
-.composer__eyebrow {
+.mode-strip__eyebrow {
   margin: 0;
-  font-size: 0.72rem;
-  letter-spacing: 0.34em;
+  font-size: 0.74rem;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
 }
 
-.hero__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 17rem);
-  gap: 2rem;
-  align-items: start;
+.mode-strip__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
-.hero__lead h2 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: clamp(2.2rem, 4vw, 3.6rem);
-  line-height: 0.98;
-  letter-spacing: -0.03em;
-}
-
-.hero__lead p {
-  margin: 0.85rem 0 0;
-  max-width: 38rem;
-  font-size: 0.98rem;
-  line-height: 1.68;
-  color: var(--ink-2);
-}
-
-.hero__facts {
-  display: grid;
-  gap: 0.8rem;
-  margin: 0;
-}
-
-.hero__facts div {
-  display: grid;
-  gap: 0.18rem;
-  padding: 0.45rem 0;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.08);
-}
-
-.hero__facts dt {
-  font-size: 0.7rem;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-.hero__facts dd {
-  margin: 0;
+.mode-strip__summary strong {
   font-size: 1rem;
+  line-height: 1.3;
   color: var(--ink-1);
 }
 
-.hero__notice {
+.mode-strip__summary span {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.composer__eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.mode-strip__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.mode-strip__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(159, 47, 30, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.mode-strip__chip span {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.mode-strip__chip strong {
+  font-size: 0.84rem;
+  line-height: 1.35;
+  color: var(--ink-1);
+}
+
+.mode-strip__notice {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1323,30 +1309,30 @@ onMounted(() => {
   line-height: 1.6;
 }
 
-.hero__notice button {
+.mode-strip__notice button {
   border: none;
   padding: 0;
   background: transparent;
   color: inherit;
 }
 
-.hero__notice.info {
+.mode-strip__notice.info {
   color: var(--info);
 }
 
-.hero__notice.warning {
+.mode-strip__notice.warning {
   color: var(--warning);
 }
 
-.hero__notice.error {
+.mode-strip__notice.error {
   color: var(--danger);
 }
 
 .trace-band {
   display: grid;
-  gap: 0.85rem;
-  padding-bottom: 1.2rem;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.12);
+  gap: 0.65rem;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid rgba(159, 47, 30, 0.12);
 }
 
 .trace-band__head {
@@ -1360,7 +1346,7 @@ onMounted(() => {
 .trace-band__head p {
   margin: 0;
   font-size: 0.78rem;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -1390,7 +1376,7 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 0.55rem 0.9rem;
   padding: 0.7rem 0;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.08);
+  border-bottom: 1px solid rgba(28, 25, 23, 0.06);
   font-size: 0.88rem;
   line-height: 1.55;
 }
@@ -1408,50 +1394,52 @@ onMounted(() => {
 .transcript {
   min-height: 0;
   overflow-y: auto;
-  padding-right: 0.4rem;
+  padding-right: 0.55rem;
+  scrollbar-gutter: stable;
 }
 
 .transcript__prologue {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.4rem;
   width: min(100%, 48rem);
-  padding: 0 0 1.6rem;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.08);
-  margin-bottom: 1rem;
+  padding: 0 0 0.8rem;
+  border-bottom: 1px solid rgba(28, 25, 23, 0.06);
+  margin-bottom: 0.55rem;
 }
 
 .transcript__prologue p {
   margin: 0;
   font-size: 0.72rem;
-  letter-spacing: 0.28em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent);
 }
 
 .transcript__prologue h3 {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: clamp(1.65rem, 2.4vw, 2.3rem);
-  line-height: 1.08;
+  font-family: var(--font-body);
+  font-size: clamp(1rem, 1.2vw, 1.18rem);
+  line-height: 1.42;
   letter-spacing: -0.02em;
+  font-weight: 700;
 }
 
 .transcript__prologue-line {
-  padding-top: 0.55rem;
+  padding-top: 0.4rem;
   border-top: 1px solid rgba(28, 25, 23, 0.08);
-  font-size: 0.9rem;
-  line-height: 1.65;
+  font-size: 0.84rem;
+  line-height: 1.5;
   color: var(--ink-2);
 }
 
 .entry {
-  width: min(100%, 56rem);
-  padding: 1.15rem 0;
-  border-top: 1px solid rgba(28, 25, 23, 0.08);
+  width: min(100%, 52rem);
+  padding: 0.8rem 0;
+  border-top: 1px solid rgba(28, 25, 23, 0.06);
   animation: entry-rise 0.4s ease both;
   --markdown-ink: var(--ink-1);
   --markdown-link: var(--accent);
-  --markdown-code-bg: rgba(202, 138, 4, 0.1);
+  --markdown-code-bg: rgba(188, 75, 55, 0.1);
   --markdown-pre-bg: rgba(28, 25, 23, 0.94);
   --markdown-pre-ink: #f8f7f4;
   --markdown-mermaid-bg: rgba(255, 255, 255, 0.78);
@@ -1466,9 +1454,9 @@ onMounted(() => {
 .entry--user {
   margin-left: auto;
   width: min(78%, 44rem);
-  padding-left: 1.35rem;
-  border-left: 2px solid rgba(202, 138, 4, 0.46);
-  background: linear-gradient(90deg, rgba(202, 138, 4, 0.08), transparent 72%);
+  padding-left: 1.15rem;
+  border-left: 2px solid rgba(188, 75, 55, 0.34);
+  background: linear-gradient(90deg, rgba(188, 75, 55, 0.08), transparent 72%);
   --markdown-ink: var(--ink-0);
 }
 
@@ -1480,9 +1468,9 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.8rem;
+  margin-bottom: 0.65rem;
   font-size: 0.74rem;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
@@ -1492,8 +1480,8 @@ onMounted(() => {
 }
 
 .entry__body {
-  font-size: 0.98rem;
-  line-height: 1.75;
+  font-size: 0.94rem;
+  line-height: 1.6;
 }
 
 .entry__flag {
@@ -1522,7 +1510,7 @@ onMounted(() => {
   justify-content: space-between;
   gap: 0.6rem;
   padding-top: 0.6rem;
-  border-top: 1px dashed rgba(28, 25, 23, 0.08);
+  border-top: 1px dashed rgba(28, 25, 23, 0.06);
   font-size: 0.82rem;
   color: var(--ink-2);
 }
@@ -1535,7 +1523,7 @@ onMounted(() => {
 .entry__details {
   margin-top: 0.9rem;
   padding-top: 0.8rem;
-  border-top: 1px solid rgba(28, 25, 23, 0.08);
+  border-top: 1px solid rgba(28, 25, 23, 0.06);
 }
 
 .entry__details summary {
@@ -1558,7 +1546,7 @@ onMounted(() => {
 .detail-stack code {
   padding: 0.55rem 0.7rem;
   border-radius: 0.55rem;
-  background: rgba(28, 25, 23, 0.05);
+  background: rgba(28, 25, 23, 0.045);
   overflow-wrap: anywhere;
 }
 
@@ -1590,22 +1578,22 @@ onMounted(() => {
 }
 
 .composer {
-  padding-top: 1.2rem;
-  border-top: 1px solid rgba(28, 25, 23, 0.12);
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(159, 47, 30, 0.14);
 }
 
 .composer__header {
   display: flex;
   justify-content: space-between;
   gap: 1.5rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.55rem;
 }
 
 .composer__header h3 {
-  margin: 0.45rem 0 0;
+  margin: 0.35rem 0 0;
   font-family: var(--font-display);
-  font-size: clamp(1.4rem, 2vw, 2rem);
-  line-height: 1.08;
+  font-size: clamp(1.02rem, 1.2vw, 1.28rem);
+  line-height: 1.35;
 }
 
 .composer__hint {
@@ -1618,21 +1606,22 @@ onMounted(() => {
 
 .composer__surface {
   display: grid;
-  gap: 1rem;
-  padding: 1rem 0 0;
-  border-top: 1px solid rgba(28, 25, 23, 0.08);
+  gap: 0.75rem;
+  padding: 0.65rem 0 0;
+  border-top: 1px solid rgba(28, 25, 23, 0.06);
 }
 
 .composer__input {
   width: 100%;
-  min-height: 7.5rem;
+  min-height: 4.8rem;
+  max-height: 8rem;
   padding: 0;
   border: none;
   background: transparent;
-  resize: vertical;
+  resize: none;
   color: var(--ink-0);
-  font-size: 1rem;
-  line-height: 1.8;
+  font-size: 0.96rem;
+  line-height: 1.6;
   outline: none;
 }
 
@@ -1641,8 +1630,8 @@ onMounted(() => {
   justify-content: space-between;
   gap: 1rem;
   align-items: center;
-  padding-top: 0.8rem;
-  border-top: 1px solid rgba(28, 25, 23, 0.08);
+  padding-top: 0.6rem;
+  border-top: 1px solid rgba(28, 25, 23, 0.06);
 }
 
 .composer__quick {
@@ -1681,16 +1670,16 @@ onMounted(() => {
 .ghost-button,
 .strategy-strip__item,
 .rail-reveal {
-  border: 1px solid rgba(28, 25, 23, 0.12);
-  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(159, 47, 30, 0.12);
+  background: rgba(255, 255, 255, 0.84);
   color: var(--ink-1);
 }
 
 .primary-button {
-  border: 1px solid rgba(28, 25, 23, 0.08);
-  background: linear-gradient(135deg, #d6a64a, #8e6817);
-  color: #fffdf8;
-  box-shadow: 0 12px 24px rgba(142, 104, 23, 0.16);
+  border: 1px solid rgba(124, 37, 27, 0.14);
+  background: linear-gradient(135deg, #c8563f, #912d20);
+  color: #fffaf7;
+  box-shadow: 0 12px 24px rgba(145, 45, 32, 0.18);
 }
 
 .primary-button--muted {
@@ -1725,9 +1714,9 @@ onMounted(() => {
 .field select {
   width: 100%;
   padding: 0.8rem 1rem;
-  border: 1px solid rgba(28, 25, 23, 0.12);
+  border: 1px solid rgba(159, 47, 30, 0.12);
   border-radius: 0.9rem;
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.86);
   color: var(--ink-0);
 }
 
@@ -1743,7 +1732,7 @@ onMounted(() => {
 }
 
 .strategy-strip__item.active {
-  border-color: rgba(202, 138, 4, 0.34);
+  border-color: rgba(188, 75, 55, 0.34);
   color: var(--accent);
 }
 
@@ -1765,7 +1754,7 @@ onMounted(() => {
   gap: 0.8rem;
   align-items: flex-start;
   padding: 0.65rem 0;
-  border-bottom: 1px solid rgba(28, 25, 23, 0.08);
+  border-bottom: 1px solid rgba(28, 25, 23, 0.06);
 }
 
 .health-list__item strong {
@@ -1822,20 +1811,23 @@ onMounted(() => {
     gap: 1.5rem;
   }
 
-  .briefing-strip {
-    grid-template-columns: 1fr;
-    gap: 0.8rem;
+  .masthead h1 {
+    white-space: normal;
   }
 
-  .hero__grid {
-    grid-template-columns: 1fr;
-    gap: 1.2rem;
+  .mode-strip__lead {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
 @media (max-width: 1080px) {
   .shell {
     padding: 1.1rem;
+    min-height: auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .masthead {
@@ -1854,10 +1846,14 @@ onMounted(() => {
   .workspace,
   .workspace--rail-collapsed {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
-  .stage {
-    min-height: 0;
+  .west-rail,
+  .east-rail,
+  .stage,
+  .transcript {
+    overflow: visible;
   }
 
   .east-rail--closed {
@@ -1872,7 +1868,8 @@ onMounted(() => {
 
   .masthead h1 {
     max-width: none;
-    font-size: clamp(2.35rem, 14vw, 3.35rem);
+    white-space: normal;
+    font-size: clamp(2rem, 12vw, 2.9rem);
   }
 
   .entry--user {
