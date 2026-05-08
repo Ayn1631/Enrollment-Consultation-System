@@ -812,7 +812,13 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
         collector_notes = list(subproblem.notes)
         collector_tool_audit: list[str] = []
         search_result_url_map: dict[str, str] = {}
-        tool_reuse_cache: dict[str, str] = {}
+        tool_reuse_cache = getattr(subproblem, "tool_reuse_cache", None)
+        if not isinstance(tool_reuse_cache, dict):
+            tool_reuse_cache = {}
+            try:
+                setattr(subproblem, "tool_reuse_cache", tool_reuse_cache)
+            except Exception:
+                pass
         rag_document_catalog = self._get_rag_document_catalog_text()
 
         def normalize_content(content: Any) -> str:
@@ -1400,6 +1406,12 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                 strategy="quality",
                 memory_text=memory_text,
             ),
+            step_outputs=dict(subproblem.step_outputs),
+            notes=list(subproblem.notes),
+            context_blocks=list(subproblem.context_blocks),
+            sources=list(subproblem.sources),
+            tool_audit=list(subproblem.tool_audit),
+            tool_reuse_cache=dict(subproblem.tool_reuse_cache),
             replan_count=subproblem.replan_count + 1,
         )
         return replanned

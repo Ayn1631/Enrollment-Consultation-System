@@ -416,6 +416,7 @@ def test_run_subproblem_agent_should_offer_all_tools_to_react_agent(monkeypatch)
             sources=[],
             notes=[],
             tool_audit=[],
+            tool_reuse_cache={},
         ),
         request=request,
         fail_features=set(),
@@ -623,6 +624,7 @@ def test_run_subproblem_agent_should_include_prior_step_memory_in_prompt(monkeyp
             sources=[],
             notes=[],
             tool_audit=["agent_tool:major_catalog_lookup"],
+            tool_reuse_cache={"major_catalog_lookup": "cached"},
         ),
         request=request,
         fail_features=set(),
@@ -702,6 +704,7 @@ def test_run_subproblem_agent_should_emit_tool_input_and_output_trace(monkeypatc
             sources=[],
             notes=[],
             tool_audit=[],
+            tool_reuse_cache={},
         ),
         request=request,
         fail_features=set(),
@@ -786,6 +789,55 @@ def test_execute_subproblem_should_not_duplicate_previous_context_blocks(monkeyp
     assert result.notes == ["旧备注", "新备注"]
     assert result.tool_audit == ["agent_tool:major_catalog_lookup", "agent_tool:scoreline_lookup"]
     assert result.sources[0].title == "新来源"
+
+
+def test_execute_subproblem_should_preserve_tool_reuse_cache_between_steps(monkeypatch):
+    runtime = AgentRuntime(_GatewayStub(Settings(MCP_ENABLED=False)))
+    runner = AgentGraphRunner(runtime)
+    request = ChatRequest(
+        session_id="s-graph-cache",
+        messages=[{"role": "user", "content": "网络空间安全专业学费和选科要求"}],
+        mode="agent",
+        features=["rag"],
+    )
+    subproblem = SubproblemState(
+        subproblem_id="sp-graph-cache-1",
+        query="网络空间安全专业学费和选科要求",
+        plan_steps=[PlanStep("先收集学费证据。"), PlanStep("再判断选科要求。")],
+    )
+    seen_cache_snapshots: list[dict[str, str]] = []
+
+    def _fake_run_subproblem_agent(**kwargs):
+        current_subproblem = kwargs["subproblem"]
+        seen_cache_snapshots.append(dict(current_subproblem.tool_reuse_cache))
+        if kwargs["plan_step_index"] == 1:
+            current_subproblem.tool_reuse_cache["major_catalog_lookup"] = "cached-major-table"
+            return StepExecutionResult(ok=True, message="已拿到学费证据。", context_blocks=["学费证据"])
+        assert current_subproblem.tool_reuse_cache["major_catalog_lookup"] == "cached-major-table"
+        return StepExecutionResult(ok=True, message="已拿到选科证据。", context_blocks=["学费证据", "选科证据"])
+
+    monkeypatch.setattr(runtime, "run_subproblem_agent", _fake_run_subproblem_agent)
+    monkeypatch.setattr(runtime, "review_step", lambda *args, **kwargs: SimpleNamespace(ok=True, message="步骤满足要求。"))
+
+    result = runner._execute_subproblem(
+        subproblem,
+        {
+            "agent_strategy": "quality",
+            "step_events": [],
+            "request": request,
+            "fail_features": set(),
+            "effective_features": ["rag"],
+            "memory_context": [],
+            "memory_text": "当前没有可用记忆。",
+            "trace_id": "trace-graph-cache-1",
+            "route_label": "policy",
+        },
+        None,
+    )
+
+    assert seen_cache_snapshots == [{}, {"major_catalog_lookup": "cached-major-table"}]
+    assert result.tool_reuse_cache["major_catalog_lookup"] == "cached-major-table"
+    assert result.step_outputs["2"] == "已拿到选科证据。"
 
 
 def test_normalize_agent_tool_should_unwrap_bound_tool_name_and_description():

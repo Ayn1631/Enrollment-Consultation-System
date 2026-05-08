@@ -28,6 +28,7 @@ class SubproblemState:
     context_blocks: list[str] = field(default_factory=list)
     sources: list[ChatSource] = field(default_factory=list)
     tool_audit: list[str] = field(default_factory=list)
+    tool_reuse_cache: dict[str, str] = field(default_factory=dict)
     replan_count: int = 0
 
 

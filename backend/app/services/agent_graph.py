@@ -381,6 +381,7 @@ class AgentGraphRunner:
         working.context_blocks = list(subproblem.context_blocks)
         working.sources = list(subproblem.sources)
         working.tool_audit = list(subproblem.tool_audit)
+        working.tool_reuse_cache = dict(subproblem.tool_reuse_cache)
         working.status = "pending"
         working.degraded = False
 
