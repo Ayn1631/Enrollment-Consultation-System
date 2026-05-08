@@ -1,49 +1,90 @@
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
 html,
 body,
 #app {
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
   font-family: var(--font-body);
   color: var(--ink-0);
-  background: radial-gradient(circle at 12% 12%, rgba(255, 255, 255, 0.96), transparent 55%),
-    radial-gradient(circle at 85% 10%, rgba(246, 228, 228, 0.9), transparent 50%),
-    linear-gradient(135deg, var(--bg-0), var(--bg-2));
-  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0)),
+    linear-gradient(135deg, var(--bg-0), var(--bg-1) 52%, var(--bg-2));
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-body::before,
-body::after {
+body::before {
   content: '';
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: -1;
-}
-
-body::before {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
-  opacity: 0.14;
-  mix-blend-mode: soft-light;
-}
-
-body::after {
-  background: radial-gradient(circle at 18% 70%, rgba(139, 29, 29, 0.16), transparent 55%),
-    radial-gradient(circle at 80% 60%, rgba(176, 43, 43, 0.12), transparent 50%);
-  animation: glow-drift 18s ease-in-out infinite;
+  background:
+    radial-gradient(circle at 16% 20%, rgba(202, 138, 4, 0.08), transparent 18%),
+    radial-gradient(circle at 84% 14%, rgba(28, 25, 23, 0.05), transparent 20%);
 }
 
 a {
   color: inherit;
+  text-underline-offset: 0.18em;
 }
 
-button {
-  font-family: inherit;
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+[role='button'] {
+  cursor: pointer;
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: var(--ink-3);
+}
+
+::selection {
+  background: rgba(202, 138, 4, 0.22);
+  color: var(--ink-0);
+}
+
+:focus-visible {
+  outline: 2px solid rgba(202, 138, 4, 0.42);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(28, 25, 23, 0.28) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(28, 25, 23, 0.24);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }

@@ -94,7 +94,7 @@ onMounted(() => {
 <style scoped>
 .markdown-body {
   line-height: 1.7;
-  color: var(--ink-0);
+  color: var(--markdown-ink, currentColor);
 }
 
 .markdown-body :deep(p) {
@@ -125,15 +125,15 @@ onMounted(() => {
   font-size: 0.92em;
   padding: 0.14em 0.38em;
   border-radius: 6px;
-  background: rgba(127, 21, 27, 0.08);
+  background: var(--markdown-code-bg, rgba(127, 21, 27, 0.08));
 }
 
 .markdown-body :deep(pre) {
   margin: 0;
   padding: 12px 14px;
   border-radius: 12px;
-  background: rgba(80, 14, 18, 0.92);
-  color: #fff8f7;
+  background: var(--markdown-pre-bg, rgba(80, 14, 18, 0.92));
+  color: var(--markdown-pre-ink, #fff8f7);
   overflow-x: auto;
 }
 
@@ -144,7 +144,7 @@ onMounted(() => {
 }
 
 .markdown-body :deep(a) {
-  color: var(--accent);
+  color: var(--markdown-link, var(--accent));
   text-decoration: none;
 }
 
@@ -156,8 +156,8 @@ onMounted(() => {
   margin: 0;
   padding: 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(166, 30, 36, 0.16);
+  background: var(--markdown-mermaid-bg, rgba(255, 255, 255, 0.92));
+  border: 1px solid var(--markdown-mermaid-border, rgba(166, 30, 36, 0.16));
   overflow-x: auto;
 }
 
@@ -171,6 +171,6 @@ onMounted(() => {
 .markdown-body :deep(.mermaid-error-note) {
   margin-top: 8px;
   font-size: 12px;
-  color: #8b1d1d;
+  color: var(--markdown-link, #8b1d1d);
 }
 </style>
