@@ -402,7 +402,7 @@ class AgentRuntime:
         normalized = re.sub(r"\s+", " ", query).strip()
         if not normalized:
             return []
-        max_subproblems = 5 if strategy == "speed" else 20
+        max_subproblems = 3 if strategy == "speed" else 3
         llm = build_langchain_chat_model(
             self.deps.services.settings,
             model=request.model if request is not None else None,
@@ -606,7 +606,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
                     HumanMessage(
                         content=(
                             f'''
-执行策略：{strategy}
+执行策略：{strategy} (sppeed时, 你只能拆分出前置问题, 不应该同一个问题多个维度应该一起执行; quality时, 你需要在保证不过度拆分的情况下, 尽可能把问题拆细一些, 但不要超过上限)
 最大子问题数：{max_subproblems}
 原问题：{normalized}
 相关记忆：
@@ -888,6 +888,7 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             "你必须把短期记忆、长期记忆、特殊记忆都当作真实可用上下文，并在整个推理过程中持续参考。"
             "不要机械调用工具；只有当已有证据不足、问题要求最新信息、需要公开网页核验、需要外部搜索，或当前问题在询问人物身份、现任职务、院系领导、部门负责人、联系方式等开放网页事实时才调用合适工具。"
             "如果本地资料不足，你应主动判断是否需要外部工具补充证据。"
+            "重要的: 你的输出是在系统执行过程中流转, 不应该输出解释性的文本, 你应该尽快速的输出结果."
         )
         human_prompt = (
             f"执行策略：{request.agent_strategy}\n"
@@ -905,12 +906,6 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             f"{prior_evidence}\n\n"
             "当前可用工具：\n"
             f"{available_tools}\n\n"
-            "Tool call example:\n"
-            "If search returns uuid/url pairs and you need crawl_webpage, call it like "
-            '{"uuids":["uuid-1"],"urlMap":{"uuid-1":"https://example.com/page"}}'
-            ".\n\n"
-            "5. If a tool exposes args_schema, you must fill every required field before calling it.\n"
-            "6. If a crawl tool needs search results, pass both `uuids` and `urlMap`; `urlMap` must be an object mapping each UUID to its URL.\n\n"
             "补充判断规则：\n"
             "1. 如果当前子问题前面步骤已经拿到完整结构化表格，就不要重复调用同一份全量结构化工具，优先基于前面步骤记忆继续分析。\n"
             "2. 如果问题涉及最新公告、近年录取、分省计划、分数线、位次或公开通知，而当前证据不足，可优先考虑 MCP 搜索或抓取工具。\n"

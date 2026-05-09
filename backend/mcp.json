@@ -1,12 +1,5 @@
 {
   "mcpServers": {
-    "web-search-prime": {
-      "type": "streamable_http",
-      "url": "https://open.bigmodel.cn/api/mcp/web_search_prime/mcp",
-      "headers": {
-        "Authorization": "Bearer f1a64ab1ee8a42aeb8fa4e62133b193d.zF66jBCsTaxqejFf"
-      }
-    },
     "web-search-tavily": {
       "type": "streamable_http",
       "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
