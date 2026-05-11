@@ -23,6 +23,8 @@ __pycache__/
 venv/
 env/
 .cache/
+mcp.json
+论文/
 
 # IDE/editor
 .vscode/

@@ -125,48 +125,241 @@ class AgentGraphRunner:
         fail_features: set[str],
         text_chunker,
     ) -> Iterator[tuple[str, dict]]:
-        event_queue: queue.Queue[object] = queue.Queue()
-        sentinel = object()
-        result_holder: dict[str, SessionResult] = {}
-        error_holder: dict[str, BaseException] = {}
+        trace_id = self.runtime.new_trace_id()
+        last_user = self.runtime.get_last_user(request)
+        input_blocked, input_reason, safe_reply = self.runtime.audit_user_input(last_user)
+        if input_blocked:
+            session = SessionResult(
+                session_id=request.session_id,
+                trace_id=trace_id,
+                text=safe_reply,
+                status="degraded",
+                degraded_features=[],
+                sources=[],
+                tool_audit=[f"safety_audit:input_blocked:{input_reason}", "agent:blocked"],
+                agent_strategy=request.agent_strategy,
+                agent_trace=[],
+            )
+            self._last_stream_session = session
+            for chunk in text_chunker(session.text):
+                yield "message", chunk.data
+            yield "done", {
+                "finish_reason": session.finish_reason,
+                "status": session.status,
+                "degraded_features": session.degraded_features,
+                "sources": [item.model_dump() for item in session.sources],
+                "trace_id": session.trace_id,
+                "tool_audit": session.tool_audit,
+                "error_message": session.error_message,
+                "agent_strategy": session.agent_strategy,
+            }
+            return
 
-        def sink(event):
-            event_queue.put(event)
+        try:
+            event_queue: queue.Queue[object] = queue.Queue()
+            sentinel = object()
+            result_holder: dict[str, dict] = {}
+            error_holder: dict[str, BaseException] = {}
+            step_events: list[AgentStepEvent] = []
 
-        def worker() -> None:
-            try:
-                result_holder["session"] = self.run_sync(request=request, fail_features=fail_features, step_sink=sink)
-            except BaseException as exc:  # noqa: BLE001
-                error_holder["error"] = exc
-            finally:
-                event_queue.put(sentinel)
+            initial_state: AgentGraphState = {
+                "trace_id": trace_id,
+                "session_id": request.session_id,
+                "last_user": last_user,
+                "request": request,
+                "fail_features": fail_features,
+                "agent_strategy": request.agent_strategy,
+                "effective_features": list(request.features),
+                "route_label": "policy",
+                "route_reason": "default_policy",
+                "memory_context": [],
+                "memory_text": "",
+                "rewritten_query": last_user,
+                "subproblems": [],
+                "current_subproblems": [],
+                "subproblem_results": [],
+                "final_text": "",
+                "sources": [],
+                "tool_audit": [],
+                "notes": [],
+                "degraded_features": [],
+                "step_events": step_events,
+                "failure_reason": None,
+                "pending_retries": [],
+                "generation_context_blocks": [],
+                "generation_notes": [],
+                "merge_summary": "",
+                "blocked_reply": None,
+                "blocked_audit": [],
+                "current_round_complete": False,
+                "status": "ok",
+            }
 
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
+            def sink(event):
+                event_queue.put(event)
 
-        while True:
-            item = event_queue.get()
-            if item is sentinel:
-                break
-            yield "step", item.model_dump(mode="json")
+            def worker() -> None:
+                try:
+                    result_holder["state"] = self._graph.invoke(
+                        {
+                            **initial_state,
+                            "_step_sink": sink,
+                            "_stream_final_answer": True,
+                        }
+                    )
+                except BaseException as exc:  # noqa: BLE001
+                    error_holder["error"] = exc
+                finally:
+                    event_queue.put(sentinel)
 
-        thread.join()
-        if "error" in error_holder:
-            raise error_holder["error"]
-        session = result_holder["session"]
-        self._last_stream_session = session
-        for chunk in text_chunker(session.text):
-            yield "message", chunk.data
-        yield "done", {
-            "finish_reason": session.finish_reason,
-            "status": session.status,
-            "degraded_features": session.degraded_features,
-            "sources": [item.model_dump() for item in session.sources],
-            "trace_id": session.trace_id,
-            "tool_audit": session.tool_audit,
-            "error_message": session.error_message,
-            "agent_strategy": session.agent_strategy,
-        }
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+
+            while True:
+                item = event_queue.get()
+                if item is sentinel:
+                    break
+                yield "step", item.model_dump(mode="json")
+
+            thread.join()
+            if "error" in error_holder:
+                raise error_holder["error"]
+            final_state = result_holder["state"]
+            if final_state.get("failure_reason") and not final_state.get("generation_context_blocks"):
+                session = self.runtime.build_failure_session(
+                    request=request,
+                    exc=RuntimeError(str(final_state["failure_reason"])),
+                    step_events=list(final_state["step_events"]),
+                )
+                self._last_stream_session = session
+                for chunk in text_chunker(session.text):
+                    yield "message", chunk.data
+                yield "done", {
+                    "finish_reason": session.finish_reason,
+                    "status": session.status,
+                    "degraded_features": session.degraded_features,
+                    "sources": [item.model_dump() for item in session.sources],
+                    "trace_id": session.trace_id,
+                    "tool_audit": session.tool_audit,
+                    "error_message": session.error_message,
+                    "agent_strategy": session.agent_strategy,
+                }
+                return
+
+            prefix_text, degraded = self.runtime.gateway._build_citation_notice(
+                request.features,
+                list(final_state["sources"]),
+                list(final_state["degraded_features"]),
+            )
+            if prefix_text:
+                for chunk in text_chunker(prefix_text):
+                    yield "message", chunk.data
+
+            generation_output = None
+            generation_error: str | None = None
+            for item in self.runtime.deps.container.isolation.execute_stream(
+                "generation-service",
+                lambda: self.runtime.gateway._invoke_generation_stream(
+                    user_query=final_state["last_user"],
+                    context_blocks=list(final_state["generation_context_blocks"]),
+                    feature_notes=list(final_state["generation_notes"]),
+                    request=request,
+                    fail_features=fail_features,
+                ),
+            ):
+                if not item.ok:
+                    generation_error = item.error or "generation failed"
+                    break
+                chunk = item.value
+                if chunk is None:
+                    continue
+                if chunk.done:
+                    generation_output = chunk.response
+                    continue
+                if chunk.delta:
+                    yield "message", {"delta": chunk.delta}
+
+            if generation_output is None:
+                final_state["tool_audit"].append(f"generation:error:{generation_error or 'generation failed'}")
+                failed_event = self.runtime.emit_step(
+                    events=final_state["step_events"],
+                    sink=None,
+                    strategy=request.agent_strategy,
+                    node="generate_final_answer",
+                    title="生成最终回答",
+                    status="failed",
+                    message=generation_error or "generation failed",
+                )
+                yield "step", failed_event.model_dump(mode="json")
+                session = self.runtime.build_failure_session(
+                    request=request,
+                    exc=RuntimeError(generation_error or "generation failed"),
+                    step_events=list(final_state["step_events"]),
+                )
+                self._last_stream_session = session
+                yield "done", {
+                    "finish_reason": session.finish_reason,
+                    "status": session.status,
+                    "degraded_features": session.degraded_features,
+                    "sources": [item.model_dump() for item in session.sources],
+                    "trace_id": session.trace_id,
+                    "tool_audit": session.tool_audit,
+                    "error_message": session.error_message,
+                    "agent_strategy": session.agent_strategy,
+                }
+                return
+
+            final_state["tool_audit"].append(
+                "generation:"
+                f"{generation_output.route}:"
+                f"{generation_output.model or 'unknown'}:"
+                f"cache_{'hit' if generation_output.cache_hit else 'miss'}"
+            )
+            completed_event = self.runtime.emit_step(
+                events=final_state["step_events"],
+                sink=None,
+                strategy=request.agent_strategy,
+                node="generate_final_answer",
+                title="生成最终回答",
+                status="completed",
+                message=f"最终回答生成完成，输出长度 {len(generation_output.text)} 字符",
+            )
+            yield "step", completed_event.model_dump(mode="json")
+            postprocess_event = self.runtime.emit_step(
+                events=final_state["step_events"],
+                sink=None,
+                strategy=request.agent_strategy,
+                node="postprocess_async_dispatch",
+                title="后处理",
+                status="completed",
+                message="将于会话落库后异步写入记忆",
+            )
+            yield "step", postprocess_event.model_dump(mode="json")
+            session = self.runtime.build_final_session(
+                request=request,
+                trace_id=trace_id,
+                last_user=last_user,
+                final_text=generation_output.text,
+                sources=list(final_state["sources"]),
+                tool_audit=list(final_state["tool_audit"]),
+                degraded_features=list(degraded),
+                step_events=list(final_state["step_events"]),
+                status_override=final_state.get("status"),
+                error_message=final_state.get("failure_reason"),
+            )
+            self._last_stream_session = session
+            yield "done", {
+                "finish_reason": session.finish_reason,
+                "status": session.status,
+                "degraded_features": session.degraded_features,
+                "sources": [item.model_dump() for item in session.sources],
+                "trace_id": session.trace_id,
+                "tool_audit": session.tool_audit,
+                "error_message": session.error_message,
+                "agent_strategy": session.agent_strategy,
+            }
+        finally:
+            self.runtime.release_mcp_runtime(trace_id)
 
     def _build_graph(self):
         graph = StateGraph(dict)
@@ -683,6 +876,8 @@ class AgentGraphRunner:
             status="started",
             message=f"上下文 {len(generation_context_blocks)} 条，备注 {len(generation_notes)} 条",
         )
+        if state.get("_stream_final_answer"):
+            return state
         generation_result = self.runtime.deps.container.isolation.execute(
             "generation-service",
             lambda: self.runtime.gateway._invoke_generation(
@@ -729,6 +924,8 @@ class AgentGraphRunner:
 
     def _postprocess_async_dispatch(self, state: dict) -> dict:
         sink = state.get("_step_sink")
+        if state.get("_stream_final_answer"):
+            return state
         self.runtime.emit_step(
             events=state["step_events"],
             sink=sink,

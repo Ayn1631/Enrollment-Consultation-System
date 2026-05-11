@@ -11,7 +11,7 @@ import pytest
 from app.config import Settings
 from app.contracts import RagQueryResponse
 from app.main import app
-from app.contracts import GenerationResponse
+from app.contracts import GenerationResponse, GenerationStreamChunk
 from app.services.gateway import GatewayDependencies, GatewayOrchestrator
 from app.state import ServiceContainer
 
@@ -49,6 +49,14 @@ def _stub_generation_and_agent_dependencies(monkeypatch: pytest.MonkeyPatch):
             cache_hit=cache_hit,
         )
 
+    def _fake_stream_generate(request):
+        response = _fake_generate(request)
+        text = response.text
+        chunk_size = 16
+        for idx in range(0, len(text), chunk_size):
+            yield GenerationStreamChunk(delta=text[idx : idx + chunk_size])
+        yield GenerationStreamChunk(done=True, response=response)
+
     async def _fake_mcp_runtime(_settings):
         class _Runtime:
             client = None
@@ -62,6 +70,7 @@ def _stub_generation_and_agent_dependencies(monkeypatch: pytest.MonkeyPatch):
         return _Runtime()
 
     monkeypatch.setattr(main_module.service_client, "generate", _fake_generate)
+    monkeypatch.setattr(main_module.service_client, "stream_generate", _fake_stream_generate)
     monkeypatch.setattr(agent_runtime_module, "build_langchain_chat_model", lambda *args, **kwargs: None)
     monkeypatch.setattr(agent_runtime_module, "build_langchain_mcp_runtime", _fake_mcp_runtime)
     yield
@@ -228,6 +237,51 @@ def test_agent_mode_request_should_be_accepted():
     assert parsed["text"].strip()
     assert parsed["done"]["agent_strategy"] == "speed"
     assert parsed["steps"]
+
+
+def test_rag_mode_should_use_react_rag_session(monkeypatch: pytest.MonkeyPatch):
+    from app import main as main_module
+    from app.models import SessionResult
+
+    client = TestClient(app)
+
+    def _should_not_call_generate(*_args, **_kwargs):
+        raise AssertionError("rag mode should not call generation-service")
+
+    monkeypatch.setattr(main_module.service_client, "generate", _should_not_call_generate)
+    monkeypatch.setattr(
+        main_module.gateway,
+        "_prepare_chat_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("rag mode should skip prepare_chat_context")),
+    )
+    monkeypatch.setattr(
+        main_module.gateway.agent_runtime,
+        "run_rag_session",
+        lambda **kwargs: SessionResult(
+            session_id=kwargs["request"].session_id,
+            trace_id="rag-trace",
+            text="RAG 会话已执行",
+            status="ok",
+            degraded_features=[],
+            sources=[],
+            tool_audit=["rag_agent:query_rewritten"],
+        ),
+    )
+
+    payload = _base_payload()
+    payload["mode"] = "rag"
+    payload["messages"] = [{"role": "user", "content": "请问软件工程学费多少"}]
+    res = client.post("/api/chat", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+
+    session_id = data["session_id"]
+    stream_res = client.get(f"/api/chat/stream?session_id={session_id}")
+    assert stream_res.status_code == 200
+    parsed = _parse_sse_body(stream_res.text)
+    assert parsed["text"] == "RAG 会话已执行"
+    assert parsed["done"]["tool_audit"] == ["rag_agent:query_rewritten"]
 
 
 def test_agent_mode_failure_should_not_fallback_to_plain_chat():

@@ -6,6 +6,7 @@ import logging
 import re
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -31,6 +32,25 @@ if TYPE_CHECKING:
 
 
 StepSink = Callable[[AgentStepEvent], None]
+
+
+@dataclass(slots=True)
+class PreparedRagSession:
+    session_id: str
+    trace_id: str
+    last_user: str
+    context_blocks: list[str]
+    feature_notes: list[str]
+    sources: list[ChatSource]
+    tool_audit: list[str]
+    degraded_features: list[FeatureFlag]
+
+
+class RagInputBlockedError(RuntimeError):
+    def __init__(self, reason: str, safe_reply: str):
+        super().__init__(reason)
+        self.reason = reason
+        self.safe_reply = safe_reply
 
 
 class AgentRuntime:
@@ -230,6 +250,295 @@ class AgentRuntime:
         session.agent_strategy = request.agent_strategy
         session.agent_trace = list(step_events or [])
         return session
+
+    def run_rag_session(
+        self,
+        *,
+        request: ChatRequest,
+        fail_features: set[str],
+    ) -> SessionResult:
+        try:
+            prepared = asyncio.run(
+                self._prepare_rag_session_async(
+                    request=request,
+                    fail_features=fail_features,
+                )
+            )
+        except RagInputBlockedError as exc:
+            return SessionResult(
+                session_id=request.session_id,
+                trace_id=self.new_trace_id(),
+                text=exc.safe_reply,
+                status="degraded",
+                degraded_features=[],
+                sources=[],
+                tool_audit=[f"safety_audit:input_blocked:{exc.reason}", "rag:blocked"],
+                agent_strategy=request.agent_strategy,
+            )
+        return self._finalize_rag_session(
+            request=request,
+            prepared=prepared,
+            fail_features=fail_features,
+        )
+
+    def prepare_rag_session(
+        self,
+        *,
+        request: ChatRequest,
+        fail_features: set[str],
+    ) -> PreparedRagSession:
+        try:
+            return asyncio.run(
+                self._prepare_rag_session_async(
+                    request=request,
+                    fail_features=fail_features,
+                )
+            )
+        except RagInputBlockedError:
+            raise
+
+    async def _prepare_rag_session_async(
+        self,
+        *,
+        request: ChatRequest,
+        fail_features: set[str],
+    ) -> PreparedRagSession:
+        if "generation" in fail_features:
+            raise RuntimeError("generation failure injected")
+        trace_id = self.new_trace_id()
+        last_user = self.get_last_user(request)
+        input_blocked, input_reason, safe_reply = self.audit_user_input(last_user)
+        if input_blocked:
+            raise RagInputBlockedError(input_reason, safe_reply)
+
+        memory_context_blocks, memory_text, memory_notes = self.load_memory_context(request.session_id)
+        rewritten_query = self.rewrite_query(
+            request=request,
+            last_user=last_user,
+            memory_text=memory_text,
+            strategy=request.agent_strategy,
+        )
+
+        llm = build_langchain_chat_model(
+            self.deps.services.settings,
+            model=request.model,
+            temperature=request.temperature,
+            top_p=request.top_p,
+        )
+        if llm is None:
+            raise RuntimeError("rag_agent_llm_unavailable")
+        try:
+            from langchain_core.messages import HumanMessage
+            from langchain_core.tools import tool
+            from langgraph.prebuilt import create_react_agent
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("rag_react_agent_dependencies_unavailable") from exc
+
+        collector_context_blocks: list[str] = []
+        collector_sources: list[ChatSource] = []
+        collector_notes = list(memory_notes)
+        collector_notes.append(f"查询改写：{rewritten_query}")
+        collector_tool_audit: list[str] = ["rag_agent:query_rewritten"]
+        tool_reuse_cache: dict[str, str] = {}
+        rag_document_catalog = self._get_rag_document_catalog_text()
+
+        tools: list[Any] = []
+        tools.extend(
+            self._build_local_agent_tools(
+                tool_factory=tool,
+                request=request,
+                effective_features=request.features,
+                fail_features=fail_features,
+                memory_context_blocks=memory_context_blocks,
+                collector_context_blocks=collector_context_blocks,
+                collector_sources=collector_sources,
+                collector_notes=collector_notes,
+                collector_tool_audit=collector_tool_audit,
+                subproblem_tool_audit=[],
+                tool_reuse_cache=tool_reuse_cache,
+                rag_document_catalog=rag_document_catalog,
+            )
+        )
+
+        runtime = await self.get_mcp_runtime_async(trace_id)
+        runtime_tools, _ = self._build_runtime_agent_tools(
+            tool_factory=tool,
+            runtime=runtime,
+            collector_sources=collector_sources,
+            collector_tool_audit=collector_tool_audit,
+            search_result_url_map={},
+        )
+        tools.extend(runtime_tools)
+        if runtime.notes:
+            collector_notes.extend(runtime.notes)
+            collector_tool_audit.extend([f"mcp_runtime:note:{item}" for item in runtime.notes])
+        if runtime.tools:
+            collector_tool_audit.append("agent_tool:mcp_runtime:" + ",".join(item.alias for item in runtime.servers))
+        elif runtime.servers:
+            collector_tool_audit.append("agent_tool:mcp_runtime_unavailable:" + ",".join(item.alias for item in runtime.servers))
+
+        history_messages = self.gateway._build_langchain_history_messages(request.messages[:-1])
+        memory_blocks_text = "\n".join(memory_context_blocks) if memory_context_blocks else "当前没有可用记忆片段。"
+        available_tools = (
+            "\n".join(self._format_agent_tool_prompt_line(item) for item in tools) if tools else "当前步骤不提供额外工具。"
+        )
+        prompt = (
+            "你是中原工学院招生问答模式下的 RAG 智能体。"
+            "你的目标是先用查询改写后的问题和工具检索证据，再基于证据直接回答。"
+            "如果证据不足，必须明确说明不确定，不要编造。"
+            "你可以使用工具，但不要把工具日志原样输出给用户。"
+            "如果本地资料足够，就直接给出结论；如果不够，再调用 local_rag_search 或其他可用工具补强。"
+            "回答时优先引用可靠证据，涉及时间、费用、录取、选科、政策等内容时尤其要保守。"
+        )
+        human_prompt = (
+            f"执行策略：{request.agent_strategy}\n"
+            f"原始问题：{last_user}\n"
+            f"改写后的查询：{rewritten_query}\n\n"
+            "结构化记忆：\n"
+            f"{memory_text or '当前没有可用记忆。'}\n\n"
+            "记忆上下文片段：\n"
+            f"{memory_blocks_text}\n\n"
+            "当前可用工具：\n"
+            f"{available_tools}\n\n"
+            "执行要求：\n"
+            "1. 优先围绕改写后的查询进行检索。\n"
+            "2. 如果一次检索不足以回答，可以继续调用工具补强。\n"
+            "3. 只输出最终答案，不要输出推理过程。\n"
+            "4. 如果证据不够，直接说明暂无法确认。\n"
+        )
+
+        agent = create_react_agent(llm, tools, prompt=prompt, version="v2")
+        try:
+            result = await agent.ainvoke(
+                {
+                    "messages": [
+                        *history_messages,
+                        HumanMessage(content=human_prompt),
+                    ]
+                }
+            )
+        finally:
+            await self.release_mcp_runtime_async(trace_id)
+
+        pending_tool_calls: list[dict[str, Any]] = []
+        for message in list(result.get("messages") or []):
+            if getattr(message, "type", "") == "ai":
+                pending_tool_calls.extend(self._extract_message_tool_calls(message))
+                continue
+            if getattr(message, "type", "") != "tool":
+                continue
+            tool_name = str(getattr(message, "name", "") or "")
+            tool_call_id = str(getattr(message, "tool_call_id", "") or "")
+            content = str(getattr(message, "content", "") or "").strip()
+            matched_call = self._pop_matching_tool_call(
+                pending_tool_calls,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+            )
+            self._append_tool_trace_record(
+                trace_id=trace_id,
+                session_id=request.session_id,
+                tool_name=tool_name,
+                tool_args=(matched_call or {}).get("args"),
+                tool_output=content or "无返回内容",
+                subproblem_id=None,
+                plan_step_index=None,
+                attempt=None,
+            )
+            if content:
+                if tool_name in {"local_rag_search", "major_catalog_lookup", "scoreline_lookup", "policy_table_lookup"}:
+                    continue
+                collector_context_blocks.append(f"[tool:{tool_name or 'tool'}] {content}")
+
+        output = self._extract_agent_output_text(result)
+        if not output:
+            raise RuntimeError("rag_agent_output_empty")
+
+        sources = self.dedupe_sources(collector_sources, limit=5)
+        degraded: list[FeatureFlag] = []
+        if "citation_guard" in request.features:
+            guard_result = self.deps.container.isolation.execute(
+                "citation-guard",
+                lambda: self.gateway._invoke_citation_guard(sources=sources, fail_features=fail_features),
+            )
+            if guard_result.ok and guard_result.value:
+                collector_notes.append("RAG 引用校验通过。")
+            elif sources and self.gateway._can_soft_pass_citation_guard(guard_result=guard_result):
+                collector_tool_audit.append(f"citation_guard:soft_pass:{guard_result.error or 'service_unavailable'}")
+                collector_notes.append("RAG 引用校验服务异常，但已保守保留来源。")
+            else:
+                degraded.append("citation_guard")
+                collector_notes.append("RAG 回答缺少稳定引用，已加保守提示。")
+
+        if output:
+            collector_context_blocks.append(f"[rag-agent-summary] {output}")
+
+        return PreparedRagSession(
+            session_id=request.session_id,
+            trace_id=trace_id,
+            last_user=last_user,
+            context_blocks=[
+                *memory_context_blocks,
+                *collector_context_blocks,
+            ],
+            feature_notes=list(dict.fromkeys(collector_notes)),
+            sources=sources,
+            tool_audit=list(dict.fromkeys([*collector_tool_audit])),
+            degraded_features=list(dict.fromkeys(degraded)),
+        )
+
+    def _finalize_rag_session(
+        self,
+        *,
+        request: ChatRequest,
+        prepared: PreparedRagSession,
+        fail_features: set[str],
+        final_text_override: str | None = None,
+        status_override: str | None = None,
+    ) -> SessionResult:
+        generation_output = None
+        if final_text_override is None:
+            generation_output = self.gateway._invoke_generation(
+                user_query=prepared.last_user,
+                context_blocks=prepared.context_blocks,
+                feature_notes=prepared.feature_notes,
+                request=request,
+                fail_features=fail_features,
+            )
+            final_text = generation_output.text
+        else:
+            final_text = final_text_override
+        sources = self.dedupe_sources(prepared.sources, limit=5)
+        degraded = list(dict.fromkeys(prepared.degraded_features))
+        prefix_text, degraded = self.gateway._build_citation_notice(request.features, sources, degraded)
+        merged_text = f"{prefix_text}{final_text}"
+        output_flagged, output_reason, audited_text = self.audit_generated_output(merged_text)
+        status: str = status_override or "ok"
+        tool_audit = list(dict.fromkeys(prepared.tool_audit))
+        if generation_output is not None:
+            tool_audit.append(
+                "generation:"
+                f"{generation_output.route}:"
+                f"{generation_output.model or 'unknown'}:"
+                f"cache_{'hit' if generation_output.cache_hit else 'miss'}"
+            )
+        if output_flagged:
+            tool_audit.append(f"safety_audit:output_sanitized:{output_reason}")
+            merged_text = audited_text
+            status = "failed"
+        elif degraded:
+            status = "degraded"
+        self.gateway._persist_memory_side_effects(request.session_id, prepared.last_user, merged_text)
+        return SessionResult(
+            session_id=request.session_id,
+            trace_id=prepared.trace_id,
+            text=merged_text,
+            status=status,  # type: ignore[arg-type]
+            degraded_features=list(dict.fromkeys(degraded)),
+            sources=sources,
+            tool_audit=tool_audit,
+            agent_strategy=request.agent_strategy,
+        )
 
     def load_memory_context(self, session_id: str) -> tuple[list[str], str, list[str]]:
         context_blocks: list[str] = []
@@ -1835,6 +2144,39 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             self._mcp_runtime_locks.setdefault(trace_id, threading.RLock())
             return runtime
 
+    async def get_mcp_runtime_async(self, trace_id: str) -> McpToolRuntime:
+        with self._mcp_runtime_guard:
+            cached = self._mcp_runtime_cache.get(trace_id)
+            if cached is not None:
+                self.logger.info("[agent.mcp] trace=%s cache_hit tools=%s", trace_id, len(cached.tools))
+                return cached
+
+        started_at = perf_counter()
+        runtime = await build_langchain_mcp_runtime(self.deps.services.settings)
+        elapsed_ms = int((perf_counter() - started_at) * 1000)
+        self.logger.info(
+            "[agent.mcp] trace=%s runtime_ready elapsed_ms=%s tools=%s servers=%s",
+            trace_id,
+            elapsed_ms,
+            len(runtime.tools),
+            len(runtime.servers),
+        )
+        with self._mcp_runtime_guard:
+            cached = self._mcp_runtime_cache.get(trace_id)
+            if cached is not None:
+                started_at = perf_counter()
+                await runtime.aclose()
+                close_elapsed_ms = int((perf_counter() - started_at) * 1000)
+                self.logger.info(
+                    "[agent.mcp] trace=%s duplicate_runtime_closed elapsed_ms=%s",
+                    trace_id,
+                    close_elapsed_ms,
+                )
+                return cached
+            self._mcp_runtime_cache[trace_id] = runtime
+            self._mcp_runtime_locks.setdefault(trace_id, threading.RLock())
+            return runtime
+
     def release_mcp_runtime(self, trace_id: str) -> None:
         runtime: McpToolRuntime | None = None
         with self._mcp_runtime_guard:
@@ -1844,6 +2186,18 @@ quality 策略时可以拆得更细，但仍然必须克制，不要超过最大
             return
         started_at = perf_counter()
         asyncio.run(runtime.aclose())
+        elapsed_ms = int((perf_counter() - started_at) * 1000)
+        self.logger.info("[agent.mcp] trace=%s runtime_released elapsed_ms=%s", trace_id, elapsed_ms)
+
+    async def release_mcp_runtime_async(self, trace_id: str) -> None:
+        runtime: McpToolRuntime | None = None
+        with self._mcp_runtime_guard:
+            runtime = self._mcp_runtime_cache.pop(trace_id, None)
+            self._mcp_runtime_locks.pop(trace_id, None)
+        if runtime is None:
+            return
+        started_at = perf_counter()
+        await runtime.aclose()
         elapsed_ms = int((perf_counter() - started_at) * 1000)
         self.logger.info("[agent.mcp] trace=%s runtime_released elapsed_ms=%s", trace_id, elapsed_ms)
 

@@ -560,6 +560,8 @@ class GatewayOrchestrator:
         started_at = perf_counter()
         if request.mode == "agent":
             return self._create_agent_chat(request=request, fail_features=fail_features)
+        if request.mode == "rag":
+            return self._create_rag_chat(request=request, fail_features=fail_features)
         prepare_started_at = perf_counter()
         prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
         prepared_elapsed_ms = (perf_counter() - prepare_started_at) * 1000
@@ -632,6 +634,9 @@ class GatewayOrchestrator:
         started_at = perf_counter()
         if request.mode == "agent":
             yield from self._stream_agent_chat(request=request, fail_features=fail_features)
+            return
+        if request.mode == "rag":
+            yield from self._stream_rag_chat(request=request, fail_features=fail_features)
             return
         prepare_started_at = perf_counter()
         prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
@@ -744,6 +749,12 @@ class GatewayOrchestrator:
         self.deps.container.session_store.set(request.session_id, session)
         return self._to_create_response(session)
 
+    def _create_rag_chat(self, request: ChatRequest, fail_features: set[str]) -> ChatCreateResponse:
+        """RAG 问答模式入口：先改写查询，再走 ReAct 工具链。"""
+        session = self.agent_runtime.run_rag_session(request=request, fail_features=fail_features)
+        self.deps.container.session_store.set(request.session_id, session)
+        return self._to_create_response(session)
+
     def _stream_agent_chat(self, request: ChatRequest, fail_features: set[str]) -> Iterator[GatewayStreamEvent]:
         """专家模式流式实现：先实时输出步骤事件，再流式回放最终文本。"""
         try:
@@ -763,6 +774,96 @@ class GatewayOrchestrator:
         session = self.agent_graph._last_stream_session
         if session is not None:
             self.deps.container.session_store.set(request.session_id, session)
+
+    def _stream_rag_chat(self, request: ChatRequest, fail_features: set[str]) -> Iterator[GatewayStreamEvent]:
+        """RAG 问答模式流式实现：先执行 ReAct 工具链，再流式输出最终文本。"""
+        try:
+            prepared = self.agent_runtime.prepare_rag_session(request=request, fail_features=fail_features)
+        except Exception as exc:  # noqa: BLE001
+            if exc.__class__.__name__ == "RagInputBlockedError":
+                safe_reply = str(getattr(exc, "safe_reply", "") or "")
+                reason = str(getattr(exc, "reason", "") or "input_blocked")
+                failure_session = SessionResult(
+                    session_id=request.session_id,
+                    trace_id=uuid.uuid4().hex,
+                    text=safe_reply,
+                    status="degraded",
+                    degraded_features=[],
+                    sources=[],
+                    tool_audit=[f"safety_audit:input_blocked:{reason}", "rag:blocked"],
+                    finish_reason="stop",
+                    agent_strategy=request.agent_strategy,
+                )
+                self.deps.container.session_store.set(request.session_id, failure_session)
+                yield from self._yield_text_events(failure_session.text)
+                yield self._build_done_event(failure_session)
+                return
+            self.logger.exception("rag stream failed session_id=%s", request.session_id)
+            failure_session = self._build_rag_failure_session(request=request, exc=exc)
+            self.deps.container.session_store.set(request.session_id, failure_session)
+            yield from self._yield_text_events(failure_session.text)
+            yield self._build_done_event(failure_session)
+            return
+
+        prefix_text, degraded = self._build_citation_notice(
+            effective_features=request.features,
+            sources=prepared.sources,
+            degraded=prepared.degraded_features,
+        )
+        emitted_parts: list[str] = []
+        if prefix_text:
+            emitted_parts.append(prefix_text)
+            yield from self._yield_text_events(prefix_text)
+
+        generation_output = None
+        generation_error: str | None = None
+        for item in self.deps.container.isolation.execute_stream(
+            "generation-service",
+            lambda: self._invoke_generation_stream(
+                user_query=prepared.last_user,
+                context_blocks=prepared.context_blocks,
+                feature_notes=prepared.feature_notes,
+                request=request,
+                fail_features=fail_features,
+            ),
+        ):
+            if not item.ok:
+                generation_error = item.error or "generation failed"
+                break
+            chunk = item.value
+            if chunk is None:
+                continue
+            if chunk.done:
+                generation_output = chunk.response
+                continue
+            if chunk.delta:
+                emitted_parts.append(chunk.delta)
+                yield GatewayStreamEvent(event="message", data={"delta": chunk.delta})
+
+        if generation_output is None:
+            if not emitted_parts:
+                failure_text = "当前生成服务异常，请稍后重试。"
+                yield from self._yield_text_events(failure_text)
+            else:
+                failure_text = "".join(emitted_parts) + "\n\n生成过程中断，请稍后重试。"
+                yield from self._yield_text_events("\n\n生成过程中断，请稍后重试。")
+            failure_session = self._build_rag_failure_session(
+                request=request,
+                exc=RuntimeError(generation_error or "generation failed"),
+            )
+            failure_session.text = failure_text
+            self.deps.container.session_store.set(request.session_id, failure_session)
+            yield self._build_done_event(failure_session)
+            return
+
+        session = self._build_rag_success_session(
+            request=request,
+            prepared=prepared,
+            generation_output=generation_output,
+            degraded=degraded,
+        )
+        self.deps.container.session_store.set(request.session_id, session)
+        yield self._build_done_event(session)
 
     def _build_agent_failure_session(self, request: ChatRequest, exc: Exception) -> SessionResult:
         trace_id = uuid.uuid4().hex
@@ -813,6 +914,107 @@ class GatewayOrchestrator:
             tool_audit=tool_audit,
             finish_reason="error",
             error_message=error_summary,
+            agent_strategy=request.agent_strategy,
+        )
+
+    def _build_rag_failure_session(self, request: ChatRequest, exc: Exception) -> SessionResult:
+        trace_id = uuid.uuid4().hex
+        error_summary = self._summarize_exception(exc)
+        normalized = error_summary.lower()
+        tool_audit = [
+            f"rag:error:{exc.__class__.__name__}",
+            f"rag:error_summary:{error_summary}",
+        ]
+        if any(token in normalized for token in ("timed out", "timeout", "circuit_open:generation-service")):
+            tool_audit.append("rag:generation_timeout")
+            text = (
+                "当前RAG问答模式执行失败，未能完成可靠的工具链调用。\n"
+                "这次失败的主因是模型服务响应太慢，不是前端本身抽风。\n\n"
+                f"失败原因：{error_summary}\n\n"
+                "建议：\n"
+                "1. 检查本地或远端模型服务是否可用、是否负载过高。\n"
+                "2. 适当调大 LLM 超时时间，例如 `LLM_TIMEOUT_SECONDS`。\n"
+                "3. 如果只是先拿基础答案，可切换更快模型后重试。"
+            )
+        elif "mcp" in normalized:
+            tool_audit.append("rag:mcp_execution_not_confirmed")
+            text = (
+                "当前RAG问答模式执行失败，未能完成可靠的外部工具链调用。\n"
+                "为避免误导，本轮不会自动回退成普通回答并假装已经完成了工具检索。\n\n"
+                f"失败原因：{error_summary}\n\n"
+                "建议：\n"
+                "1. 检查外部 MCP 服务是否可用。\n"
+                "2. 如果只是想先拿到基础答案，可暂时降低工具依赖后重试。"
+            )
+        else:
+            tool_audit.append("rag:execution_failed")
+            text = (
+                "当前RAG问答模式执行失败。\n"
+                "为避免误导，本轮不会伪造已经完成的工具链结果。\n\n"
+                f"失败原因：{error_summary}\n\n"
+                "建议：\n"
+                "1. 检查后端日志与 trace_id。\n"
+                "2. 确认模型服务、RAG、技能和 MCP 配置是否正常。"
+            )
+        return SessionResult(
+            session_id=request.session_id,
+            trace_id=trace_id,
+            text=text,
+            status="failed",
+            degraded_features=[],
+            sources=[],
+            tool_audit=tool_audit,
+            finish_reason="error",
+            error_message=error_summary,
+            agent_strategy=request.agent_strategy,
+        )
+
+    def _build_rag_success_session(
+        self,
+        *,
+        request: ChatRequest,
+        prepared: object,
+        generation_output: object,
+        degraded: list[FeatureFlag],
+    ) -> SessionResult:
+        prepared_trace_id = str(getattr(prepared, "trace_id", "") or uuid.uuid4().hex)
+        prepared_last_user = str(getattr(prepared, "last_user", "") or "")
+        prepared_context_blocks = list(getattr(prepared, "context_blocks", []) or [])
+        prepared_feature_notes = list(getattr(prepared, "feature_notes", []) or [])
+        prepared_sources = self._dedupe_chat_sources(
+            list(getattr(prepared, "sources", []) or []),
+            limit=5,
+        )
+        tool_audit = list(dict.fromkeys([*(getattr(prepared, "tool_audit", []) or [])]))
+        tool_audit.append(
+            "generation:"
+            f"{getattr(generation_output, 'route', 'unknown')}:"
+            f"{getattr(generation_output, 'model', None) or 'unknown'}:"
+            f"cache_{'hit' if getattr(generation_output, 'cache_hit', False) else 'miss'}"
+        )
+        prefix_text, degraded = self._build_citation_notice(
+            effective_features=request.features,
+            sources=prepared_sources,
+            degraded=list(dict.fromkeys(degraded)),
+        )
+        final_text = f"{prefix_text}{getattr(generation_output, 'text', '')}"
+        output_flagged, output_reason, audited_text = self._audit_generated_output(final_text)
+        status: ChatStatus = "ok"
+        if output_flagged:
+            tool_audit.append(f"safety_audit:output_sanitized:{output_reason}")
+            final_text = audited_text
+            status = "failed"
+        if degraded:
+            status = "degraded"
+        self._persist_memory_side_effects(request.session_id, prepared_last_user, final_text)
+        return SessionResult(
+            session_id=request.session_id,
+            trace_id=prepared_trace_id,
+            text=final_text,
+            status=status,
+            degraded_features=list(dict.fromkeys(degraded)),
+            sources=prepared_sources,
+            tool_audit=tool_audit,
             agent_strategy=request.agent_strategy,
         )
 
