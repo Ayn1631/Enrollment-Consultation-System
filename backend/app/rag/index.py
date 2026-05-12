@@ -318,14 +318,19 @@ class RagIndexManager:
     def _build_bm25(self) -> None:
         """构建 BM25；依赖缺失时降级为轻量词重叠检索。"""
         try:
+            print('~ 正在构建BM25索引...')
             from langchain_community.retrievers import BM25Retriever
 
             if not self._sparse_documents:
                 self._bm25 = BM25Retriever.from_documents(
-                    [Document(page_content="空语料", metadata={"chunk_id": "empty", "source_title": "empty", "source_url": ""})]
+                    [Document(page_content="空语料", metadata={"chunk_id": "empty", "source_title": "empty", "source_url": ""})],
+                    preprocess_func=self._bm25_tokenize,
                 )
                 return
-            self._bm25 = BM25Retriever.from_documents(self._sparse_documents)
+            self._bm25 = BM25Retriever.from_documents(
+                self._sparse_documents,
+                preprocess_func=self._bm25_tokenize,
+            )
             return
         except Exception:
             manager = self
@@ -392,6 +397,21 @@ class RagIndexManager:
     def _tokenize(self, text: str) -> list[str]:
         """中英混合分词，供本地降级检索复用。"""
         return [tok for tok in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z]+|\d+", text.lower()) if tok]
+
+    def _bm25_tokenize(self, text: str) -> list[str]:
+        """BM25 专用分词：优先 jieba，缺失时回退到空白/规则切分。"""
+        cleaned = re.sub(r"\s+", " ", text).strip().lower()
+        if not cleaned:
+            return []
+        try:
+            import jieba
+
+            tokens = [tok.strip() for tok in jieba.lcut(cleaned) if tok.strip()]
+        except Exception:
+            tokens = cleaned.split()
+            if len(tokens) <= 1:
+                tokens = self._tokenize(cleaned)
+        return tokens
 
     def _sync_document_views(self) -> None:
         self._doc_by_chunk_id = {

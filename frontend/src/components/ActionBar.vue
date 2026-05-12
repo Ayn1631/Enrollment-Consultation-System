@@ -27,8 +27,8 @@ const handleKeydown = (event: KeyboardEvent) => {
       rows="2"
     ></textarea>
     <div class="actions">
-      <button class="ghost">语音</button>
-      <button class="ghost">附件</button>
+      <!-- <button class="ghost">语音</button> -->
+      <!-- <button class="ghost">附件</button> -->
       <button class="send" :disabled="props.isStreaming || props.canSend === false" @click="emit('send')">发送</button>
       <button v-if="props.isStreaming" class="stop" @click="emit('stop')">停止</button>
     </div>

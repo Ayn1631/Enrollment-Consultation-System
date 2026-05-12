@@ -17,3 +17,8 @@
 河南考生2026年高考物理类600分，参考2025年录取情况，可以报考中原工学院哪些专业？请按冲、稳、保分类，并说明理由。
 结合2025年招生章程、专业目录、分专业计划和录取分数，中原工学院哪些专业适合“想进IT方向但分数不够计算机热门专业”的河南物理类考生？
 如果家长更关注就业稳定、学费较低、录取把握较大，2026年河南物理类600分考生报中原工学院应优先考虑哪些专业？请比较培养内容、学费、选科要求和录取难度。
+
+
+
+curl --location 'https://anuneko.com/api/v1/msg/019e160e-3820-7026-a992-da710e76f36b/stream' 
+--header 'x-token: CAEaJGU2Yzg5NjBkLTM2ZWUtNGFlZC04NDk1LTIzMTlmMjkzMWU2NyCDkIbQBijJ_cotMKOCwLjXnvz9CzoEbmVrbw.A4gBagAAAAAAAg.MEQCICfN5KmrKgbxwWyULrXtIdO-2SpMQYevdcCsFclneCmtAiBVCYXAxqNnO1oorZjGXXjGYxhi6qbwBM1zUCYLInwPYg' --header 'Content-Type: text/plain' --header 'Cookie: uk=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImQ0cHZqNmRoamVhYzczZmxndWEwIiwiYWlkIjoiODYzNTQ4NjkwNjI2NzczMjgzIiwiZW1haWwiOiJzdSoqKipvbkBob3RtYWlsLmNvbSIsImV4cCI6MTc3ODQ4NzEyNiwibmJmIjoxNzc4NDg2MjI2LCJpYXQiOjE3Nzg0ODYyMjZ9.oQP-PquXX9DLCPmduHgR0ZRccKoXdFzSwi7w-kdcs44; aws-waf-token=f4abc1a0-5187-4e6a-af22-f3693d576351:BgoAr/w4FkEMAAAA:iQ7sMCG3qerl8ajgW7+oL1G0WWjPuKRLtthqui6NZHAFXKKdR+6trHPDbDeK93oGJYCPvJy+c34Gw1KDgfN1ik7vg6723FOJFEh5Axhah9u1XXFQEcD8ArMlDNFXtyl0nYgBy5vjU7ccqYhj+dazzM1eTKcXrEOtpWHMVkhGRU1cYmwLYGn5SYfIvpWXjZMo9LseNK/TeUDKMFPj' --data '{"contents":["test"]}'

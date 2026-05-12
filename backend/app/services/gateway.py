@@ -2042,26 +2042,26 @@ class GatewayOrchestrator:
 
     def _audit_user_input(self, query: str) -> tuple[bool, str, str]:
         normalized = " ".join(query.split()).strip()
-        if not normalized:
-            return False, "ok", ""
-        rules = [
-            (
-                r"(?i)(输出|展示|泄露).*(系统提示词|提示词|内部指令|developer message|system prompt)",
-                "prompt_leak_request",
-            ),
-            (
-                r"(?i)(忽略|绕过).*(系统|规则|限制|审计|校验)",
-                "policy_bypass_request",
-            ),
-        ]
-        for pattern, reason in rules:
-            if re.search(pattern, normalized):
-                return (
-                    True,
-                    reason,
-                    "该请求涉及系统提示词、内部策略或安全边界，不能直接提供。\n"
-                    "如果你是想了解招生政策、流程、学费或资助，我可以继续基于公开资料帮你整理。",
-                )
+        # if not normalized:
+        #     return False, "ok", ""
+        # rules = [
+        #     (
+        #         r"(?i)(输出|展示|泄露).*(系统提示词|提示词|内部指令|developer message|system prompt)",
+        #         "prompt_leak_request",
+        #     ),
+        #     (
+        #         r"(?i)(忽略|绕过).*(系统|规则|限制|审计|校验)",
+        #         "policy_bypass_request",
+        #     ),
+        # ]
+        # for pattern, reason in rules:
+        #     if re.search(pattern, normalized):
+        #         return (
+        #             True,
+        #             reason,
+        #             "该请求涉及系统提示词、内部策略或安全边界，不能直接提供。\n"
+        #             "如果你是想了解招生政策、流程、学费或资助，我可以继续基于公开资料帮你整理。",
+        #         )
         return False, "ok", ""
 
     def _audit_generated_output(self, text: str) -> tuple[bool, str, str]:
