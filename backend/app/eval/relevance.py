@@ -6,6 +6,11 @@ from typing import Any
 
 from langchain_core.documents import Document
 
+'''
+relevance.py - 招生资料 RAG 评测相关性解析
+'''
+
+
 
 def resolve_relevant_chunk_ids(case: dict[str, Any], documents: list[Document], limit: int = 6) -> list[str]:
     """基于当前索引文档，为评测样本解析最相关的 small chunk 真值集合。"""

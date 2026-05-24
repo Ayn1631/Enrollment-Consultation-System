@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_openai_base_url(endpoint: str) -> str:
+    """把兼容 OpenAI 的 endpoint 归一到基础地址，便于后续拼接子路径。"""
     normalized = (endpoint or "").strip()
     for suffix in ("/chat/completions", "/responses", "/completions"):
         if normalized.endswith(suffix):
@@ -26,12 +27,14 @@ def _normalize_openai_base_url(endpoint: str) -> str:
 
 
 def _is_local_endpoint(endpoint: str) -> bool:
+    """判断端点是否指向本机地址，用于本地回退探测。"""
     hostname = (urlparse(endpoint).hostname or "").lower()
     return hostname in {"localhost", "127.0.0.1", "::1"}
 
 
 @lru_cache(maxsize=8)
 def _llm_endpoint_reachable(endpoint: str, api_key: str) -> bool:
+    """轻量探测 LLM 服务是否可达，避免本地配置不可用时直接把系统带崩。"""
     base_url = _normalize_openai_base_url(endpoint)
     if not base_url:
         return False
@@ -51,9 +54,11 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
+    # 应用与运行模式配置
     app_name: str = Field(default="admissions-gateway", alias="APP_NAME")
     service_call_mode: str = Field(default="local", alias="SERVICE_CALL_MODE")
     use_mock_generation: bool = Field(default=True, alias="USE_MOCK_GENERATION")
+    # 主 LLM 与备用 LLM 配置
     api_url: str = Field(
         default="https://www.right.codes/codex/v1/chat/completions",
         alias="API_URL",
@@ -66,20 +71,25 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=6.0, alias="REQUEST_TIMEOUT_SECONDS")
     llm_timeout_seconds: float = Field(default=20.0, alias="LLM_TIMEOUT_SECONDS")
     stream_chunk_size: int = Field(default=24, alias="STREAM_CHUNK_SIZE")
-    generation_light_model: str = Field(default="gpt-4o-mini", alias="GENERATION_LIGHT_MODEL")
-    generation_main_model: str = Field(default="gpt-4.1", alias="GENERATION_MAIN_MODEL")
+    # 生成模型按场景拆分，轻模型用于低成本任务，主模型用于正式回答
+    generation_light_model: str = Field(default="gpt-5.4-mini", alias="GENERATION_LIGHT_MODEL")
+    generation_main_model: str = Field(default="gpt-5.4-mini", alias="GENERATION_MAIN_MODEL")
     generation_cache_enabled: bool = Field(default=True, alias="GENERATION_CACHE_ENABLED")
     generation_cache_ttl_seconds: int = Field(default=300, alias="GENERATION_CACHE_TTL_SECONDS")
-    eval_judge_model: str = Field(default="gpt-4.1-mini", alias="EVAL_JUDGE_MODEL")
+    # 评测裁判模型，专门用于离线打分，不参与线上回答
+    eval_judge_model: str = Field(default="gpt-5.4-mini", alias="EVAL_JUDGE_MODEL")
+    # 前端开发环境白名单
     cors_allow_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
         alias="CORS_ALLOW_ORIGINS",
     )
+    # 语料与索引目录
     docs_dir: Path = DOCS_DIR
     admissions_source_dir: Path = Field(default=ADMISSIONS_SOURCE_DIR, alias="ADMISSIONS_SOURCE_DIR")
     admissions_parsed_dir: Path = Field(default=ROOT_DIR / "backend" / "data" / "admissions_kb" / "parsed", alias="ADMISSIONS_PARSED_DIR")
     admissions_faiss_dir: Path = Field(default=ROOT_DIR / "backend" / "data" / "faiss" / "admissions_2025", alias="ADMISSIONS_FAISS_DIR")
 
+    # 检索、向量化与重排配置
     embedding_api_url: str = Field(default="", alias="EMBEDDING_API_URL")
     embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
     embedding_model: str = Field(default="BAAI/bge-large-zh-v1.5", alias="EMBEDDING_MODEL")
@@ -98,6 +108,7 @@ class Settings(BaseSettings):
     rag_quality_min_coverage: float = Field(default=0.25, alias="RAG_QUALITY_MIN_COVERAGE")
     rag_node_timeout_ms: int = Field(default=1200, alias="RAG_NODE_TIMEOUT_MS")
 
+    # 知识图谱与外部服务配置
     neo4j_uri: str = Field(default="", alias="NEO4J_URI")
     neo4j_user: str = Field(default="", alias="NEO4J_USER")
     neo4j_password: str = Field(default="", alias="NEO4J_PASSWORD")
@@ -108,6 +119,7 @@ class Settings(BaseSettings):
     mcp_enabled: bool = Field(default=True, alias="MCP_ENABLED")
     mcp_config_path: str = Field(default="", alias="MCP_CONFIG_PATH")
 
+    # 微服务地址
     rag_agent_service_url: str = Field(default="http://rag-agent-service:8001", alias="RAG_AGENT_SERVICE_URL")
     memory_service_url: str = Field(default="http://memory-service:8003", alias="MEMORY_SERVICE_URL")
     skill_service_url: str = Field(default="http://skill-service:8004", alias="SKILL_SERVICE_URL")
@@ -117,12 +129,14 @@ class Settings(BaseSettings):
         alias="OBSERVABILITY_SERVICE_URL",
     )
 
+    # MySQL / 结构化知识库连接
     mysql_host: str = Field(default="127.0.0.1", alias="MYSQL_HOST")
     mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
     mysql_database: str = Field(default="admissions_kb", alias="MYSQL_DATABASE")
     mysql_user: str = Field(default="root", alias="MYSQL_USER")
     mysql_password: str = Field(default="", alias="MYSQL_PASSWORD")
 
+    # 各服务调用超时，避免单点拖死整条链路
     rag_agent_service_timeout_seconds: float = Field(default=2.5, alias="RAG_AGENT_SERVICE_TIMEOUT_SECONDS")
     memory_service_timeout_seconds: float = Field(default=0.8, alias="MEMORY_SERVICE_TIMEOUT_SECONDS")
     skill_service_timeout_seconds: float = Field(default=1.0, alias="SKILL_SERVICE_TIMEOUT_SECONDS")
@@ -180,6 +194,7 @@ class Settings(BaseSettings):
         return (self.rerank_api_key or self.resolve_llm_api_key()).strip()
 
     def resolve_cors_allow_origins(self) -> list[str]:
+        """把逗号分隔的 CORS 白名单转换为列表。"""
         return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
 
     def resolve_mcp_config_path(self) -> Path | None:
@@ -200,6 +215,7 @@ class Settings(BaseSettings):
         return None
 
     def resolve_mysql_dsn(self) -> str:
+        """拼出 MySQL 连接串，供数据库初始化复用。"""
         return (
             f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}"
             f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"

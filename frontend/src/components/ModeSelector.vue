@@ -5,9 +5,9 @@ const props = defineProps<{ modelValue: ChatMode }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: ChatMode): void }>()
 
 const options: Array<{ value: ChatMode; label: string }> = [
-  { value: 'chat', label: '对话模式' },
+  { value: 'chat', label: '聊天模式' },
   { value: 'rag', label: 'RAG问答模式' },
-  { value: 'agent', label: '专家模式' }
+  { value: 'agent', label: '深度研究模式' }
 ]
 </script>
 

@@ -59,7 +59,7 @@ def main() -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=max(1, min(4, os.cpu_count() or 1)),
+        default=max(1, min(16, os.cpu_count() or 1)),
         help="评测并发 worker 数。为 1 时串行执行，大于 1 时按 case 并发执行。",
     )
     args = parser.parse_args()
@@ -268,7 +268,6 @@ def run_answer(
     if answer_mode == "extractive":
         answer_text, cited_titles = synthesize_answer(case=case, retrieval=retrieval)
         return answer_text, cited_titles, "extractive", ""
-
     question = str(case["question"])
     payload = {
         "session_id": uuid.uuid4().hex,

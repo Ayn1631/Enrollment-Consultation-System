@@ -7,8 +7,13 @@ from openai import OpenAI
 
 from app.config import Settings
 
+'''
+llm_eval_report.py - 招生资料 RAG 评测报告生成
+'''
+
 
 EVAL_JUDGE_MODEL_NAME = "gpt-5.4-mini"
+FORBIDDEN_PUBLIC_METRICS = ("通过率", "通过数", "是否通过", "pass rate")
 
 
 def render_markdown_report(*, settings: Settings, report: dict[str, Any]) -> str:
@@ -28,6 +33,8 @@ def render_markdown_report(*, settings: Settings, report: dict[str, Any]) -> str
                         "你是招生 RAG 评测报告撰写助手。"
                         "请根据输入 JSON 生成一份中文 Markdown 报告。"
                         "必须包含：总览摘要、分类指标、路由表现、失败案例、改进建议。"
+                        "禁止输出通过率、通过数、是否通过或任何 pass rate 表述，"
+                        "统一改用工具路由准确率、平均总分、Recall@5、MRR@5、nDCG@5 和低分原因。"
                         "只输出 Markdown，不要输出解释。"
                     ),
                 },
@@ -35,7 +42,10 @@ def render_markdown_report(*, settings: Settings, report: dict[str, Any]) -> str
             ],
         )
         content = str(response.choices[0].message.content or "").strip()
-        base_markdown = content if content else _fallback_markdown(report)
+        if content and not _contains_forbidden_public_metrics(content):
+            base_markdown = content
+        else:
+            base_markdown = _fallback_markdown(report)
     except Exception:
         base_markdown = _fallback_markdown(report)
     return _append_case_details(base_markdown, report)
@@ -50,6 +60,11 @@ def _build_client(settings: Settings) -> OpenAI | None:
     return OpenAI(api_key=api_key, base_url=base, timeout=settings.llm_timeout_seconds)
 
 
+def _contains_forbidden_public_metrics(markdown: str) -> bool:
+    lowered = markdown.lower()
+    return any(token.lower() in lowered for token in FORBIDDEN_PUBLIC_METRICS)
+
+
 def _fallback_markdown(report: dict[str, Any]) -> str:
     summary = report.get("summary", {})
     route = report.get("route_summary", {})
@@ -61,7 +76,7 @@ def _fallback_markdown(report: dict[str, Any]) -> str:
         "",
         "## 总览摘要",
         f"- 样本数：{summary.get('total', 0)}",
-        f"- 通过率：{summary.get('pass_rate', 0)}",
+        f"- 工具路由准确率：{route.get('tool_route_accuracy', 0)}",
         f"- 平均总分：{summary.get('avg_overall_score', 0)}",
         f"- Recall@5：{summary.get('recall@5', 0)}",
         f"- MRR@5：{summary.get('mrr@5', 0)}",
@@ -70,14 +85,12 @@ def _fallback_markdown(report: dict[str, Any]) -> str:
         "## 分类指标",
     ]
     for name, bucket in buckets.items():
-        lines.append(f"- {name}：样本 {bucket.get('total', 0)}，通过率 {bucket.get('pass_rate', 0)}，平均分 {bucket.get('avg_overall_score', 0)}")
+        lines.append(f"- {name}：样本 {bucket.get('total', 0)}，平均分 {bucket.get('avg_overall_score', 0)}")
     lines.extend(
         [
             "",
             "## 路由表现",
             f"- 结构化路由命中率：{route.get('tool_route_accuracy', 0)}",
-            f"- tool-first 正确率：{route.get('tool_first_pass_rate', 0)}",
-            f"- rag-first 正确率：{route.get('rag_first_pass_rate', 0)}",
             "",
             "## 回答生成",
             f"- 回答失败率：{answer.get('answer_failure_rate', 0)}",
@@ -121,11 +134,14 @@ def _append_case_details(base_markdown: str, report: dict[str, Any]) -> str:
                 f"- 检索LLM评分：{row.get('retrieval_judge_overall_score', '')}",
                 f"- 检索裁判模式：{row.get('retrieval_judge_mode', '')}",
                 f"- 回答LLM评分：{row.get('judge_overall_score', '')}",
-                f"- 是否通过：{row.get('passed', False)}",
+                f"- 综合得分：{row.get('overall_score', '')}",
                 f"- 检索指标：Recall@5={row.get('recall@5', 0)}，MRR@5={row.get('mrr@5', 0)}，nDCG@5={row.get('ndcg@5', 0)}，evidence_coverage={row.get('evidence_coverage', 0)}",
                 f"- 回答结果：{row.get('answer_text', '')}",
             ]
         )
+        failure_reason = str(row.get("failure_reason", "") or "").strip()
+        if failure_reason:
+            lines.append(f"- 低分原因：{failure_reason}")
         retrieval_sources = row.get("retrieval_sources", [])
         if retrieval_sources:
             lines.append(f"- 检索来源：{', '.join(str(item) for item in retrieval_sources if str(item).strip())}")

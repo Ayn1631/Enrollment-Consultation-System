@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings
 
+'''
+judges.py - 招生资料 RAG 评测判断
+'''
 
 EVAL_JUDGE_MODEL_NAME = "gpt-5.4-mini"
 DIMENSIONS = (

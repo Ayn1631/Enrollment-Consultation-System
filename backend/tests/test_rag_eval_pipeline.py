@@ -85,6 +85,8 @@ def test_render_markdown_report_fallback_contains_required_sections():
                 "retrieval_mode_expected": "rag-first",
                 "route_actual": "rag",
                 "passed": False,
+                "overall_score": 0.22,
+                "failure_reason": "未命中关键证据",
                 "recall@5": 0.0,
                 "mrr@5": 0.0,
                 "ndcg@5": 0.0,
@@ -108,6 +110,9 @@ def test_render_markdown_report_fallback_contains_required_sections():
     assert "## 全量问答与检索明细" in markdown
     assert "测试提问：招生预留计划比例是多少？" in markdown
     assert "RAG检索结果：" in markdown
+    assert "通过率" not in markdown
+    assert "是否通过" not in markdown
+    assert "综合得分：0.22" in markdown
 
 
 def test_parse_llm_json_payload_accepts_fenced_json():
@@ -129,6 +134,15 @@ def test_parse_llm_json_payload_accepts_fenced_json():
 
     assert parsed["overall_score"] == 5.0
     assert parsed["dimensions"]["route_correctness"]["score_0_5"] == 5
+
+
+def test_render_report_forbidden_metric_detector():
+    assert rag_eval_script is not None
+    from app.eval.reporting import _contains_forbidden_public_metrics
+
+    assert _contains_forbidden_public_metrics("整体通过率 55.71%")
+    assert _contains_forbidden_public_metrics("overall pass rate is 55.71%")
+    assert not _contains_forbidden_public_metrics("工具路由准确率 1.0，平均总分 0.7443")
 
 
 def test_run_eval_parallel_preserves_case_order(monkeypatch):

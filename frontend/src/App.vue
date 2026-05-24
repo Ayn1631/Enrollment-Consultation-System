@@ -380,8 +380,32 @@ const handleSend = async () => {
 }
 
 const handleStop = () => {
+  const sessionId = currentStreamingSessionId
+  if (!sessionId) return
+
   if (cancelStream) {
     cancelStream()
+    cancelStream = null
+  }
+
+  if (streamFlushHandle !== null) {
+    cancelAnimationFrame(streamFlushHandle)
+    streamFlushHandle = null
+  }
+  drainStreamingBuffer()
+
+  const session = getSessionById(sessionId)
+  if (!session) {
+    currentStreamingSessionId = null
+    return
+  }
+
+  session.isStreaming = false
+  session.currentAgentTrace = []
+  touchSession(session.id)
+
+  if (currentStreamingSessionId === session.id) {
+    currentStreamingSessionId = null
   }
 }
 
