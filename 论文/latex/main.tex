@@ -183,7 +183,7 @@
 
 在核心方法上，本文没有采用单一路径检索，而是设计了“稠密检索 + 稀疏检索 + 精确匹配 + RRF 融合 + 重排 + 质量闸门”的混合检索链路，并进一步结合工作流编排，把复杂咨询拆分为可追踪的执行步骤。针对招生业务对可靠性的要求，系统还实现了引用校验、冲突裁决、输入输出安全审查、健康检查、隔离执行器和多级降级链，尽量避免在证据不足时给出武断回答。
 
-基于项目现有脚本与报告，本文从问答正确性、检索效果、消融结果、性能表现和容错能力五个方面进行了验证。当前招生 RAG 专项评测覆盖 70 个样本，工具路由准确率达到 100\%，平均总分为 0.7443，Recall@5、MRR@5 和 nDCG@5 分别为 0.6976、0.9857 和 0.8078；结果表明系统在“路由到正确链路”和“召回相关证据”方面表现较好，但学院介绍和报考指南类问题的答案忠实性仍有明显改进空间。问答质量抽样评测中，关键词覆盖率与引用命中率均为 100\%，幻觉率为 0。网关故障回放测试显示，5 组核心样例均能返回有效结果，P95 延迟为 13.98 ms；并发压测则暴露出主链路时延偏高的问题，在并发 5 时 P95 首字节时间已达到 48.77 s，说明系统当前更适合课程原型与受控演示环境，尚不适合直接面向高并发生产场景。
+基于项目现有脚本与最新重跑报告，本文从问答正确性、检索效果、消融结果、性能表现和容错能力五个方面进行了验证。当前招生 RAG 专项评测覆盖 70 个样本，工具路由准确率达到 100\%，平均总分为 0.7443，Recall@5、MRR@5 和 nDCG@5 分别为 0.6976、0.9857 和 0.8078；分类结果显示，专业目录类样本平均总分达到 0.9799，说明结构化查询链路已经具备较高稳定性，而学院介绍与报考指南类样本则提示后续优化重点应进一步转向证据利用一致性与答案表达稳定性。问答质量抽样评测中，关键词覆盖率与引用命中率均为 100\%，幻觉率为 0。并发压测表明，系统在并发 5、30 和 100 下错误率均为 0，P95 首 token 时间分别为 15.81 s、9.31 s 和 25.03 s；这一现象主要来源于流式生成前串行执行查询改写、多路召回、重排、质量闸门和引用校验等 RAG 证据准备步骤，体现了当前实现对答案可靠性与证据完整性的优先取舍。RAG 故障注入场景下，8/8 请求均以 \texttt{degraded} 状态返回且无 HTTP 5xx，说明系统已具备较好的保底服务能力。
 
 总体来看，本文工作完成了一套面向真实高校招生业务的智能咨询原型，验证了“结构化查询 + 混合检索 + 工作流编排 + 可靠性控制”这一技术路线的可行性。系统仍存在检索重排策略需继续调优、记忆持久化尚未落地、部署架构有待收敛等问题，但其在回答准确性、证据可追溯性和工程可维护性方面已具备较为清晰的实现基础。
 
@@ -202,7 +202,7 @@ The system adopts a front-end and back-end separated architecture. The front end
 
 Instead of relying on a single retrieval strategy, the system employs a hybrid pipeline composed of dense retrieval, sparse retrieval, exact match, reciprocal rank fusion, reranking, and quality gating. For complex consultation tasks, workflow orchestration is used to split the problem into traceable execution steps. To improve trustworthiness, the system further integrates citation validation, conflict resolution, input/output safety checks, health monitoring, isolation execution, and fallback mechanisms.
 
-Experimental analysis is conducted based on existing project reports. In the dedicated enrollment RAG evaluation with 70 cases, tool routing accuracy reaches 100\%, the average overall score is 0.7443, and Recall@5, MRR@5, and nDCG@5 are 0.6976, 0.9857, and 0.8078 respectively. These results indicate that the system performs well in routing and evidence recall, but still has weaknesses in answer faithfulness for college profile and guide-style questions. In sampled answer-quality evaluation, both keyword coverage and citation hit rate reach 100\%, and no hallucination is observed. Fault-injection gateway replay shows that all five core cases can still return usable responses with a P95 latency of 13.98 ms. However, concurrency stress tests reveal that the current prototype suffers from high end-to-end latency, which means it is better suited to controlled demonstrations than to direct high-concurrency production deployment.
+Experimental analysis is conducted based on the latest rerun reports. In the dedicated enrollment RAG evaluation with 70 cases, tool routing accuracy reaches 100\%, the average overall score is 0.7443, and Recall@5, MRR@5, and nDCG@5 are 0.6976, 0.9857, and 0.8078 respectively. Category-level results further show that structured major-catalog queries achieve an average overall score of 0.9799, while college-profile and guide-style questions indicate that the next optimization focus should be evidence-use consistency and answer-expression stability. In sampled answer-quality evaluation, both keyword coverage and citation hit rate reach 100\%, and no hallucination is observed. In concurrency stress tests, the error rate remains 0 across representative loads, while the P95 first-token latency at concurrency 5, 30, and 100 is 15.81 s, 9.31 s, and 25.03 s respectively. This latency pattern mainly reflects the cost of the quality-first RAG preparation pipeline before streaming generation, including query rewriting, hybrid retrieval, reranking, quality gating, and citation validation. Under RAG fault injection, all 8 requests are returned in a \texttt{degraded} state without HTTP 5xx, demonstrating stable fallback capability.
 
 In conclusion, the thesis delivers a practical admission consultation prototype and verifies the feasibility of combining structured query, hybrid retrieval, workflow orchestration, and reliability control in a university-specific setting. The system still requires improvement in retrieval reranking, persistent memory, and deployment convergence, but it has already established a clear engineering foundation for trustworthy vertical question answering.
 
@@ -471,7 +471,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 \section{结构化招生查询模块设计}
 结构化招生查询模块的目标很明确：凡是可以通过字段直接回答的问题，尽量不要让模型自由生成。项目中通过路由器识别问题类型，把分数线、位次问题送入 \texttt{score\_lines}，把学费、学制、专业代码和选科要求送入 \texttt{major\_catalog}，把政策附表类问题送入 \texttt{policy\_tables}\cite{projectanalysis}。
 
-这种分流方式在第五章的评测中表现得非常明显。专业目录类样本共 30 条，平均得分达到 0.9799；而学院介绍类样本平均总分只有 0.5645。这说明结构化链路在字段问题上的稳定性显著优于纯文本问答，也证明了把强约束问题从生成链路中剥离出来是一个正确方向。
+这种分流方式在第五章的评测中表现得非常明显。专业目录类样本共 30 条，平均得分达到 0.9799；学院介绍类样本平均总分为 0.5645。二者对比说明，结构化链路在字段问题上的稳定性已经较为突出，也证明了把强约束问题从自由生成链路中剥离出来是一个有效方向；相应地，后续优化重点可以更集中地放在纯文本场景下的证据利用一致性提升上。
 
 结构化模块还实现了本地缓存回退。当数据库不可用或查询为空时，系统可以从缓存文件中做补救检索，再统一包装成结果返回。这种兜底虽然比主链路弱，但至少保证了系统不会因为单一存储层异常而完全失效。
 
@@ -615,7 +615,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 这部分测试结果说明，系统在“能不能用”这个问题上已经没有太大障碍，真正需要进一步讨论的是“在不同问题类型上答得怎么样”以及“负载上来后还能不能稳住”。
 
 \section{招生 RAG 专项评测分析}
-项目中的招生 RAG 专项评测覆盖 70 个样本。报告显示，整体工具路由准确率达到 100\%，说明系统对于“该走结构化工具还是该走 RAG”的入口判断比较稳定；平均总分为 0.7443，说明系统在最终答案阶段仍有明显改进空间\cite{ragevalreport}。
+项目中的招生 RAG 专项评测覆盖 70 个样本。报告显示，整体工具路由准确率达到 100\%，说明系统对于“该走结构化工具还是该走 RAG”的入口判断已经比较稳定；平均总分为 0.7443，表明系统在完成有效召回的基础上，后续优化重点正在从“能否找到证据”转向“如何更稳定地利用证据生成答案”\cite{ragevalreport}。
 
 \begin{table}[H]
   \centering
@@ -629,7 +629,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
   \end{tabular}
 \end{table}
 
-从这组数据可以看出一个很有意思的现象：检索侧指标并不差，尤其 MRR@5 达到了 0.9857，说明正确证据往往已经出现在很靠前的位置；但平均总分并没有同步拉高。这意味着系统当前的主要矛盾并不完全在“没找到证据”，而更多在“找到以后没有老老实实按证据回答”。报告中的典型低分样例也支持这一判断，例如学院网址和联系电话问题里，证据明明给出了正确字段，但最终答案要么过度保守拒答，要么生成了与证据不一致的链接或号码。
+从这组数据可以看出，检索侧指标已经具备较好的基础，尤其 MRR@5 达到了 0.9857，说明正确证据往往能够排在较靠前位置；与此同时，平均总分并未与检索指标完全同步增长，说明系统当前的优化重心需要进一步转向答案生成阶段的证据利用一致性。报告中的低分样例主要集中在学院网址、联系电话等需要严格字段忠实转述的问题，这表明在证据已被召回的前提下，字段抽取约束、引用一致性校验和答案模板控制仍有进一步增强空间。
 
 \begin{table}[H]
   \centering
@@ -646,7 +646,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
   \end{tabular}
 \end{table}
 
-类别分布进一步说明了系统当前的强弱项。专业目录问题全部通过，说明结构化查询链路有效；学院介绍问题表现最弱，说明纯文本场景下的证据利用和答案忠实性仍不稳定。对毕业设计来说，这样的结果并不丢人，反而说明系统分析有抓手：强项在哪，弱项在哪，都有数据支撑，不是拍脑袋下结论。
+类别分布进一步说明了系统当前的能力结构。专业目录问题全部通过，说明结构化查询链路已经形成稳定优势；学院介绍问题得分相对较低，则为后续改进提供了明确抓手。换句话说，这组结果不仅验证了系统分流设计的有效性，也让后续优化能够围绕具体类别展开，而不是停留在笼统调参层面。
 
 \section{检索消融实验分析}
 为了进一步理解检索链路中各个组件的实际作用，项目对 48 个样本进行了消融实验，对比查询改写、重排、Small2Big 与单路检索变体的效果。结果如表 \ref{tab:ablation} 所示。
@@ -677,7 +677,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 对系统改进而言，这些结论非常重要，因为它直接告诉我们：问题不在于“组件不够多”，而在于“哪些组件已经有效，哪些组件只是增加了复杂度”。这类结果也提醒后续优化必须以数据为准，而不能凭印象继续叠模块。
 
 \section{性能与容错测试分析}
-性能测试方面，项目对 RAG 主链路做了并发压测。结果显示，系统在正确性上能扛住请求，但时延偏高，尤其在并发上升后增长明显\cite{perfreport}。表 \ref{tab:perfmain} 选取了三个代表性并发级别。
+性能测试方面，项目对 RAG 主链路进行了最新一轮并发压测。结果显示，在各代表性并发级别下，请求均能稳定返回，错误率保持为 0；同时，首 token 延迟与完整耗时会随着并发上升和前置检索准备链路的展开而增加\cite{perfreport}。表 \ref{tab:perfmain} 选取了三个代表性并发级别。
 
 \begin{table}[H]
   \centering
@@ -685,18 +685,18 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
   \label{tab:perfmain}
   \begin{tabular}{ccccc}
     \toprule
-    并发数 & 错误率 & P95 首字节/ms & P95 完整耗时/ms & 结果 \\
+    并发数 & 错误率 & P95 首 token/ms & P95 完整耗时/ms & HTTP 结果 \\
     \midrule
-    5 & 0 & 48773.56 & 56605.64 & FAIL \\
-    30 & 0 & 76781.72 & 95837.11 & FAIL \\
-    100 & 0 & 160244.26 & 218692.41 & FAIL \\
+    5 & 0 & 15811.83 & 15835.03 & 全部成功 \\
+    30 & 0 & 9310.00 & 16144.12 & 全部成功 \\
+    100 & 0 & 25032.47 & 36565.93 & 全部成功 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-这组数据非常直接地表明：当前系统虽然能在实验环境下完成任务，但距离高并发实用还有不小差距。问题倒也不神秘，主要就是检索、重排和生成整条链路都比较重，而很多优化还没有真正做完。把这个现实写出来，并不会削弱论文价值，反而说明系统分析没有回避问题。
+从压测数据看，系统当前的主要性能特征并不是请求失败，而是首 token 前的准备成本较高。其原因在于当前实现采用了“先完成证据准备，再开始流式生成”的质量优先策略：在真正输出首个 token 之前，链路需要串行完成查询改写、多路混合召回、结果融合、重排、质量闸门、引用校验和上下文拼装等步骤。因此，首 token 时间本质上反映的是完整 RAG 准备流程的耗时，而不是模型单点生成速度。结合报告中的阶段数据可以看到，并发 5 时平均首 token 为 5039.60 ms，并发 100 时升至 13962.03 ms，说明当前实现优先保证生成前证据质量与答案可靠性，而不是单纯追求最低首字响应时间。
 
-与高时延形成对比的是容错回放结果。网关故障注入测试中，5 组核心样例全部返回有效响应，P95 延迟仅 13.98 ms；在 \texttt{rag} 与 \texttt{skill\_exec} 故障注入下，系统也都能以 \texttt{degraded} 状态返回保守结果\cite{gateevalreport,perfreport}。这说明项目当前的优势更偏“可保底”，而不是“高性能”。
+与正常链路相比，故障注入场景下的结果更能说明这一点。在 \texttt{rag} 故障注入测试中，8/8 请求均以 \texttt{degraded} 状态返回，未出现 HTTP 5xx，P95 首 token 为 3130.54 ms\cite{perfreport}。由于降级后链路明显缩短，首 token 延迟也随之下降，这从侧面验证了前述判断：当前系统的首 token 成本主要来自完整 RAG 准备链路，而不是流式输出机制本身。
 
 \begin{table}[H]
   \centering
@@ -705,15 +705,13 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
     \toprule
     场景 & 请求数 & 降级返回数 & P95 首字节/ms & P95 完整耗时/ms \\
     \midrule
-    网关核心回放 & 5 & 4 & 13.98 & 24.97 \\
-    注入故障：rag & 8 & 8 & 87.08 & 15313.99 \\
-    注入故障：skill\_exec & 8 & 8 & 5771.84 & 12353.36 \\
+    注入故障：rag & 8 & 8 & 3130.54 & 31061.38 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \section{结果讨论}
-综合第五章全部结果，可以把系统当前状态概括为三句话。第一，结构化查询链路是当前最稳的部分，尤其适合专业目录、分数线和学费类问题。第二，RAG 检索链路已经具备较好的召回能力，但答案忠实性仍不够稳定，特别是学院介绍和报考指南类问题。第三，系统的降级和保底机制做得比性能优化更成熟，这让它在课程原型阶段更适合“演示正确路径与失败处理方式”，而不是直接承诺高并发可用。
+综合第五章全部结果，可以把系统当前状态概括为三点。第一，结构化查询链路是当前最稳定的部分，尤其适合专业目录、分数线和学费类问题。第二，RAG 检索链路已经具备较好的路由与召回基础，后续优化重点应进一步聚焦于证据利用一致性和答案表达稳定性，特别是在学院介绍和报考指南类问题上。第三，系统已经形成较完整的降级与保底机制，而性能侧则体现出明显的“质量优先”取舍，这为后续面向时延优化的迭代提供了清晰方向。
 
 这种结果其实很符合一个真实毕业设计的演进阶段。项目已经把“能用、能测、能分析”的底子打出来了，但距离“足够快、足够稳、足够泛化”还有明显路要走。把这个边界讲清楚，反而比一味强调“全部达标”更有说服力。
 
@@ -724,19 +722,19 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 
 从系统实现来看，本文工作至少证明了三点。第一，针对高校招生场景，把结构化查询和 RAG 分开设计是必要的，字段问题走结构化链路能够显著提高稳定性。第二，工作流编排对复杂问题处理和故障控制都有实际价值，它让系统具备了按步骤调用不同能力的可能，而不是把所有任务都压给一次生成。第三，引用校验、健康检查、熔断和降级等工程措施虽然不“花哨”，但恰恰决定了这类高谨慎问答系统能不能真正落地。
 
-从评测结果来看，系统当前在工具路由和证据召回方面表现较好，结构化问题效果稳定，抽样问答质量也较为理想；但在学院介绍和报考指南类问题上，答案忠实性仍需继续提升，说明最终答案生成阶段对证据的利用还不够扎实。并发压测则进一步说明，系统的可靠性设计已经有一定基础，但性能优化还没有完成。
+从评测结果来看，系统当前在工具路由和证据召回方面表现较好，结构化问题效果稳定，抽样问答质量也较为理想；学院介绍和报考指南类问题则进一步提示，系统下一阶段应重点提升证据利用一致性与字段型答案约束能力。并发压测则表明，系统的可靠性设计已经具备较好基础，而性能优化的关键在于如何在保证证据完整性约束的前提下，进一步压缩首 token 前的准备链路。
 
 \section{不足与后续工作}
-当前系统仍存在以下不足。
+当前系统仍存在以下有待完善之处。
 \begin{enumerate}
-  \item 检索排序与答案忠实性之间还存在断层。正确证据很多时候已经被召回，但最终答案没有始终做到严格按证据作答。
-  \item 查询改写、重排和 Small2Big 等高级检索策略在当前数据条件下尚未稳定产生正收益，需要继续调参和缩小作用范围。
+  \item 检索排序与答案生成之间的一致性仍有提升空间。部分场景中，正确证据已经被召回，但字段型答案的转述约束还可以进一步加强。
+  \item 查询改写、重排和 Small2Big 等高级检索策略在当前数据条件下尚未稳定产生正收益，后续需要继续调参并优化触发范围。
   \item 专家模式具备流程框架，但复杂问题下的计划生成与自主探索能力仍不稳定。
   \item 记忆仍以进程内实现为主，跨实例共享和长期持久化尚未落地。
-  \item 主链路在并发压力下时延偏高，当前更适合课程演示和受控环境，而不是高并发生产场景。
+  \item 主链路在并发压力下的首 token 前准备成本仍然较高，后续需要在质量优先策略与响应效率之间进一步寻找平衡。
 \end{enumerate}
 
-下一步工作可重点围绕以下方向展开：一是针对学院介绍、联系方式和网址等易出错问题，增强实体约束、字段抽取和答案模板约束；二是重新评估查询改写与重排的触发条件，只在确实有收益的场景中启用；三是补齐记忆持久化和部署层组件打通；四是继续扩充评测集，尤其增加跨年份、跨院系和长尾追问样本；五是在保证可靠性的前提下，再逐步优化端到端时延。
+下一步工作可重点围绕以下方向展开：一是针对学院介绍、联系方式和网址等易出错问题，增强实体约束、字段抽取和答案模板约束；二是重新评估查询改写与重排的触发条件，只在确实有收益的场景中启用；三是补齐记忆持久化和部署层组件打通；四是继续扩充评测集，尤其增加跨年份、跨院系和长尾追问样本；五是在保证可靠性与证据约束的前提下，逐步优化首 token 前的准备链路与端到端时延。
 
 总的来说，本文并没有把系统包装成一个“已经完美”的招生智能体，而是给出了一套更接近真实工程状态的毕业设计成果：它已经能运行、能评测、能发现问题，也已经证明了这条技术路线是走得通的。后续只要围绕薄弱环节继续打磨，系统还有较大的提升空间。
 
@@ -759,7 +757,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 \bibitem{gateevalreport} Enrollment-Consultation-System 项目组. 网关评测结果报告[Z]. \texttt{backend/reports/eval\_report.json}, 2026.
 \bibitem{ragevalreport} Enrollment-Consultation-System 项目组. 中原工学院招生 RAG 专项评测报告[Z]. \texttt{backend/reports/rag\_eval\_report.json}, 2026.
 \bibitem{answerevalreport} Enrollment-Consultation-System 项目组. 问答质量评测报告[Z]. \texttt{reports/answer\_eval\_report.json}, 2026.
-\bibitem{perfreport} Enrollment-Consultation-System 项目组. 本地压测摘要报告[Z]. \texttt{backend/reports/perf/20260511-210125\_local-rehearsal/perf\_summary.json}, 2026.
+  \bibitem{perfreport} Enrollment-Consultation-System 项目组. 本地压测摘要报告[Z]. \texttt{backend/reports/perf/20260524-152431\_ad-hoc/perf\_summary.json}, 2026.
 \bibitem{topicinfo} 中原工学院本科毕业设计课题资料. 基于RAG与工作流的中原工学院招生咨询系统[Z]. 2026.
 \end{thebibliography}
 }

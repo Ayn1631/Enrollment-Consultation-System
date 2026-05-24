@@ -14,9 +14,12 @@ const loadingText = computed(() => {
     return '正在生成回答，请稍等...'
   }
   if (props.mode === 'rag') {
-    return '正在检索资料并生成回答，请稍等...'
+    return '正在执行纯 RAG 检索并生成回答，请稍等...'
   }
-  return '正在调用专家能力并生成回答，请稍等...'
+  if (props.mode === 'expert') {
+    return '正在执行专家检索链路并生成回答，请稍等...'
+  }
+  return '正在调用深度研究能力并生成回答，请稍等...'
 })
 </script>
 

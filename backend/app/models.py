@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 Role = Literal["user", "assistant", "system"]
-ChatMode = Literal["chat", "rag", "plan", "guide", "agent"]
+ChatMode = Literal["chat", "rag", "expert", "research", "plan", "guide", "agent"]
 AgentStrategy = Literal["speed", "quality"]
 AgentStepStatus = Literal["started", "completed", "retrying", "degraded", "failed"]
 
@@ -22,6 +22,8 @@ DEFAULT_FEATURES: tuple[FeatureFlag, ...] = ("rag", "citation_guard")
 MODE_DEFAULT_FEATURES: dict[ChatMode, tuple[FeatureFlag, ...]] = {
     "chat": (),
     "rag": ("rag", "citation_guard"),
+    "expert": ("rag", "citation_guard"),
+    "research": ("rag", "skill_exec", "citation_guard"),
     "agent": ("rag", "skill_exec", "citation_guard"),
     "plan": DEFAULT_FEATURES,
     "guide": DEFAULT_FEATURES,
@@ -101,6 +103,8 @@ class ChatRequest(BaseModel):
     @model_validator(mode="after")
     def normalize_features(self) -> "ChatRequest":
         """归一化功能开关：兼容 legacy tools、默认值与依赖补全。"""
+        if self.mode == "agent":
+            self.mode = "research"
         normalized = list(self.features)
         for item in self.tools:
             mapped = LEGACY_TO_FEATURE.get(item)

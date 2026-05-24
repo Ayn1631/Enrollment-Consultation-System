@@ -12,10 +12,10 @@ export interface RequestBuilderInput {
 }
 
 export function resolveModeFeatures(mode: ChatMode): FeatureFlag[] {
-  if (mode === 'agent') {
+  if (mode === 'research' || mode === 'agent') {
     return ['rag', 'web_search', 'skill_exec', 'citation_guard']
   }
-  if (mode === 'rag') {
+  if (mode === 'rag' || mode === 'expert') {
     return ['rag', 'citation_guard']
   }
   return []
@@ -23,12 +23,13 @@ export function resolveModeFeatures(mode: ChatMode): FeatureFlag[] {
 
 export function buildChatRequest(input: RequestBuilderInput): ChatRequest {
   const features = resolveModeFeatures(input.mode)
-  const strictCitation = input.mode === 'rag' || input.mode === 'agent'
+  const normalizedMode = input.mode === 'agent' ? 'research' : input.mode
+  const strictCitation = normalizedMode === 'rag' || normalizedMode === 'expert' || normalizedMode === 'research'
   return {
     session_id: input.sessionId,
     messages: input.messages,
     features,
-    mode: input.mode,
+    mode: normalizedMode,
     stream: input.stream,
     saved_skill_id: undefined,
     strict_citation: strictCitation,

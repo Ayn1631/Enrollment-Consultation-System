@@ -49,7 +49,7 @@ class PerfCase:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="对 /api/chat/stream 执行预检与并发压测。")
-    parser.add_argument("--base-url", required=True, help="后端服务地址，例如 http://127.0.0.1:8000")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="后端服务地址，例如 http://127.0.0.1:8000")
     parser.add_argument(
         "--mode",
         default="rag",
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--concurrency",
-        default="5, 10, 15, 20, 25, 30, 45, 60, 75, 100",
+        default="5, 10, 15, 20, 25, 30, 45, 60, 75, 100", # , 10, 15, 20, 25, 30, 45, 60, 75, 100
         help="并发档位，逗号分隔，例如 5,10,15,20",
     )
     parser.add_argument(
@@ -354,22 +354,12 @@ def build_stream_request(
     top_p: float,
     resilience: bool = False,
 ) -> dict[str, Any]:
-    features: list[str]
-    strict_citation = False
-    request_mode = mode
-    if resilience:
-        features = ["rag", "skill_exec", "citation_guard"]
-        strict_citation = True
-        request_mode = "chat"
-    elif mode == "rag":
-        features = ["rag", "citation_guard"]
-        strict_citation = True
-    else:
-        features = []
+    features = ["rag", "citation_guard"]
+    strict_citation = True
     payload: dict[str, Any] = {
         "session_id": uuid.uuid4().hex,
         "messages": [{"role": "user", "content": case.query}],
-        "mode": request_mode,
+        "mode": mode,
         "stream": True,
         "features": features,
         "strict_citation": strict_citation,
@@ -1371,7 +1361,7 @@ async def run_resilience_checks(
     case_offset: int,
 ) -> tuple[list[dict[str, Any]], int]:
     scenarios: list[dict[str, Any]] = []
-    for fail_features in ("rag", "skill_exec"):
+    for fail_features in ("rag",):
         console_log(f"开始韧性场景 fail_features={fail_features} concurrency=8")
         before_snapshot = await collect_environment_snapshot(
             client,

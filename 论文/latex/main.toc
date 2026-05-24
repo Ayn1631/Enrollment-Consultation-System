@@ -32,9 +32,9 @@
 \contentsline {section}{\numberline {5.1}测试环境与方案设计}{19}{section.5.1}%
 \contentsline {section}{\numberline {5.2}功能测试结果}{20}{section.5.2}%
 \contentsline {section}{\numberline {5.3}招生 RAG 专项评测分析}{20}{section.5.3}%
-\contentsline {section}{\numberline {5.4}检索消融实验分析}{21}{section.5.4}%
-\contentsline {section}{\numberline {5.5}性能与容错测试分析}{22}{section.5.5}%
-\contentsline {section}{\numberline {5.6}结果讨论}{23}{section.5.6}%
+\contentsline {section}{\numberline {5.4}检索消融实验分析}{22}{section.5.4}%
+\contentsline {section}{\numberline {5.5}性能与容错测试分析}{23}{section.5.5}%
+\contentsline {section}{\numberline {5.6}结果讨论}{24}{section.5.6}%
 \contentsline {chapter}{\numberline {第六章\hspace {.3em}}结论与展望}{25}{chapter.6}%
 \contentsline {section}{\numberline {6.1}研究结论}{25}{section.6.1}%
 \contentsline {section}{\numberline {6.2}不足与后续工作}{25}{section.6.2}%

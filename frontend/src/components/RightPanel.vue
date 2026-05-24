@@ -76,7 +76,7 @@ const emit = defineEmits<{
         </select>
       </div>
 
-      <div v-if="props.mode === 'agent'" class="control">
+      <div v-if="props.mode === 'research' || props.mode === 'agent'" class="control">
         <label>执行策略</label>
         <div class="strategy-group">
           <button

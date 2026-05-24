@@ -38,7 +38,7 @@ watch(
       <div class="status-degraded">已降级：{{ props.degradedFeatures.join(' / ') }}</div>
     </div>
 
-    <div v-if="props.mode === 'agent' && props.currentAgentTrace.length" class="trace-panel">
+    <div v-if="(props.mode === 'research' || props.mode === 'agent') && props.currentAgentTrace.length" class="trace-panel">
       <div class="trace-title">当前执行轨迹</div>
       <div class="trace-list">
         <div class="trace-item" v-for="item in props.currentAgentTrace" :key="item.id">

@@ -27,7 +27,7 @@ const DEFAULT_SESSION_TITLE = '新会话'
 const createWelcomeMessage = (): ChatMessage => ({
   id: newId(),
   role: 'assistant',
-  content: '欢迎来到中原工学院招生咨询系统。你可以直接对话，也可以切换到 RAG 问答模式或专家模式获取更完整的答案。',
+  content: '欢迎来到中原工学院招生咨询系统。你可以直接对话，也可以切换到 RAG 模式、专家模式或深度研究模式获取不同深度的答案。',
   createdAt: new Date().toISOString()
 })
 
@@ -92,8 +92,9 @@ const latestDegradedFeatures = computed(() => activeSession.value.latestDegraded
 const anyStreaming = computed(() => sessions.value.some((session) => session.isStreaming))
 
 const modeLabel = computed(() => {
-  if (mode.value === 'agent') return '专家模式'
-  if (mode.value === 'rag') return 'RAG问答模式'
+  if (mode.value === 'research' || mode.value === 'agent') return '深度研究模式'
+  if (mode.value === 'expert') return '专家模式'
+  if (mode.value === 'rag') return 'RAG模式'
   return '对话模式'
 })
 

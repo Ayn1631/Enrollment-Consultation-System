@@ -558,10 +558,12 @@ class GatewayOrchestrator:
         """网关主流程：按 Agent 规划顺序执行功能并统一处理降级。"""
         fail_features = fail_features or set()
         started_at = perf_counter()
-        if request.mode == "agent":
+        if request.mode == "research":
             return self._create_agent_chat(request=request, fail_features=fail_features)
-        if request.mode == "rag":
+        if request.mode == "expert":
             return self._create_rag_chat(request=request, fail_features=fail_features)
+        if request.mode == "rag":
+            return self._create_plain_rag_chat(request=request, fail_features=fail_features)
         prepare_started_at = perf_counter()
         prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
         prepared_elapsed_ms = (perf_counter() - prepare_started_at) * 1000
@@ -632,11 +634,14 @@ class GatewayOrchestrator:
         """单请求流式聊天：前置能力准备完成后，边生成边向前端输出增量。"""
         fail_features = fail_features or set()
         started_at = perf_counter()
-        if request.mode == "agent":
+        if request.mode == "research":
             yield from self._stream_agent_chat(request=request, fail_features=fail_features)
             return
-        if request.mode == "rag":
+        if request.mode == "expert":
             yield from self._stream_rag_chat(request=request, fail_features=fail_features)
+            return
+        if request.mode == "rag":
+            yield from self._stream_plain_rag_chat(request=request, fail_features=fail_features)
             return
         prepare_started_at = perf_counter()
         prepared = self._prepare_chat_context(request=request, fail_features=fail_features)
@@ -755,6 +760,34 @@ class GatewayOrchestrator:
         self.deps.container.session_store.set(request.session_id, session)
         return self._to_create_response(session)
 
+    def _create_plain_rag_chat(self, request: ChatRequest, fail_features: set[str]) -> ChatCreateResponse:
+        """纯 RAG 模式入口：查询改写 -> RAG 检索 -> LLM 回答，不走 ReAct agent。"""
+        prepared = self._prepare_plain_rag_context(request=request, fail_features=fail_features)
+        if prepared.blocked_reply is not None:
+            session = self._build_blocked_session(prepared)
+            self.deps.container.session_store.set(request.session_id, session)
+            return self._to_create_response(session)
+        generation_result = self.deps.container.isolation.execute(
+            "generation-service",
+            lambda: self._invoke_generation(
+                user_query=prepared.last_user,
+                context_blocks=prepared.context_blocks,
+                feature_notes=prepared.feature_notes,
+                request=request,
+                fail_features=fail_features,
+            ),
+        )
+        if not generation_result.ok or generation_result.value is None:
+            session = self._build_failed_generation_session(
+                prepared=prepared,
+                error_message=generation_result.error or "generation failed",
+            )
+            self.deps.container.session_store.set(request.session_id, session)
+            return self._to_create_response(session)
+        session = self._build_success_session(prepared=prepared, generation_output=generation_result.value)
+        self.deps.container.session_store.set(request.session_id, session)
+        return self._to_create_response(session)
+
     def _stream_agent_chat(self, request: ChatRequest, fail_features: set[str]) -> Iterator[GatewayStreamEvent]:
         """专家模式流式实现：先实时输出步骤事件，再流式回放最终文本。"""
         try:
@@ -861,6 +894,77 @@ class GatewayOrchestrator:
             prepared=prepared,
             generation_output=generation_output,
             degraded=degraded,
+        )
+        self.deps.container.session_store.set(request.session_id, session)
+        yield self._build_done_event(session)
+
+    def _stream_plain_rag_chat(self, request: ChatRequest, fail_features: set[str]) -> Iterator[GatewayStreamEvent]:
+        """纯 RAG 模式流式实现：查询改写与检索完成后，直接流式生成最终回答。"""
+        prepared = self._prepare_plain_rag_context(request=request, fail_features=fail_features)
+        if prepared.blocked_reply is not None:
+            session = self._build_blocked_session(prepared)
+            self.deps.container.session_store.set(request.session_id, session)
+            yield from self._yield_text_events(session.text)
+            yield self._build_done_event(session)
+            return
+
+        prefix_text, degraded = self._build_citation_notice(
+            effective_features=prepared.effective_features,
+            sources=prepared.sources,
+            degraded=prepared.degraded,
+        )
+        emitted_parts: list[str] = []
+        if prefix_text:
+            emitted_parts.append(prefix_text)
+            yield from self._yield_text_events(prefix_text)
+
+        generation_output = None
+        generation_error: str | None = None
+        for item in self.deps.container.isolation.execute_stream(
+            "generation-service",
+            lambda: self._invoke_generation_stream(
+                user_query=prepared.last_user,
+                context_blocks=prepared.context_blocks,
+                feature_notes=prepared.feature_notes,
+                request=request,
+                fail_features=fail_features,
+            ),
+        ):
+            if not item.ok:
+                generation_error = item.error or "generation failed"
+                break
+            chunk = item.value
+            if chunk is None:
+                continue
+            if chunk.done:
+                generation_output = chunk.response
+                continue
+            if chunk.delta:
+                emitted_parts.append(chunk.delta)
+                yield GatewayStreamEvent(event="message", data={"delta": chunk.delta})
+
+        if generation_output is None:
+            failure_text = "当前生成服务异常，请稍后重试。"
+            if emitted_parts:
+                failure_text = "".join(emitted_parts) + "\n\n生成过程中断，请稍后重试。"
+                yield from self._yield_text_events("\n\n生成过程中断，请稍后重试。")
+            else:
+                yield from self._yield_text_events(failure_text)
+            failure_session = self._build_failed_generation_session(
+                prepared=prepared,
+                error_message=generation_error or "generation failed",
+                text_override=failure_text,
+                degraded_override=degraded,
+            )
+            self.deps.container.session_store.set(request.session_id, failure_session)
+            yield self._build_done_event(failure_session)
+            return
+
+        session = self._build_success_session(
+            prepared=prepared,
+            generation_output=generation_output,
+            prefix_override=prefix_text,
+            degraded_override=degraded,
         )
         self.deps.container.session_store.set(request.session_id, session)
         yield self._build_done_event(session)
@@ -1597,6 +1701,97 @@ class GatewayOrchestrator:
                 temperature=request.temperature,
                 top_p=request.top_p,
             )
+        )
+
+    def _prepare_plain_rag_context(self, request: ChatRequest, fail_features: set[str]) -> PreparedChatContext:
+        """纯 RAG 模式准备：查询改写、记忆承接、RAG 检索与引用校验。"""
+        trace_id = uuid.uuid4().hex
+        degraded: list[FeatureFlag] = []
+        sources: list[ChatSource] = []
+        tool_audit: list[str] = []
+
+        last_user = next((m.content for m in reversed(request.messages) if m.role == "user"), "").strip()
+        if not last_user:
+            last_user = "请介绍中原工学院招生政策要点。"
+        input_blocked, input_reason, safe_reply = self._audit_user_input(last_user)
+        if input_blocked:
+            tool_audit.append(f"safety_audit:input_blocked:{input_reason}")
+            return PreparedChatContext(
+                trace_id=trace_id,
+                session_id=request.session_id,
+                last_user=last_user,
+                effective_features=list(request.features),
+                degraded=[],
+                feature_notes=[],
+                sources=[],
+                context_blocks=[],
+                tool_audit=tool_audit,
+                blocked_reply=safe_reply,
+            )
+
+        memory_context_blocks, memory_text, memory_notes = self.agent_runtime.load_memory_context(request.session_id)
+        rewritten_query = self.agent_runtime.rewrite_query(
+            request=request,
+            last_user=last_user,
+            memory_text=memory_text,
+            strategy=request.agent_strategy,
+        )
+        feature_notes = [*memory_notes, f"查询改写：{rewritten_query}", "纯RAG模式：已跳过ReAct Agent，直接执行检索与生成。"]
+        tool_audit.extend(["plain_rag:query_rewritten", "plain_rag:react_bypassed"])
+
+        rag_result = self.deps.container.isolation.execute(
+            "rag-agent-service",
+            lambda: self._invoke_rag(
+                request.session_id,
+                rewritten_query,
+                fail_features,
+                memory_context_blocks,
+            ),
+        )
+        context_blocks = list(memory_context_blocks)
+        if rag_result.ok and rag_result.value is not None:
+            rag_output = rag_result.value
+            context_blocks.extend(rag_output.context_blocks[: self.deps.services.settings.rag_final_top_k])
+            sources = self._dedupe_chat_sources(
+                [ChatSource(title=item.title, url=item.url) for item in rag_output.sources],
+                limit=5,
+            )
+            if rag_output.status == "degraded":
+                degraded.append("rag")
+                if rag_output.degrade_reason:
+                    feature_notes.append(f"RAG 降级：{rag_output.degrade_reason}")
+            else:
+                feature_notes.append("RAG 检索执行成功。")
+        else:
+            degraded.append("rag")
+            feature_notes.append("RAG 检索失败，已降级为无检索回答。")
+            tool_audit.append(f"plain_rag:error:{rag_result.error or 'rag_failed'}")
+
+        if "citation_guard" in request.features:
+            guard_result = self.deps.container.isolation.execute(
+                "citation-guard",
+                lambda: self._invoke_citation_guard(sources=sources, fail_features=fail_features),
+            )
+            if guard_result.ok and guard_result.value:
+                feature_notes.append("引用校验通过。")
+            elif sources and self._can_soft_pass_citation_guard(guard_result=guard_result):
+                tool_audit.append(f"citation_guard:soft_pass:{guard_result.error or 'service_unavailable'}")
+                feature_notes.append("引用校验服务异常，但已按保守策略保留来源。")
+            else:
+                if "citation_guard" not in degraded:
+                    degraded.append("citation_guard")
+                feature_notes.append("引用校验失败，已启用保守模板。")
+
+        return PreparedChatContext(
+            trace_id=trace_id,
+            session_id=request.session_id,
+            last_user=last_user,
+            effective_features=list(request.features),
+            degraded=list(dict.fromkeys(degraded)),
+            feature_notes=feature_notes,
+            sources=sources,
+            context_blocks=context_blocks,
+            tool_audit=tool_audit,
         )
 
     def _prepare_chat_context(self, request: ChatRequest, fail_features: set[str]) -> PreparedChatContext:
