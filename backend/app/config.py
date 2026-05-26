@@ -128,6 +128,10 @@ class Settings(BaseSettings):
         default="http://observability-service:8006",
         alias="OBSERVABILITY_SERVICE_URL",
     )
+    local_memory_db_path: Path = Field(
+        default=ROOT_DIR / "backend" / "data" / "memory" / "memory.sqlite3",
+        alias="LOCAL_MEMORY_DB_PATH",
+    )
 
     # MySQL / 结构化知识库连接
     mysql_host: str = Field(default="127.0.0.1", alias="MYSQL_HOST")

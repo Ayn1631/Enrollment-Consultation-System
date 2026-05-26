@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
+from app.contracts import MemoryEntry
 from app.service_apps.generation_api import app as generation_app
+from app.service_apps import memory_api
 from app.service_apps.memory_api import app as memory_app
 from app.service_apps import rag_agent_api
 from app.service_apps.rag_agent_api import app as rag_agent_app
 from app.service_apps.skill_api import app as skill_app
+from app.services.memory import MemoryManager
+
+
+@pytest.fixture
+def isolated_memory_service(tmp_path, monkeypatch):
+    monkeypatch.setattr(memory_api, "memory", MemoryManager(tmp_path / "memory-service.sqlite3"))
 
 
 def test_rag_agent_query_and_stats_endpoints():
@@ -40,7 +49,7 @@ def test_rag_agent_reindex_endpoint(monkeypatch):
     assert body["chunks"] >= 0
 
 
-def test_memory_service_write_read():
+def test_memory_service_write_read(isolated_memory_service):
     client = TestClient(memory_app)
     write_res = client.post(
         "/memory/write",
@@ -55,7 +64,7 @@ def test_memory_service_write_read():
     assert len(read_res.json()["entries"]) >= 1
 
 
-def test_memory_service_supports_long_and_special_kinds():
+def test_memory_service_supports_long_and_special_kinds(isolated_memory_service):
     client = TestClient(memory_app)
     client.post(
         "/memory/write",
@@ -77,6 +86,18 @@ def test_memory_service_supports_long_and_special_kinds():
     assert special_res.status_code == 200
     assert long_res.json()["entries"][0]["key"] == "rolling_summary"
     assert special_res.json()["entries"][0]["key"] == "response_style"
+
+
+def test_memory_service_persists_entries_across_manager_restart(tmp_path):
+    db_path = tmp_path / "memory-service.sqlite3"
+    first_manager = MemoryManager(db_path)
+    first_manager.write("s-restart", MemoryEntry(key="k", value="v", kind="short"))
+
+    second_manager = MemoryManager(db_path)
+    rows = second_manager.read("s-restart", kind="short")
+
+    assert rows
+    assert rows[0].value == "v"
 
 
 def test_skill_service_saved_list_and_execute():

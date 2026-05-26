@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from app.config import get_settings
 from app.contracts import MemoryQuery, MemoryReadResponse, MemoryWriteRequest
 from app.services.memory import MemoryManager
 
 
 app = FastAPI(title="memory-service")
-memory = MemoryManager()
+memory = MemoryManager(get_settings().local_memory_db_path)
 
 
 @app.get("/healthz")
@@ -25,4 +26,3 @@ def write_memory(request: MemoryWriteRequest) -> dict[str, str]:
 def read_memory(request: MemoryQuery, kind: str = "short") -> MemoryReadResponse:
     rows = memory.read(request.session_id, kind=kind, key=request.key)
     return MemoryReadResponse(entries=rows)
-

@@ -34,6 +34,7 @@ def isolated_runtime_settings(runtime_settings: Settings, runtime_docs_dir: Path
         update={
             "docs_dir": runtime_docs_dir,
             "rag_faiss_dir": tmp_path / "faiss",
+            "local_memory_db_path": tmp_path / "memory.sqlite3",
         }
     )
 

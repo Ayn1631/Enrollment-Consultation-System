@@ -22,6 +22,55 @@ class RetrievedItem:
 class HybridRetriever:
     """基于 BM25 + Dense + Exact Match + RRF 的混合召回器。"""
 
+    _SEMANTIC_QUERY_MARKERS = (
+        "主要介绍了什么",
+        "怎么说明",
+        "哪些专业相关内容",
+        "主要怎么规定",
+    )
+    _CONSTRAINT_QUERY_MARKERS = (
+        "多少",
+        "是什么",
+        "在哪里",
+        "咨询电话",
+        "联系方式",
+        "官网",
+        "官方网站",
+        "地址",
+        "学费",
+        "住宿费",
+        "选考科目",
+        "录取要求",
+    )
+    _DOMAIN_KEYWORDS = (
+        "学校概况",
+        "学校简介",
+        "招生政策要点",
+        "普通本科招生章程",
+        "报考指南",
+        "校区与联系方式",
+        "历史沿革",
+        "学院与专业概览",
+        "学生生活与服务",
+        "联系方式",
+        "咨询电话",
+        "地址",
+        "学费",
+        "住宿费",
+        "录取规则",
+        "录取要求",
+        "奖学金",
+        "资助",
+        "助学贷款",
+        "专业",
+        "专业要求",
+        "选考科目",
+        "学院",
+        "网址",
+        "国标代码",
+        "河南招生代码",
+    )
+
     def __init__(
         self,
         index: RagIndexManager,
@@ -83,18 +132,30 @@ class HybridRetriever:
 
     def _retrieve_single_query(self, query: str, top_n: int, focus_parent_ids: list[str]) -> list[RetrievedItem]:
         """执行单查询召回，并使用 RRF 融合三路排序。"""
+        shape = self._classify_query_shape(query)
+        local_focus_parent_ids = list(dict.fromkeys([*focus_parent_ids, *self.locate_summary_parents(query, top_n=3)]))
+        sparse_weight, dense_weight, exact_weight, rrf_k = self._resolve_query_profile(shape)
         dense_rows = self.index.dense_similarity_scores(query=query, top_k=top_n)
         dense_docs = [item[0] for item in dense_rows]
         exact_docs = self._exact_match_search(query=query, top_n=top_n)
         sparse_docs = self._retrieve_sparse_docs(query=query, top_n=top_n)
+        parent_seed_docs = self._collect_parent_seed_docs(
+            query=query,
+            parent_ids=local_focus_parent_ids,
+            top_n=max(top_n, 6),
+        )
 
         scores = self._build_rank_score_map(
             sparse_docs=sparse_docs,
             dense_docs=dense_docs,
             exact_docs=exact_docs,
+            sparse_weight=sparse_weight,
+            dense_weight=dense_weight,
+            exact_weight=exact_weight,
+            rrf_k=rrf_k,
         )
         merged = self._merge_ranked_docs(
-            candidates=[dense_docs, exact_docs, sparse_docs],
+            candidates=[parent_seed_docs, dense_docs, exact_docs, sparse_docs],
             scores=scores,
             query=query,
             top_n=top_n,
@@ -105,7 +166,7 @@ class HybridRetriever:
             score = (
                 scores.get(chunk_id, 0.0)
                 + self._temporal_bonus(query=query, doc=doc)
-                + self._parent_focus_bonus(doc, focus_parent_ids)
+                + self._parent_focus_bonus(doc, local_focus_parent_ids)
                 + self._query_intent_bonus(query=query, doc=doc)
             )
             ranked_items.append(RetrievedItem(document=doc, score=score))
@@ -155,7 +216,17 @@ class HybridRetriever:
                 break
         return ordered
 
-    def _build_rank_score_map(self, sparse_docs: list[Document], dense_docs: list[Document], exact_docs: list[Document]) -> dict[str, float]:
+    def _build_rank_score_map(
+        self,
+        sparse_docs: list[Document],
+        dense_docs: list[Document],
+        exact_docs: list[Document],
+        *,
+        sparse_weight: float,
+        dense_weight: float,
+        exact_weight: float,
+        rrf_k: int,
+    ) -> dict[str, float]:
         """使用 RRF 把多路排序位置映射为可比较分值。"""
         sparse_rank = self._rank_map(sparse_docs)
         dense_rank = self._rank_map(dense_docs)
@@ -164,11 +235,11 @@ class HybridRetriever:
         for chunk_id in set(sparse_rank) | set(dense_rank) | set(exact_rank):
             score = 0.0
             if chunk_id in sparse_rank:
-                score += self.sparse_weight / (self.rrf_k + sparse_rank[chunk_id] + 1)
+                score += sparse_weight / (rrf_k + sparse_rank[chunk_id] + 1)
             if chunk_id in dense_rank:
-                score += self.dense_weight / (self.rrf_k + dense_rank[chunk_id] + 1)
+                score += dense_weight / (rrf_k + dense_rank[chunk_id] + 1)
             if chunk_id in exact_rank:
-                score += self.exact_weight / (self.rrf_k + exact_rank[chunk_id] + 1)
+                score += exact_weight / (rrf_k + exact_rank[chunk_id] + 1)
             scores[chunk_id] = score
         return scores
 
@@ -219,6 +290,7 @@ class HybridRetriever:
                     str(doc.metadata.get("chunk_text") or ""),
                     str(doc.metadata.get("source_title") or ""),
                     str(doc.metadata.get("topic") or ""),
+                    str(doc.metadata.get("section_hint") or ""),
                     expansion_text,
                     str(doc.page_content),
                 ]
@@ -230,7 +302,8 @@ class HybridRetriever:
                 continue
             coverage = token_hits / max(len(tokens), 1)
             numeric_hits = sum(1 for token in tokens if token.isdigit() and token in text)
-            score = phrase_hit + coverage + numeric_hits * 0.25 + self._query_intent_bonus(query=query, doc=doc)
+            field_hit_bonus = self._field_alignment_bonus(query=query, doc=doc)
+            score = phrase_hit + coverage + numeric_hits * 0.25 + field_hit_bonus + self._query_intent_bonus(query=query, doc=doc)
             cloned = Document(page_content=doc.page_content, metadata=dict(doc.metadata))
             cloned.metadata["score"] = score
             scored.append((score, cloned))
@@ -239,7 +312,150 @@ class HybridRetriever:
 
     def _tokenize(self, text: str) -> list[str]:
         """中英混合分词，供精确匹配通道复用。"""
-        return [tok for tok in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z]+|\d+", text.lower()) if tok]
+        lowered = text.lower()
+        tokens: list[str] = []
+        for raw in re.findall(r"[a-zA-Z]+|\d+|[\u4e00-\u9fff]{2,}", lowered):
+            if re.fullmatch(r"[\u4e00-\u9fff]{2,}", raw):
+                tokens.extend(self._expand_chinese_token(raw))
+            else:
+                tokens.append(raw)
+        return list(dict.fromkeys(tok for tok in tokens if tok))
+
+    def _expand_chinese_token(self, raw: str) -> list[str]:
+        """展开中文短语，兼顾原词、切词结果与短 n-gram。"""
+        cleaned = raw.strip().lower()
+        if len(cleaned) < 2:
+            return [cleaned] if cleaned else []
+
+        expanded: list[str] = [cleaned]
+        fragments = [part for part in re.split(r"[的了和与及在中对把将就按关于主要什么多少哪里哪些怎么是否请问]", cleaned) if len(part) >= 2]
+        expanded.extend(fragments)
+        try:
+            import jieba
+
+            expanded.extend(token.strip().lower() for token in jieba.lcut(cleaned) if len(token.strip()) >= 2)
+        except Exception:
+            pass
+
+        generated = 0
+        max_window = min(4, len(cleaned))
+        for window in range(max_window, 1, -1):
+            for start in range(0, len(cleaned) - window + 1):
+                expanded.append(cleaned[start : start + window])
+                generated += 1
+                if generated >= 48:
+                    break
+            if generated >= 48:
+                break
+        return list(dict.fromkeys(token for token in expanded if token))
+
+    def _classify_query_shape(self, query: str) -> str:
+        """根据问句形态区分语义型、约束型和词面型问题。"""
+        normalized = query.strip()
+        if not normalized:
+            return "lexical"
+        if any(marker in normalized for marker in self._SEMANTIC_QUERY_MARKERS):
+            return "semantic"
+        if any(marker in normalized for marker in self._CONSTRAINT_QUERY_MARKERS):
+            return "constraint"
+        if any(char.isdigit() for char in normalized):
+            return "constraint"
+        if len(normalized) <= 14 and not re.search(r"[？?。；!！]", normalized):
+            return "lexical"
+        if sum(keyword in normalized for keyword in self._DOMAIN_KEYWORDS) >= 2:
+            return "lexical"
+        return "semantic"
+
+    def _resolve_query_profile(self, shape: str) -> tuple[float, float, float, int]:
+        """按问题类型动态调整三路权重和 RRF 平滑系数。"""
+        if shape == "constraint":
+            return (
+                round(self.sparse_weight * 1.0, 4),
+                round(self.dense_weight * 0.8, 4),
+                round(self.exact_weight * 1.65, 4),
+                max(18, self.rrf_k // 2),
+            )
+        if shape == "lexical":
+            return (
+                round(self.sparse_weight * 1.15, 4),
+                round(self.dense_weight * 0.55, 4),
+                round(self.exact_weight * 2.0, 4),
+                max(12, self.rrf_k // 3),
+            )
+        return (
+            round(self.sparse_weight * 0.75, 4),
+            round(self.dense_weight * 1.45, 4),
+            round(self.exact_weight * 0.7, 4),
+            max(72, self.rrf_k),
+        )
+
+    def _collect_parent_seed_docs(self, query: str, parent_ids: list[str], top_n: int) -> list[Document]:
+        """从摘要定位到的 parent 中优先补入候选，减少混合召回漏召。"""
+        normalized_parent_ids = list(dict.fromkeys(parent_id for parent_id in parent_ids if parent_id))
+        if not normalized_parent_ids or top_n <= 0:
+            return []
+
+        parent_id_set = set(normalized_parent_ids)
+        tokens = self._tokenize(query)
+        scored: list[tuple[float, Document]] = []
+        for doc in self.index.all_documents():
+            parent_id = str(doc.metadata.get("parent_id", ""))
+            if parent_id not in parent_id_set:
+                continue
+            text = " ".join(
+                [
+                    str(doc.metadata.get("section_hint", "")),
+                    str(doc.metadata.get("topic", "")),
+                    str(doc.metadata.get("source_title", "")),
+                    str(doc.metadata.get("chunk_text", "")),
+                    doc.page_content,
+                ]
+            ).lower()
+            token_hits = sum(1 for token in tokens if token in text)
+            coverage = token_hits / max(len(tokens), 1)
+            score = coverage + self._field_alignment_bonus(query=query, doc=doc) + self._query_intent_bonus(query=query, doc=doc)
+            if str(doc.metadata.get("chunk_level", "")) == "small":
+                score += 0.18
+            elif str(doc.metadata.get("chunk_level", "")) == "summary":
+                score += 0.06
+            if token_hits <= 0 and score < 0.2:
+                continue
+            cloned = Document(page_content=doc.page_content, metadata=dict(doc.metadata))
+            cloned.metadata["score"] = score
+            scored.append((score, cloned))
+        scored.sort(key=lambda item: (item[0], str(item[1].metadata.get("publish_date", ""))), reverse=True)
+        return [item[1] for item in scored[:top_n]]
+
+    def _field_alignment_bonus(self, query: str, doc: Document) -> float:
+        """对字段型问题做弱监督对齐，降低答非所问的候选排序。"""
+        intent_aliases = {
+            "学费": ("学费", "收费", "培养费"),
+            "住宿费": ("住宿费", "住宿标准", "住宿安排"),
+            "电话": ("电话", "联系方式", "咨询热线", "咨询电话"),
+            "网址": ("网址", "官网", "官方网站", "网站", "http://", "https://"),
+            "地址": ("地址", "校区", "通讯地址", "联系地址"),
+            "录取": ("录取", "调档", "投档"),
+            "选考": ("选考", "选科", "科目要求"),
+            "代码": ("国标代码", "招生代码", "院校代码"),
+            "资助": ("资助", "奖学金", "助学贷款", "贷款"),
+        }
+        metadata_text = " ".join(
+            [
+                str(doc.metadata.get("section_hint", "")),
+                str(doc.metadata.get("topic", "")),
+                str(doc.metadata.get("source_title", "")),
+                str(doc.metadata.get("chunk_text", "")),
+            ]
+        )
+        score = 0.0
+        for intent, aliases in intent_aliases.items():
+            if intent not in query and not any(alias in query for alias in aliases):
+                continue
+            hits = sum(1 for alias in aliases if alias in metadata_text)
+            if hits <= 0:
+                continue
+            score += min(0.9, 0.28 + 0.12 * hits)
+        return round(score, 4)
 
     def _apply_temporal_policy(self, query: str, docs: list[Document]) -> list[Document]:
         """对时效问题优先保留年份匹配或当前有效的证据。"""

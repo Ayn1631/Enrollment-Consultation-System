@@ -252,6 +252,21 @@ def test_memory_client_supports_long_and_special_memory(isolated_runtime_setting
     assert "用户关注学费和资助" in long_entries[0].value
 
 
+def test_memory_client_persists_entries_across_restarts(isolated_runtime_settings: Settings):
+    settings = _local_settings(isolated_runtime_settings)
+    first_client = ServiceClient(settings=settings)
+    first_client.write_memory(
+        session_id="s-persist",
+        entry=MemoryEntry(key="last_user_query", value="中原工学院学费是多少", kind="short"),
+    )
+
+    second_client = ServiceClient(settings=settings)
+    persisted = second_client.read_memory("s-persist", kind="short").entries
+
+    assert persisted
+    assert persisted[0].value == "中原工学院学费是多少"
+
+
 def test_generate_uses_light_route_and_prompt_cache_in_local_mode(isolated_runtime_settings: Settings):
     settings = _local_settings(isolated_runtime_settings)
     settings.generation_light_model = "light-model"

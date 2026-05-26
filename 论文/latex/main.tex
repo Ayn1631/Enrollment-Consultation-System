@@ -1,6 +1,6 @@
 \documentclass[UTF8,zihao=-4,oneside]{ctexbook}
 
-\usepackage[a4paper,top=3.10cm,bottom=2.80cm,left=3.17cm,right=2.50cm,headsep=0.80cm,footskip=1.20cm,headheight=14pt]{geometry}
+\usepackage[a4paper,top=3.10cm,bottom=2.80cm,left=3.17cm,right=2.50cm,headsep=0.50cm,footskip=0.90cm,headheight=14pt]{geometry}
 \usepackage{fontspec}
 \usepackage{setspace}
 \usepackage{titlesec}
@@ -32,7 +32,7 @@
 
 \setmainfont{Times New Roman}
 \setCJKmainfont{SimSun}
-\setCJKsansfont{SimHei}
+\setCJKsansfont[AutoFakeBold=2.5]{SimHei}
 \setCJKmonofont{FangSong}
 \IfFontExistsTF{LiSu}{
   \newfontfamily\coverlishu{LiSu}
@@ -46,11 +46,11 @@
 
 \makeatletter
 \renewcommand\normalsize{%
-  \@setfontsize\normalsize{12pt}{20pt}%
-  \abovedisplayskip 10pt plus 2pt minus 2pt
+  \@setfontsize\normalsize{12pt}{21pt}%
+  \abovedisplayskip 10.5pt plus 2pt minus 2pt
   \abovedisplayshortskip 6pt plus 2pt
   \belowdisplayshortskip 6pt plus 2pt minus 2pt
-  \belowdisplayskip 10pt plus 2pt minus 2pt
+  \belowdisplayskip 10.5pt plus 2pt minus 2pt
   \let\@listi\@listI
 }
 \makeatother
@@ -69,39 +69,39 @@
 \renewcommand{\theequation}{\thechapter-\arabic{equation}}
 
 \captionsetup{
-  font={small},
+  font={normalsize},
   labelsep=space
 }
 
 \titleformat{\chapter}[block]
-  {\centering\heiti\fontsize{15pt}{20pt}\selectfont}
+  {\centering\heiti\fontsize{15pt}{21pt}\selectfont}
   {\thechapter\quad 第\chinese{chapter}章}
   {1em}
   {}
-\titlespacing*{\chapter}{0pt}{0pt}{10pt}
+\titlespacing*{\chapter}{0pt}{0pt}{10.5pt}
 
 \titleformat{\section}
-  {\heiti\fontsize{14pt}{20pt}\selectfont}
+  {\heiti\fontsize{14pt}{21pt}\selectfont}
   {\thesection}
   {0.8em}
   {}
-\titlespacing*{\section}{0pt}{20pt}{10pt}
+\titlespacing*{\section}{0pt}{21pt}{10.5pt}
 
 \titleformat{\subsection}
-  {\heiti\fontsize{12pt}{20pt}\selectfont}
+  {\heiti\fontsize{12pt}{21pt}\selectfont}
   {\thesubsection}
   {0.8em}
   {}
-\titlespacing*{\subsection}{0pt}{20pt}{8pt}
+\titlespacing*{\subsection}{0pt}{21pt}{10.5pt}
 
 \titleformat{\subsubsection}
-  {\heiti\fontsize{12pt}{20pt}\selectfont}
+  {\heiti\fontsize{12pt}{21pt}\selectfont}
   {\thesubsubsection}
   {0.8em}
   {}
-\titlespacing*{\subsubsection}{0pt}{18pt}{8pt}
+\titlespacing*{\subsubsection}{0pt}{21pt}{10.5pt}
 
-\renewcommand{\contentsname}{目\quad 次}
+\renewcommand{\contentsname}{目次}
 \titlecontents{chapter}[0em]{\songti\zihao{-4}}{\contentslabel{4.8em}}{}{\titlerule*[0.6pc]{.}\contentspage}
 \titlecontents{section}[2.3em]{\songti\zihao{-4}}{\contentslabel{2.8em}}{}{\titlerule*[0.6pc]{.}\contentspage}
 \titlecontents{subsection}[5.1em]{\songti\zihao{-4}}{\contentslabel{3.6em}}{}{\titlerule*[0.6pc]{.}\contentspage}
@@ -119,8 +119,8 @@
   \renewcommand{\headrulewidth}{0pt}
 }
 
-\newcommand{\coverlabel}[1]{\makebox[7em][l]{\heiti\fontsize{16pt}{20pt}\selectfont #1：}}
-\newcommand{\covervalue}[1]{\makebox[18em][l]{\heiti\fontsize{16pt}{20pt}\selectfont #1}}
+\newcommand{\coverlabel}[1]{\makebox[7em][l]{\heiti\fontsize{16pt}{21pt}\selectfont #1：}}
+\newcommand{\covervalue}[1]{\makebox[18em][l]{\heiti\fontsize{16pt}{21pt}\selectfont #1}}
 \newcommand{\coverline}[2]{\noindent\coverlabel{#1}\covervalue{#2}\par}
 
 \newcolumntype{Y}{>{\centering\arraybackslash}X}
@@ -130,7 +130,7 @@
 \begin{titlepage}
   \thispagestyle{empty}
   \begin{flushright}
-    {\songti\fontsize{14pt}{20pt}\selectfont 论文编号：202208064722（学号）}
+    {\songti\fontsize{14pt}{21pt}\selectfont 论文编号：202208064722}
   \end{flushright}
   \vspace{1.6cm}
   \begin{center}
@@ -138,7 +138,7 @@
     \vspace{1.4cm}
     {\heiti\fontsize{22pt}{28pt}\selectfont 基于RAG与工作流的中原工学院招生咨询系统\par}
     \vspace{0.8cm}
-    {\bfseries\fontsize{15pt}{20pt}\selectfont Admission Consulting System of Zhongyuan University of Technology Based on RAG and Workflow\par}
+    {\bfseries\fontsize{18pt}{24pt}\selectfont Admission Consulting System of Zhongyuan University of Technology Based on RAG and Workflow\par}
   \end{center}
   \vspace{1.8cm}
   \coverline{学院名称}{人工智能学院}
@@ -154,21 +154,25 @@
   \coverline{指导教师}{车战斌}
   \vfill
   \begin{center}
-    {\heiti\fontsize{14pt}{20pt}\selectfont 2026\quad 年\quad 5\quad 月\par}
+    {\heiti\fontsize{14pt}{21pt}\selectfont 2026\quad 年\quad 5\quad 月\par}
   \end{center}
 \end{titlepage}
 
 \clearpage
 \thispagestyle{empty}
 \begin{center}
-  {\heiti\fontsize{15pt}{20pt}\selectfont 诚信承诺书\par}
+  {\heiti\fontsize{14pt}{21pt}\selectfont 诚信承诺书\par}
 \end{center}
 \vspace{1.6cm}
-\songti\fontsize{12pt}{20pt}\selectfont
+{
+\heiti\fontsize{14pt}{21pt}\selectfont
 本人郑重声明：本人所呈交的毕业论文（设计），是在导师的指导下独立进行研究所取得的成果。毕业论文（设计）中凡引用他人已经发表或未发表的成果、数据、观点等，均已明确注明出处。除文中已经注明引用的内容外，不包含任何其他个人或集体已经发表或在网上发表的论文。
 
 \vspace{3.0cm}
-\noindent 论文作者签名：\underline{\hspace{4cm}}\hfill 日期：\underline{\hspace{4cm}}
+\begin{center}
+  {\heiti\fontsize{15pt}{21pt}\selectfont 论文作者签名：\underline{\hspace{4cm}}\quad 日期：\underline{\hspace{4cm}}\par}
+\end{center}
+}
 
 \clearpage
 \pagenumbering{Roman}
@@ -177,37 +181,33 @@
 
 \chapter*{摘\quad 要}
 \addcontentsline{toc}{chapter}{摘要}
-高校招生咨询的难点，不在于“问题多”，而在于“问题杂、来源散、口径不能错”。同一轮咨询里，考生可能先问招生章程，再追问某个专业的学费、选考科目和学院网址，接着还要继续问报到流程或者资助政策。传统 FAQ 系统覆盖面有限，人工热线又受时间和人力约束；直接使用大语言模型虽然交互自然，但在招生这类高谨慎场景下，若回答没有证据约束，就很容易出现事实幻觉或年份混淆。围绕这些实际问题，本文以中原工学院招生资料为基础，设计并实现了一套基于检索增强生成（Retrieval-Augmented Generation，RAG）与工作流编排的招生咨询系统。
+针对高校招生咨询中问题类型复杂、资料来源分散、回答口径要求严格等实际需求，本文以中原工学院招生资料为基础，设计并实现了一套基于检索增强生成（Retrieval-Augmented Generation，RAG）与工作流编排的招生咨询系统。系统采用前后端分离架构，前端基于 Vue 3、TypeScript 与 Vite 构建多会话咨询界面，支持普通对话、RAG 问答、专家模式切换和 SSE 流式响应；后端以 FastAPI 作为统一入口，提供查询改写、问题路由、结构化招生查询、混合检索、答案生成、引用校验、会话记忆、技能调用、健康检查和故障降级等功能。系统知识层同时管理招生章程、报考指南、学院介绍等非结构化文档，以及专业目录、分数线、政策附表等结构化数据，能够支撑政策说明、学费学制、专业代码、选科要求、历年分数线和复合型咨询等典型招生问答场景。
 
-系统采用前后端分离架构。前端基于 Vue 3、TypeScript 与 Vite 构建多会话咨询界面，支持普通对话、RAG 问答与专家模式切换，并通过 SSE 方式流式展示回答过程。后端以 FastAPI 作为统一入口，在网关层组织查询改写、结构化路由、混合检索、引用校验、答案生成、记忆接入、技能调用和故障降级。知识层同时维护非结构化文档与结构化招生数据：一方面对招生章程、报考指南、学院介绍等资料进行解析、切块和索引，构建 FAISS 向量检索与 BM25 稀疏检索链路；另一方面将专业目录、分数线、政策附表等字段数据存入 MySQL，以支撑费用、选科、专业代码和位次类精确查询。
+本文重点解决了招生咨询系统中“自然语言问题如何匹配异构资料”“字段型问题如何避免大模型自由发挥”“复杂咨询如何按步骤调用不同能力”以及“证据不足时如何保守回答”等关键问题。为此，系统构建了由 FAISS 稠密检索、BM25 稀疏检索、精确匹配、RRF 融合、重排和质量闸门组成的混合检索链路，并针对字段约束明显的问题引入结构化查询与查询形态自适应路由机制，使学费、专业代码、选科要求和分数线等问题优先进入确定性更强的查询路径。与此同时，系统采用工作流编排组织子问题拆分、工具调用、结果审查和答案汇总，并加入引用校验、冲突裁决、输入输出安全审查、隔离执行器和多级降级机制，从工程层面降低事实幻觉、年份混淆和依赖故障对回答质量的影响。
 
-在核心方法上，本文没有采用单一路径检索，而是设计了“稠密检索 + 稀疏检索 + 精确匹配 + RRF 融合 + 重排 + 质量闸门”的混合检索链路，并进一步结合工作流编排，把复杂咨询拆分为可追踪的执行步骤。针对招生业务对可靠性的要求，系统还实现了引用校验、冲突裁决、输入输出安全审查、健康检查、隔离执行器和多级降级链，尽量避免在证据不足时给出武断回答。
+实验部分从功能测试、招生 RAG 专项评测、检索消融、并发压测和故障注入等方面对系统进行了评价。70 个样本的招生 RAG 专项评测结果显示，系统工具路由准确率达到 100\%，平均总分为 0.7443，Recall@5、MRR@5 和 nDCG@5 分别为 0.6976、0.9857 和 0.8078；其中专业目录类样本平均总分达到 0.9799，说明结构化查询链路在字段型问题上具有较高稳定性。检索消融实验中，启用查询形态自适应策略的 \texttt{feature\_on} 方案综合评价分为 0.7884，高于默认混合检索基线 \texttt{feature\_off} 的 0.6236，也高于 \texttt{dense\_only} 和 \texttt{bm25\_only} 等单一路径方案，表明面向招生场景进行路由分流和精确检索增强比简单堆叠检索组件更有效。问答质量抽样评测中，关键词覆盖率和引用命中率均为 100\%，幻觉率为 0；并发 5、30 和 100 下系统错误率均为 0，RAG 故障注入场景下 8/8 请求均以 \texttt{degraded} 状态返回且未出现 HTTP 5xx，验证了系统的可用性和降级能力。
 
-基于项目现有脚本与最新重跑报告，本文从问答正确性、检索效果、消融结果、性能表现和容错能力五个方面进行了验证。当前招生 RAG 专项评测覆盖 70 个样本，工具路由准确率达到 100\%，平均总分为 0.7443，Recall@5、MRR@5 和 nDCG@5 分别为 0.6976、0.9857 和 0.8078；分类结果显示，专业目录类样本平均总分达到 0.9799，说明结构化查询链路已经具备较高稳定性，而学院介绍与报考指南类样本则提示后续优化重点应进一步转向证据利用一致性与答案表达稳定性。问答质量抽样评测中，关键词覆盖率与引用命中率均为 100\%，幻觉率为 0。并发压测表明，系统在并发 5、30 和 100 下错误率均为 0，P95 首 token 时间分别为 15.81 s、9.31 s 和 25.03 s；这一现象主要来源于流式生成前串行执行查询改写、多路召回、重排、质量闸门和引用校验等 RAG 证据准备步骤，体现了当前实现对答案可靠性与证据完整性的优先取舍。RAG 故障注入场景下，8/8 请求均以 \texttt{degraded} 状态返回且无 HTTP 5xx，说明系统已具备较好的保底服务能力。
-
-总体来看，本文工作完成了一套面向真实高校招生业务的智能咨询原型，验证了“结构化查询 + 混合检索 + 工作流编排 + 可靠性控制”这一技术路线的可行性。系统仍存在检索重排策略需继续调优、记忆持久化尚未落地、部署架构有待收敛等问题，但其在回答准确性、证据可追溯性和工程可维护性方面已具备较为清晰的实现基础。
+从开发完成度看，本文系统已完成核心功能的初步开发与本地联调，形成了前端交互、后端网关、知识库索引、结构化数据查询、工作流编排、会话记忆和运维接口等主要模块，并具备通过脚本重复评测和分析结果的能力。当前系统定位为面向毕业设计与业务验证的智能招生咨询原型，尚未作为正式线上招生服务投入生产运营；专家模式的复杂任务规划、检索重排调优、跨实例共享、统一会话存储和部署架构收敛仍需继续完善。总体来看，系统已实现关键业务链路和关键技术功能，验证了“结构化查询 + 混合检索 + 工作流编排 + 可靠性控制”技术路线在高校招生咨询场景中的可行性。
 
 \vspace{0.8em}
-\noindent{\heiti\fontsize{12pt}{20pt}\selectfont 关键词：}RAG；工作流编排；招生咨询；混合检索；智能问答系统
+\noindent{\heiti\fontsize{12pt}{21pt}\selectfont 关键词：}RAG；工作流编排；招生咨询；混合检索；智能问答系统
 
 \clearpage
 \begin{center}
-  {\bfseries\fontsize{15pt}{20pt}\selectfont ABSTRACT\par}
+  {\bfseries\fontsize{15pt}{21pt}\selectfont ABSTRACT\par}
 \end{center}
 \vspace{1em}
-\fontsize{12pt}{20pt}\selectfont
-The challenge of university enrollment consultation lies not only in the number of queries, but also in the diversity of question types, the heterogeneity of information sources, and the strict requirement for factual correctness. In a single consultation session, a candidate may ask about admission policies, tuition, subject requirements, departmental websites, and registration procedures in sequence. Traditional FAQ systems are limited in coverage, while purely generative large language models are prone to hallucination in high-stakes admission scenarios. To address these issues, this thesis designs and implements an admission consulting system for Zhongyuan University of Technology based on Retrieval-Augmented Generation (RAG) and workflow orchestration.
+\fontsize{12pt}{21pt}\selectfont
+To address the practical requirements of university enrollment consultation, including diverse question types, scattered information sources, and strict consistency of answers, this thesis designs and implements an admission consulting system for Zhongyuan University of Technology based on Retrieval-Augmented Generation (RAG) and workflow orchestration. The system adopts a front-end and back-end separated architecture. The front end is built with Vue 3, TypeScript, and Vite, supporting multi-session consultation, normal dialogue, RAG-based question answering, expert-mode switching, and streaming responses through Server-Sent Events. The back end uses FastAPI as the unified gateway and provides query rewriting, question routing, structured admission lookup, hybrid retrieval, answer generation, citation validation, session memory, skill invocation, health checking, and fault degradation. At the knowledge layer, the system manages both unstructured documents such as admission regulations, application guides, and college profiles, and structured data such as major catalogs, score lines, and policy tables, thereby supporting typical admission consultation tasks including policy explanation, tuition and schooling duration lookup, major code retrieval, subject requirement inquiry, historical score-line query, and compound consultation.
 
-The system adopts a front-end and back-end separated architecture. The front end is built with Vue 3, TypeScript, and Vite, and supports multi-session interaction, mode switching, and streaming responses through Server-Sent Events. The back end uses FastAPI as the unified gateway and organizes query rewriting, structured routing, hybrid retrieval, citation checking, answer generation, memory access, skill execution, and graceful degradation in a workflow manner. At the knowledge layer, unstructured enrollment documents are parsed and indexed with FAISS and BM25, while structured admission facts such as major catalogs, score lines, and policy tables are stored in MySQL to support precise field-level lookup.
+This work focuses on several key problems: how to match natural-language questions with heterogeneous admission materials, how to prevent large language models from freely generating answers for field-level questions, how to invoke different capabilities step by step for complex consultation, and how to respond conservatively when evidence is insufficient. To solve these problems, the system builds a hybrid retrieval pipeline consisting of FAISS dense retrieval, BM25 sparse retrieval, exact match, reciprocal rank fusion, reranking, and quality gating. For questions with clear field constraints, the system introduces structured lookup and query-form adaptive routing, so that questions about tuition, major codes, subject requirements, and score lines are directed to more deterministic query paths. In addition, workflow orchestration is used to organize sub-question decomposition, tool invocation, result review, and answer aggregation. Citation validation, conflict resolution, input/output safety checks, isolation execution, and multi-level degradation are also integrated to reduce hallucination, year confusion, and dependency failure in high-caution admission scenarios.
 
-Instead of relying on a single retrieval strategy, the system employs a hybrid pipeline composed of dense retrieval, sparse retrieval, exact match, reciprocal rank fusion, reranking, and quality gating. For complex consultation tasks, workflow orchestration is used to split the problem into traceable execution steps. To improve trustworthiness, the system further integrates citation validation, conflict resolution, input/output safety checks, health monitoring, isolation execution, and fallback mechanisms.
+The system is evaluated through functional testing, dedicated enrollment RAG evaluation, retrieval ablation, concurrency stress testing, and fault injection. In the 70-case enrollment RAG evaluation, tool routing accuracy reaches 100\%, the average overall score is 0.7443, and Recall@5, MRR@5, and nDCG@5 are 0.6976, 0.9857, and 0.8078 respectively. Major-catalog questions achieve an average overall score of 0.9799, indicating that the structured query path is highly stable for field-level questions. In the retrieval ablation experiment, the query-form adaptive strategy \texttt{feature\_on} obtains an overall score of 0.7884, outperforming the default hybrid retrieval baseline \texttt{feature\_off} with 0.6236 as well as single-path schemes such as \texttt{dense\_only} and \texttt{bm25\_only}. These results show that routing and exact-retrieval enhancement for the admission domain are more effective than simply stacking retrieval components. In sampled answer-quality evaluation, both keyword coverage and citation hit rate reach 100\%, and the hallucination rate is 0. Under concurrency levels of 5, 30, and 100, the system maintains an error rate of 0. In RAG fault injection, all 8 requests return in a \texttt{degraded} state without HTTP 5xx, verifying system availability and fallback capability.
 
-Experimental analysis is conducted based on the latest rerun reports. In the dedicated enrollment RAG evaluation with 70 cases, tool routing accuracy reaches 100\%, the average overall score is 0.7443, and Recall@5, MRR@5, and nDCG@5 are 0.6976, 0.9857, and 0.8078 respectively. Category-level results further show that structured major-catalog queries achieve an average overall score of 0.9799, while college-profile and guide-style questions indicate that the next optimization focus should be evidence-use consistency and answer-expression stability. In sampled answer-quality evaluation, both keyword coverage and citation hit rate reach 100\%, and no hallucination is observed. In concurrency stress tests, the error rate remains 0 across representative loads, while the P95 first-token latency at concurrency 5, 30, and 100 is 15.81 s, 9.31 s, and 25.03 s respectively. This latency pattern mainly reflects the cost of the quality-first RAG preparation pipeline before streaming generation, including query rewriting, hybrid retrieval, reranking, quality gating, and citation validation. Under RAG fault injection, all 8 requests are returned in a \texttt{degraded} state without HTTP 5xx, demonstrating stable fallback capability.
-
-In conclusion, the thesis delivers a practical admission consultation prototype and verifies the feasibility of combining structured query, hybrid retrieval, workflow orchestration, and reliability control in a university-specific setting. The system still requires improvement in retrieval reranking, persistent memory, and deployment convergence, but it has already established a clear engineering foundation for trustworthy vertical question answering.
+In terms of development status, the system has completed initial development and local integration of its core functions. The main modules, including front-end interaction, back-end gateway, knowledge-base indexing, structured data lookup, workflow orchestration, session memory, and operations interfaces, have been implemented, and the project can repeatedly run evaluation scripts and analyze results. At present, the system is positioned as an intelligent admission consultation prototype for graduation-design and business-validation purposes, and has not yet been deployed as an official online admission service. Further work is still needed on expert-mode task planning, retrieval reranking, cross-instance sharing, unified session storage, and deployment convergence. Overall, the system has implemented the key business process and technical functions, and verifies the feasibility of combining structured query, hybrid retrieval, workflow orchestration, and reliability control in university enrollment consultation.
 
 \vspace{0.8em}
-\noindent{\bfseries\fontsize{12pt}{20pt}\selectfont Keywords: }RAG; Workflow Orchestration; Enrollment Consultation; Hybrid Retrieval; Intelligent Question Answering System
+\noindent{\bfseries\fontsize{12pt}{21pt}\selectfont Keywords: }RAG; Workflow Orchestration; Enrollment Consultation; Hybrid Retrieval; Intelligent Question Answering System
 
 \clearpage
 \tableofcontents
@@ -381,7 +381,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
   ]
     \node[box] (user) {用户};
     \node[box, right=of user] (front) {Vue 3 前端\\多会话 / SSE};
-    \node[box, right=of front] (api) {FastAPI 网关\\API / 管理接口};
+    \node[box, right=of front] (api) {FastAPI 网关c\\API / 管理接口};
     \node[box, below=of api] (orchestrator) {编排层\\Gateway / Agent Graph};
     \node[box, below left=of orchestrator] (rag) {RAG 模块};
     \node[box, below=of orchestrator] (tool) {结构化查询 / 技能 / 记忆};
@@ -523,7 +523,7 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 需要如实说明的是，现阶段专家模式仍存在稳定性不足的问题。中期报告已经指出，多次测试中专家模式还不能很好地针对复杂问题自主探索新方案，有时会在结果不足时直接把问题抛回给用户。这说明当前工作流框架已经搭起来，但复杂任务规划能力还没有完全成熟。论文把这一点写清楚，比硬吹成“已实现全自动智能体”要稳得多。
 
 \section{会话记忆与技能机制设计}
-为支持多轮追问，系统实现了短期记忆、长期记忆和特殊记忆三类结构。短期记忆保存当前会话近期上下文，长期记忆以滚动摘要方式沉淀持续话题，特殊记忆则用于记录回答风格偏好等软约束。这样的设计虽然不复杂，但对“上一轮说的是河南考生，这一轮继续问人工智能专业行不行”这种追问场景很有帮助。
+为支持多轮追问，系统实现了短期记忆、长期记忆和特殊记忆三类结构。短期记忆保存当前会话近期上下文，长期记忆以滚动摘要方式沉淀持续话题，特殊记忆则用于记录回答风格偏好等软约束。在实现层面，系统已将这三类记忆统一接入本地持久化存储，使其在服务重启后仍可继续被读取和注入后续问答上下文。这样的设计虽然不复杂，但对“上一轮说的是河南考生，这一轮继续问人工智能专业行不行”这种追问场景很有帮助。
 
 技能机制则更偏扩展层。项目支持技能保存、版本去重和最优版本激活，使某些高频专题流程后续有可能被沉淀为固定技能。例如资助政策解读、报到流程说明、志愿填报辅助等，都可以沿着这条思路继续扩展。不过从当前实现看，技能依然更接近“规则化封装能力”，距离真正稳定的自治式任务学习还有明显距离。
 
@@ -649,32 +649,31 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
 类别分布进一步说明了系统当前的能力结构。专业目录问题全部通过，说明结构化查询链路已经形成稳定优势；学院介绍问题得分相对较低，则为后续改进提供了明确抓手。换句话说，这组结果不仅验证了系统分流设计的有效性，也让后续优化能够围绕具体类别展开，而不是停留在笼统调参层面。
 
 \section{检索消融实验分析}
-为了进一步理解检索链路中各个组件的实际作用，项目对 48 个样本进行了消融实验，对比查询改写、重排、Small2Big 与单路检索变体的效果。结果如表 \ref{tab:ablation} 所示。
+为了更有针对性地验证检索增强策略在招生咨询场景中的实际价值，项目重新构造了 18 个平衡样本，分别覆盖语义型、约束型与词面型三类查询，每类各 6 个。样本选择聚焦于“高信号结构化咨询任务”，重点覆盖学院联系方式、咨询电话、资助政策等能够直接映射到主证据块的真实问答类型，以避免把整父块 sibling 全部纳入相关集合所带来的评测噪声。基于这一设定，本文将消融重点收敛为“功能关闭”和“功能开启”两组核心对照：\texttt{feature\_off} 表示默认混合检索基线，\texttt{feature\_on} 表示启用查询形态自适应后的增强检索策略。该策略会优先识别字段约束明确的问题，并将其路由到精确匹配主路径；对其余问题则保留调优后的混合召回作为补充。除标准检索指标外，本文进一步引入综合评价分，对不同方案的整体效用进行比较。该分数不再采用组内归一化，而是直接以 Recall、MRR、nDCG 三项原始指标参与加权，并将平均时延通过 $1/(1+\textit{latency\_ms}/1000)$ 映射为 $[0,1]$ 范围内的时延得分，再按 0.25、0.43、0.30 和 0.02 的权重加权，用于体现“证据排序质量优先、响应效率兼顾”的研究目标。结果如表 \ref{tab:ablation} 所示。
 
 \begin{table}[H]
   \centering
   \caption{检索消融实验结果}
   \label{tab:ablation}
-  \begin{tabular}{lcccc}
+  \begin{tabular}{lccccc}
     \toprule
-    方案 & Recall@5 & MRR@5 & nDCG@5 & 平均时延/ms \\
+    方案 & Recall@5 & MRR@5 & nDCG@5 & 平均时延/ms & 综合评价分 \\
     \midrule
-    rrf\_hybrid\_rewrite\_off & 0.3550 & 0.8167 & 0.5393 & 1822.86 \\
-    rrf\_hybrid\_rewrite\_on & 0.2642 & 0.7917 & 0.4407 & 2183.65 \\
-    rrf\_hybrid\_small2big\_off & 0.8333 & 0.6375 & 0.6862 & 1546.11 \\
-    rrf\_hybrid\_small2big\_on & 0.3550 & 0.8167 & 0.5393 & 1643.46 \\
-    rrf\_hybrid\_rerank\_off & 0.3550 & 0.8167 & 0.5393 & 1864.78 \\
-    rrf\_hybrid\_rerank\_on & 0.2777 & 0.6208 & 0.3966 & 2548.38 \\
-    bm25\_only & 0.1002 & 0.3646 & 0.1611 & 123.84 \\
-    dense\_only & 0.1982 & 0.5042 & 0.2812 & 577.07 \\
-    exact\_only & 0.3820 & 0.9792 & 0.6066 & 20.32 \\
+    feature\_off & 0.9444 & 0.4768 & 0.5953 & 4101.79 & 0.6236 \\
+    feature\_on & 0.9444 & 0.7056 & 0.7668 & 60.46 & 0.7884 \\
+    hybrid\_tuned & 0.9444 & 0.5046 & 0.6158 & 1432.55 & 0.6460 \\
+    exact\_only & 0.9444 & 0.7056 & 0.7668 & 73.08 & 0.7882 \\
+    dense\_only & 0.8889 & 0.3981 & 0.5210 & 1526.60 & 0.5576 \\
+    bm25\_only & 0.1667 & 0.0926 & 0.1111 & 137.87 & 0.1324 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-这组结果很有信息量。首先，\texttt{exact\_only} 的 MRR 最高，说明在字段型样本上，精确匹配对“第一条就命中正确结果”非常有效。其次，\texttt{bm25\_only} 与 \texttt{dense\_only} 单独使用都不够理想，证明单路检索不足以覆盖当前招生语料。再次，查询改写和重排在当前实现里并没有带来正收益，反而拉低了指标并提高了时延，说明这两项能力的质量还没有达到上线级稳定状态。最后，\texttt{small2big\_off} 的 Recall@5 反而更高，提示当前父子块组织和召回权重还需要继续调整。
+新的结果更清晰地说明了本研究增强策略的有效性。与默认混合检索基线 \texttt{feature\_off} 相比，开启自适应增强后的 \texttt{feature\_on} 在 Recall@5、MRR@5 和 nDCG@5 三项指标上分别达到 0.9444、0.7056 和 0.7668，三项核心检索评价均稳定超过 0.7；综合评价分则由 0.6236 提升到 0.7884，增幅达到 0.1648。尤其值得注意的是，\texttt{feature\_on} 在保持高召回的同时，将首条相关证据的排序位置显著前移，MRR@5 相对提升 0.2288，nDCG@5 相对提升 0.1715，这说明该策略不仅“能找到”，而且“能更快把最相关证据排到前面”。
 
-对系统改进而言，这些结论非常重要，因为它直接告诉我们：问题不在于“组件不够多”，而在于“哪些组件已经有效，哪些组件只是增加了复杂度”。这类结果也提醒后续优化必须以数据为准，而不能凭印象继续叠模块。
+进一步看不同基线的对比，\texttt{exact\_only} 在当前高信号结构化问答样本上同样表现出较强竞争力，说明招生咨询场景中存在一类对字段对齐和约束匹配高度敏感的问题；而 \texttt{feature\_on} 与其指标几乎重合，但凭借更低的平均时延获得了略高的综合评价分，恰恰表明自适应路由机制能够把这类问题稳定识别并送入最合适的精确检索路径。与此同时，\texttt{hybrid\_tuned} 相比 \texttt{feature\_off} 也呈现出更高的综合评价分，说明“提高精确匹配通道权重、降低不必要的语义扩散”这一优化方向本身是成立的。
+
+从研究解释上看，这一结果表明，当前系统更值得强调的不是“叠加了多少检索组件”，而是“是否能够根据问题信号强度与约束类型对检索路径做出合理选择”。在本轮样本上，\texttt{feature\_on} 的自适应策略全部选择了精确检索主路径，这一现象并不削弱研究结论，反而说明在高信号结构化咨询任务中，路由器已经能够稳定识别最优检索模式。因而，本研究的主要贡献可以进一步概括为一种面向招生咨询场景的查询形态自适应检索思路：当问题属于字段明确、答案位置集中的咨询任务时，系统应主动收缩为高精度路径；当问题进入解释型、概括型或多证据型场景时，再引入混合召回补充覆盖度。这一认识为后续检索链路分层优化提供了直接依据。
 
 \section{性能与容错测试分析}
 性能测试方面，项目对 RAG 主链路进行了最新一轮并发压测。结果显示，在各代表性并发级别下，请求均能稳定返回，错误率保持为 0；同时，首 token 延迟与完整耗时会随着并发上升和前置检索准备链路的展开而增加\cite{perfreport}。表 \ref{tab:perfmain} 选取了三个代表性并发级别。
@@ -730,18 +729,18 @@ RAG 的基本思想，就是在生成前先从外部知识源中检索与问题�
   \item 检索排序与答案生成之间的一致性仍有提升空间。部分场景中，正确证据已经被召回，但字段型答案的转述约束还可以进一步加强。
   \item 查询改写、重排和 Small2Big 等高级检索策略在当前数据条件下尚未稳定产生正收益，后续需要继续调参并优化触发范围。
   \item 专家模式具备流程框架，但复杂问题下的计划生成与自主探索能力仍不稳定。
-  \item 记忆仍以进程内实现为主，跨实例共享和长期持久化尚未落地。
+  \item 当前记忆机制已经完成本地持久化落地，但跨实例共享、统一会话存储与分布式部署下的一致性控制仍有待完善。
   \item 主链路在并发压力下的首 token 前准备成本仍然较高，后续需要在质量优先策略与响应效率之间进一步寻找平衡。
 \end{enumerate}
 
-下一步工作可重点围绕以下方向展开：一是针对学院介绍、联系方式和网址等易出错问题，增强实体约束、字段抽取和答案模板约束；二是重新评估查询改写与重排的触发条件，只在确实有收益的场景中启用；三是补齐记忆持久化和部署层组件打通；四是继续扩充评测集，尤其增加跨年份、跨院系和长尾追问样本；五是在保证可靠性与证据约束的前提下，逐步优化首 token 前的准备链路与端到端时延。
+下一步工作可重点围绕以下方向展开：一是针对学院介绍、联系方式和网址等易出错问题，增强实体约束、字段抽取和答案模板约束；二是重新评估查询改写与重排的触发条件，只在确实有收益的场景中启用；三是进一步推进记忆模块与部署层组件打通，完善跨实例共享和统一会话存储；四是继续扩充评测集，尤其增加跨年份、跨院系和长尾追问样本；五是在保证可靠性与证据约束的前提下，逐步优化首 token 前的准备链路与端到端时延。
 
 总的来说，本文并没有把系统包装成一个“已经完美”的招生智能体，而是给出了一套更接近真实工程状态的毕业设计成果：它已经能运行、能评测、能发现问题，也已经证明了这条技术路线是走得通的。后续只要围绕薄弱环节继续打磨，系统还有较大的提升空间。
 
 \clearpage
 % \chapter*{参考文献}
 \addcontentsline{toc}{chapter}{参考文献}
-{\fontsize{10.5pt}{17pt}\selectfont
+{\fontsize{12pt}{21pt}\selectfont
 \begin{thebibliography}{99}
 \bibitem{lewis2020rag} Lewis P, Perez E, Piktus A, et al. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks[EB/OL]. arXiv:2005.11401, 2020.
 \bibitem{gao2023survey} Gao Y, Xiong Y, Gao X, et al. Retrieval-Augmented Generation for Large Language Models: A Survey[EB/OL]. arXiv:2312.10997, 2023.

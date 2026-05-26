@@ -20,8 +20,8 @@ def _build_real_components(settings: Settings) -> tuple[RagIndexManager, QueryRe
 
 def test_summarize_variant_averages_metrics():
     rows = [
-        {"recall@5": 1.0, "mrr@5": 0.5, "ndcg@5": 0.7, "latency_ms": 10.0},
-        {"recall@5": 0.5, "mrr@5": 0.25, "ndcg@5": 0.4, "latency_ms": 30.0},
+        {"recall@5": 1.0, "mrr@5": 0.5, "ndcg@5": 0.7, "latency_ms": 10.0, "query_style": "semantic"},
+        {"recall@5": 0.5, "mrr@5": 0.25, "ndcg@5": 0.4, "latency_ms": 30.0, "query_style": "lexical"},
     ]
 
     summary = summarize_variant("rrf_hybrid", rows=rows, k=5)
@@ -32,6 +32,8 @@ def test_summarize_variant_averages_metrics():
     assert summary["mrr@5"] == 0.375
     assert summary["ndcg@5"] == 0.55
     assert summary["avg_latency_ms"] == 20.0
+    assert summary["query_style_breakdown"]["semantic"]["cases"] == 1
+    assert summary["query_style_breakdown"]["lexical"]["mrr@5"] == 0.25
 
 
 def test_build_variant_queries_respects_rewrite_switch_with_real_rewriter(isolated_runtime_settings: Settings):
@@ -80,6 +82,26 @@ def test_evaluate_variant_runs_rerank_variants_with_real_components(isolated_run
         assert 0.0 <= float(summary["mrr@2"]) <= 1.0
         assert 0.0 <= float(summary["ndcg@2"]) <= 1.0
         assert float(summary["avg_latency_ms"]) >= 0.0
+
+
+def test_evaluate_variant_runs_tuned_hybrid_variant_with_real_components(isolated_runtime_settings: Settings):
+    index, rewriter, retriever, reranker = _build_real_components(isolated_runtime_settings)
+    cases = build_retrieval_cases(index.all_documents(), max_cases=2)
+
+    summary = evaluate_variant(
+        retriever=retriever,
+        rewriter=rewriter,
+        reranker=reranker,
+        cases=cases,
+        variant="rrf_hybrid_tuned_exact_boost",
+        k=2,
+    )
+
+    assert summary["cases"] == 2
+    assert 0.0 <= float(summary["recall@2"]) <= 1.0
+    assert 0.0 <= float(summary["mrr@2"]) <= 1.0
+    assert 0.0 <= float(summary["ndcg@2"]) <= 1.0
+    assert "query_style_breakdown" in summary
 
 
 def test_relevant_chunk_ids_respects_small2big_switch_with_real_case(isolated_runtime_settings: Settings):

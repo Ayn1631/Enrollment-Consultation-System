@@ -40,7 +40,7 @@ const emit = defineEmits<{
     <div v-if="props.open" class="content">
       <div class="panel-title">系统参数</div>
 
-      <div class="control">
+      <!-- <div class="control">
         <label>温度 Temperature</label>
         <input
           type="range"
@@ -64,7 +64,7 @@ const emit = defineEmits<{
           @input="emit('update:topP', Number(($event.target as HTMLInputElement).value))"
         />
         <span>{{ props.topP.toFixed(2) }}</span>
-      </div>
+      </div> -->
 
       <div class="control">
         <label>模型选择</label>

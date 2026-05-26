@@ -257,12 +257,15 @@ class RagIndexManager:
     def dense_similarity_scores(self, query: str, top_k: int) -> list[tuple[Document, float]]:
         """输出稠密检索文档与标准化分数。"""
         if self._vectorstore is not None:
-            rows = self._vectorstore.similarity_search_with_score(query, k=top_k)
-            normalized: list[tuple[Document, float]] = []
-            for doc, raw_score in rows:
-                relevance = 1.0 / (1.0 + max(float(raw_score), 0.0))
-                normalized.append((doc, relevance))
-            return normalized
+            try:
+                rows = self._vectorstore.similarity_search_with_score(query, k=top_k)
+                normalized: list[tuple[Document, float]] = []
+                for doc, raw_score in rows:
+                    relevance = 1.0 / (1.0 + max(float(raw_score), 0.0))
+                    normalized.append((doc, relevance))
+                return normalized
+            except Exception:
+                self._ensure_local_dense_vectors()
         return self._local_similarity_search_with_scores(query=query, top_k=top_k)
 
     def _can_load_vectorstore(self) -> bool:
@@ -412,6 +415,12 @@ class RagIndexManager:
             if len(tokens) <= 1:
                 tokens = self._tokenize(cleaned)
         return tokens
+
+    def _ensure_local_dense_vectors(self) -> None:
+        """为向量库异常场景懒构建本地稠密向量，保证检索链路不中断。"""
+        if self._local_dense_vectors or not self._documents:
+            return
+        self._local_dense_vectors = self._embeddings.embed_documents([doc.page_content for doc in self._documents])
 
     def _sync_document_views(self) -> None:
         self._doc_by_chunk_id = {

@@ -45,7 +45,7 @@ class ServiceClient:
     def __init__(self, settings: Settings):
         # 关键变量：service_call_mode 决定是否走 HTTP 微服务调用。
         self.settings = settings
-        self._memory = MemoryManager()
+        self._memory = MemoryManager(settings.local_memory_db_path)
         self._skills = SkillManager()
         self._generator = GenerationService(settings)
         self._feature_planner = LangGraphFeaturePlanner()
