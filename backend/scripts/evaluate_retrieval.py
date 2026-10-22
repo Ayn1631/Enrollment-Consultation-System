@@ -27,14 +27,16 @@ class RetrievalEvalCase:
 def compute_recall_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) -> float:
     if not relevant_ids or k <= 0:
         return 0.0
-    hits = sum(1 for chunk_id in predicted_ids[:k] if chunk_id in relevant_ids)
-    return round(hits / len(relevant_ids), 4)
+    top_k_ids = _dedupe_top_k(predicted_ids, k)
+    hits = sum(1 for chunk_id in top_k_ids if chunk_id in relevant_ids)
+    denominator = min(k, len(relevant_ids))
+    return round(hits / denominator, 4) if denominator else 0.0
 
 
 def compute_mrr_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) -> float:
     if not relevant_ids or k <= 0:
         return 0.0
-    for rank, chunk_id in enumerate(predicted_ids[:k], start=1):
+    for rank, chunk_id in enumerate(_dedupe_top_k(predicted_ids, k), start=1):
         if chunk_id in relevant_ids:
             return round(1.0 / rank, 4)
     return 0.0
@@ -44,7 +46,7 @@ def compute_ndcg_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) 
     if not relevant_ids or k <= 0:
         return 0.0
     dcg = 0.0
-    for rank, chunk_id in enumerate(predicted_ids[:k], start=1):
+    for rank, chunk_id in enumerate(_dedupe_top_k(predicted_ids, k), start=1):
         if chunk_id in relevant_ids:
             dcg += 1.0 / math.log2(rank + 1)
     ideal_hits = min(len(relevant_ids), k)
@@ -54,6 +56,19 @@ def compute_ndcg_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) 
     if idcg == 0:
         return 0.0
     return round(dcg / idcg, 4)
+
+
+def _dedupe_top_k(predicted_ids: list[str], k: int) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for chunk_id in predicted_ids:
+        if not chunk_id or chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        rows.append(chunk_id)
+        if len(rows) >= k:
+            break
+    return rows
 
 
 def build_retrieval_cases(docs: list, max_cases: int = 48) -> list[RetrievalEvalCase]:

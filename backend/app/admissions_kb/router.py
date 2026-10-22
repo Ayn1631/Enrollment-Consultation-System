@@ -58,7 +58,7 @@ def _extract_major_filters(query: str) -> dict[str, str]:
     if year:
         filters["academic_year"] = year
     code_match = re.search(r"\b([0-9A-Z]{4,8})\b", query)
-    if code_match:
+    if code_match and code_match.group(1) != year:
         filters["major_code"] = code_match.group(1)
     tuition = re.findall(r"(\d{4,5})", query)
     if "以上" in query and tuition:
@@ -71,7 +71,9 @@ def _extract_major_filters(query: str) -> dict[str, str]:
             break
     college_match = re.search(r"([\u4e00-\u9fff]{2,20}学院)", query)
     if college_match:
-        filters["college_name"] = college_match.group(1)
+        college_name = _clean_college_name(college_match.group(1))
+        if college_name:
+            filters["college_name"] = college_name
     major_match = re.search(r"([\u4e00-\u9fffA-Za-z0-9]{2,40}专业)", query)
     if major_match:
         filters["major_name"] = _clean_major_name(major_match.group(1).removesuffix("专业"))
@@ -123,9 +125,19 @@ def _extract_year(query: str) -> str:
 
 
 def _clean_major_name(value: str) -> str:
-    cleaned = value.strip()
-    cleaned = re.sub(r"^20\d{2}年", "", cleaned)
+    cleaned = re.sub(r"\s+", "", value.strip())
+    cleaned = cleaned.replace("中原工学院", "")
+    cleaned = re.sub(r"^20\d{2}年?", "", cleaned)
+    cleaned = re.sub(r"^年", "", cleaned)
     cleaned = re.sub(r"^(河南|河北|山东|山西|安徽|江苏|浙江|湖北|湖南|广东|广西|江西|福建|北京|天津|上海|重庆|四川|云南|贵州)", "", cleaned)
     cleaned = re.sub(r"^(本科批|一本|二本|提前批|艺术批)", "", cleaned)
     cleaned = re.sub(r"^(理工|文史|物理类|历史类|物理|历史)", "", cleaned)
     return cleaned.strip()
+
+
+def _clean_college_name(value: str) -> str:
+    cleaned = re.sub(r"\s+", "", value.strip())
+    cleaned = cleaned.replace("中原工学院", "")
+    cleaned = re.sub(r"^20\d{2}年?", "", cleaned)
+    cleaned = re.sub(r"^年", "", cleaned)
+    return "" if cleaned in {"", "学院"} else cleaned

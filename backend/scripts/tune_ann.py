@@ -87,8 +87,23 @@ def build_tuning_cases(docs: list, max_cases: int) -> list[AnnTuningCase]:
 def compute_recall_at_k(relevant_ids: set[str], predicted_ids: list[str]) -> float:
     if not relevant_ids:
         return 0.0
-    hits = sum(1 for chunk_id in predicted_ids if chunk_id in relevant_ids)
-    return round(hits / len(relevant_ids), 4)
+    top_k_ids = _dedupe_preserve(predicted_ids)
+    denominator = min(len(top_k_ids), len(relevant_ids))
+    if denominator <= 0:
+        return 0.0
+    hits = sum(1 for chunk_id in top_k_ids if chunk_id in relevant_ids)
+    return round(hits / denominator, 4)
+
+
+def _dedupe_preserve(items: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        rows.append(item)
+    return rows
 
 
 def summarize_curve(rows: list[AnnTuningRow]) -> list[dict[str, float | int]]:

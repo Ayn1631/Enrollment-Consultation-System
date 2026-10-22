@@ -1,0 +1,371 @@
+\documentclass[UTF8]{ctexart}
+\usepackage[a4paper,margin=1.8cm]{geometry}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, fit, backgrounds}
+
+\pagestyle{plain}
+\tikzset{
+  actor/.style={draw, rounded corners=2pt, fill=gray!8, minimum width=2.1cm, minimum height=7mm, align=center},
+  lifeline/.style={dashed, gray!70},
+  msg/.style={-{Latex[length=2mm]}, thick},
+  ret/.style={-{Latex[length=2mm]}, dashed, gray!70},
+  box/.style={draw, rounded corners=2pt, fill=gray!8, align=center, minimum height=8mm},
+  proc/.style={draw, rounded corners=2pt, fill=blue!8, align=center, minimum height=8mm, text width=2.3cm},
+  store/.style={draw, cylinder, shape border rotate=90, aspect=0.25, fill=green!8, align=center, minimum height=9mm, text width=2.0cm},
+  decision/.style={draw, diamond, aspect=2.1, fill=orange!10, align=center, inner sep=1pt, text width=2.0cm},
+  flow/.style={-{Latex[length=2mm]}, thick},
+  group/.style={draw, rounded corners=3pt, dashed, inner sep=6pt}
+}
+
+\newcommand{\seqfig}[7]{%
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, x=2.55cm, y=0.8cm]
+  \node[actor] (user) at (0,0) {用户};
+  \node[actor] (ui) at (1,0) {表现层};
+  \node[actor] (api) at (2,0) {接入层};
+  \node[actor] (biz) at (3,0) {业务层};
+  \node[actor] (data) at (4,0) {数据/支撑层};
+  \foreach \n in {user,ui,api,biz,data} {
+    \draw[lifeline] (\n.south) -- ++(0,-5.8);
+  }
+  \draw[msg] (0,-1.0) -- node[above,sloped,align=center,text width=2.4cm]{#4} (1,-1.0);
+  \draw[msg] (1,-2.0) -- node[above,sloped,align=center,text width=2.4cm]{#5} (2,-2.0);
+  \draw[msg] (2,-3.0) -- node[above,sloped,align=center,text width=2.4cm]{#6} (3,-3.0);
+  \draw[msg] (3,-4.0) -- node[above,sloped,align=center,text width=2.4cm]{#7} (4,-4.0);
+  \draw[ret] (4,-4.8) -- node[below,sloped,align=center,text width=2.2cm]{返回数据或状态} (3,-4.8);
+  \draw[ret] (3,-5.2) -- node[below,sloped,align=center,text width=2.2cm]{返回处理结果} (2,-5.2);
+  \draw[ret] (2,-5.6) -- node[below,sloped,align=center,text width=2.2cm]{返回响应事件} (1,-5.6);
+\end{tikzpicture}
+\caption{#1\\{\small 插入位置：#3}}
+\label{#2}
+\end{figure}
+}
+
+\begin{document}
+
+\section*{论文正文预留的关键结构图与流程图}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, x=1cm, y=1cm]
+  \tikzset{
+    layerlabel/.style={draw, rounded corners=2pt, fill=gray!15, minimum width=2.1cm, minimum height=8mm, align=center},
+    archmod/.style={draw, rounded corners=2pt, fill=white, minimum width=2.55cm, minimum height=7mm, align=center}
+  }
+  \begin{scope}[on background layer]
+    \fill[red!6, rounded corners=3pt] (1.5,0.55) rectangle (9.7,-0.55);
+    \fill[blue!6, rounded corners=3pt] (1.5,-0.75) rectangle (12.6,-1.85);
+    \fill[yellow!10, rounded corners=3pt] (1.5,-2.05) rectangle (12.6,-4.85);
+    \fill[green!8, rounded corners=3pt] (1.5,-5.05) rectangle (12.6,-6.15);
+    \fill[gray!12, rounded corners=3pt] (1.5,-6.35) rectangle (12.6,-7.45);
+  \end{scope}
+
+  \node[layerlabel] at (0,0) {表现层};
+  \node[archmod] (ui1) at (3.2,0) {Web咨询界面};
+  \node[archmod] (ui2) at (6.2,0) {多会话与\\流式展示};
+
+  \node[layerlabel] at (0,-1.3) {接入层};
+  \node[archmod] (api1) at (3.2,-1.3) {FastAPI\\统一入口};
+  \node[archmod] (api2) at (6.2,-1.3) {健康检查与\\管理接口};
+  \node[archmod] (api3) at (9.2,-1.3) {输入校验};
+
+  \node[layerlabel] at (0,-3.45) {业务层};
+  \node[archmod] (biz1) at (3.2,-2.6) {模式参数处理};
+  \node[archmod] (biz2) at (6.2,-2.6) {专家模式};
+  \node[archmod] (biz3) at (9.2,-2.6) {深度研究模式};
+  \node[archmod] (biz4) at (3.2,-3.45) {熔断降级};
+  \node[archmod] (biz5) at (6.2,-3.45) {RAG检索与\\答案生成};
+  \node[archmod] (biz6) at (9.2,-3.45) {结构化\\招生查询};
+  \node[archmod] (biz7) at (3.2,-4.3) {专家模式\\智能体};
+  \node[archmod] (biz8) at (6.2,-4.3) {会话记忆};
+  \node[archmod] (biz9) at (9.2,-4.3) {可靠性与\\安全控制};
+
+  \node[layerlabel] at (0,-5.6) {数据与\\知识库层};
+  \node[archmod] (data1) at (3.2,-5.6) {非结构化\\知识库};
+  \node[archmod] (data2) at (6.2,-5.6) {结构化\\招生数据};
+  \node[archmod] (data3) at (9.2,-5.6) {索引与\\元数据};
+
+  \node[layerlabel] at (0,-6.9) {运行\\支撑层};
+  \node[archmod] (sup1) at (3.2,-6.9) {持久化存储};
+  \node[archmod] (sup2) at (6.2,-6.9) {日志指标};
+  \node[archmod] (sup3) at (9.2,-6.9) {评测脚本与\\验证材料};
+
+  \draw[flow] (6.2,-0.45) -- (6.2,-0.95);
+  \draw[flow] (6.2,-1.65) -- (6.2,-2.25);
+  \draw[flow] (6.2,-4.65) -- (6.2,-5.25);
+  \draw[flow] (6.2,-5.95) -- (6.2,-6.55);
+\end{tikzpicture}
+\caption{图4-1 系统总体架构图\\{\small 插入位置：4.1 系统总体架构设计正文之后}}
+\label{fig:main-architecture}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=9mm]
+  \node[proc] (user) {用户自主选择\\咨询模式};
+  \node[proc, right=of user] (mode) {ModeSelector\\写入mode};
+  \node[proc, right=of mode] (builder) {requestBuilder\\生成features};
+  \node[proc, right=of builder] (api) {FastAPI\\校验参数};
+  \node[decision, below=of api] (gateway) {业务网关\\判断模式};
+  \node[proc, below left=10mm and 13mm of gateway] (rag) {RAG问答};
+  \node[proc, below=10mm of gateway] (expert) {专家模式};
+  \node[proc, below right=10mm and 13mm of gateway] (research) {深度研究模式};
+  \draw[flow] (user) -- (mode);
+  \draw[flow] (mode) -- (builder);
+  \draw[flow] (builder) -- (api);
+  \draw[flow] (api) -- (gateway);
+  \draw[flow] (gateway) -- (rag);
+  \draw[flow] (gateway) -- (expert);
+  \draw[flow] (gateway) -- (research);
+\end{tikzpicture}
+\caption{图4-2 用户自主选择模式与请求传递流程图\\{\small 插入位置：4.2.1 Web咨询界面设计正文之后}}
+\label{fig:mode-select-flow}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, x=1cm, y=1cm]
+  \node[proc, text width=3.0cm] (gateway) at (0,0) {GatewayOrchestrator\\业务层入口};
+  \node[proc] (mode) at (-4.8,1.2) {模式参数处理};
+  \node[proc] (expert) at (-1.6,1.2) {专家模式};
+  \node[proc] (research) at (1.6,1.2) {深度研究模式};
+  \node[proc] (breaker) at (4.8,1.2) {熔断降级};
+  \node[proc] (rag) at (-4.8,-1.2) {RAG检索\\答案生成};
+  \node[proc] (struct) at (-1.6,-1.2) {结构化\\招生查询};
+  \node[proc] (agent) at (1.6,-1.2) {专家模式\\智能体};
+  \node[proc] (memory) at (4.8,-1.2) {会话记忆};
+  \node[proc] (safe) at (0,-2.5) {可靠性与\\安全控制};
+  \foreach \n in {mode,expert,research,breaker,rag,struct,agent,memory,safe} {
+    \draw[flow] (gateway) -- (\n);
+  }
+\end{tikzpicture}
+\caption{图4-3 业务层能力模块关系图\\{\small 插入位置：4.4 业务层设计开头正文之后}}
+\label{fig:business-modules}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=7mm]
+  \node[proc] (memory) {加载会话记忆};
+  \node[proc, right=of memory] (pre) {查询前处理};
+  \node[proc, right=of pre] (split) {子问题拆分};
+  \node[proc, right=of split] (plan) {生成执行计划};
+  \node[proc, below=of plan] (step) {执行计划节点\\RAG/结构化/工具};
+  \node[decision, left=of step] (review) {阶段审查\\是否充分};
+  \node[proc, left=of review] (collect) {保存阶段证据\\步骤记忆};
+  \node[proc, left=of collect] (final) {综合回答};
+  \draw[flow] (memory) -- (pre);
+  \draw[flow] (pre) -- (split);
+  \draw[flow] (split) -- (plan);
+  \draw[flow] (plan) -- (step);
+  \draw[flow] (step) -- (review);
+  \draw[flow] (review) -- node[above]{充分} (collect);
+  \draw[flow] (collect) -- (final);
+  \draw[flow] (review.north) |- node[pos=.25, above]{不足则补证/重试/降级} (step.west);
+\end{tikzpicture}
+\caption{图4-4 深度研究模式长链路流程图\\{\small 插入位置：4.4.3 深度研究模式设计正文之后}}
+\label{fig:research-design-flow}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=6mm, scale=0.88, transform shape]
+  \node[proc] (clean) {问题清洗\\标准化};
+  \node[proc, right=of clean] (rewrite) {查询改写};
+  \node[proc, below left=10mm and 2mm of rewrite] (dense) {FAISS\\稠密检索};
+  \node[proc, below=10mm of rewrite] (bm25) {BM25\\关键词检索};
+  \node[proc, below right=10mm and 2mm of rewrite] (exact) {精确匹配\\硬字段补充};
+  \node[proc, below=18mm of bm25] (rrf) {RRF融合\\去重};
+  \node[proc, right=of rrf] (rerank) {重排};
+  \node[decision, right=of rerank] (gate) {质量闸门\\是否通过};
+  \node[proc, right=of gate] (cite) {引用校验};
+  \node[proc, right=of cite] (answer) {答案生成};
+  \draw[flow] (clean) -- (rewrite);
+  \draw[flow] (rewrite) -- (dense);
+  \draw[flow] (rewrite) -- (bm25);
+  \draw[flow] (rewrite) -- (exact);
+  \draw[flow] (dense) -- (rrf);
+  \draw[flow] (bm25) -- (rrf);
+  \draw[flow] (exact) -- (rrf);
+  \draw[flow] (rrf) -- (rerank);
+  \draw[flow] (rerank) -- (gate);
+  \draw[flow] (gate) -- node[above]{通过} (cite);
+  \draw[flow] (cite) -- (answer);
+  \draw[flow] (gate.south) -- ++(0,-0.8) node[below]{降级或保守说明};
+\end{tikzpicture}
+\caption{图4-5 RAG混合检索设计流程图\\{\small 插入位置：4.4.5 RAG检索与答案生成设计正文之后}}
+\label{fig:rag-design-flow}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=8mm]
+  \node[proc] (input) {输入审查};
+  \node[proc, right=of input] (isolation) {隔离执行器};
+  \node[proc, right=of isolation] (gate) {质量闸门};
+  \node[proc, right=of gate] (cite) {引用校验};
+  \node[proc, right=of cite] (output) {输出审查};
+  \node[decision, below=of gate] (fail) {异常或证据不足};
+  \node[proc, right=of fail] (degrade) {降级/保守回答};
+  \draw[flow] (input) -- (isolation);
+  \draw[flow] (isolation) -- (gate);
+  \draw[flow] (gate) -- (cite);
+  \draw[flow] (cite) -- (output);
+  \draw[flow] (isolation) -- (fail);
+  \draw[flow] (gate) -- (fail);
+  \draw[flow] (cite) -- (fail);
+  \draw[flow] (fail) -- (degrade);
+\end{tikzpicture}
+\caption{图4-6 可靠性与安全控制流程图\\{\small 插入位置：4.4.9 可靠性与安全控制设计正文之后}}
+\label{fig:safety-flow}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=7mm]
+  \node[proc] (raw) {原始资料\\PDF/DOCX/XLSX};
+  \node[proc, right=of raw] (parse) {资料解析\\元数据提取};
+  \node[proc, above right=8mm and 10mm of parse] (unstruct) {非结构化文本块\\摘要层/小块层};
+  \node[proc, below right=8mm and 10mm of parse] (struct) {结构化招生数据\\专业/分数/政策};
+  \node[store, right=of unstruct] (index) {FAISS\\BM25};
+  \node[store, right=of struct] (json) {JSON/表格\\字段仓库};
+  \node[proc, right=18mm of parse] (meta) {manifest\\来源与指纹};
+  \draw[flow] (raw) -- (parse);
+  \draw[flow] (parse) -- (unstruct);
+  \draw[flow] (parse) -- (struct);
+  \draw[flow] (unstruct) -- (index);
+  \draw[flow] (struct) -- (json);
+  \draw[flow] (parse) -- (meta);
+\end{tikzpicture}
+\caption{图4-7 数据与知识库组织架构图\\{\small 插入位置：4.5 数据与知识库层设计开头正文之后}}
+\label{fig:data-kb-architecture}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=7mm, scale=0.94, transform shape]
+  \node[proc] (vue) {Vue 3\\App.vue};
+  \node[proc, right=of vue] (api) {services/api.ts\\useStream};
+  \node[proc, right=of api] (fastapi) {FastAPI\\main.py};
+  \node[proc, right=of fastapi, text width=2.6cm] (gateway) {Gateway\\Orchestrator};
+  \node[proc, below left=of gateway] (rag) {RagGraphService};
+  \node[proc, below=of gateway] (agent) {AgentRuntime};
+  \node[proc, below right=of gateway] (store) {索引/结构化数据\\日志/记忆};
+  \draw[flow] (vue) -- (api);
+  \draw[flow] (api) -- (fastapi);
+  \draw[flow] (fastapi) -- (gateway);
+  \draw[flow] (gateway) -- (rag);
+  \draw[flow] (gateway) -- (agent);
+  \draw[flow] (gateway) -- (store);
+\end{tikzpicture}
+\caption{图5-1 系统实现调用关系图\\{\small 插入位置：5.1 系统总体架构实现正文之后}}
+\label{fig:implementation-call-graph}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\scriptsize, node distance=7mm]
+  \node[proc] (docs) {采集招生资料};
+  \node[proc, right=of docs] (parse) {解析与清洗};
+  \node[proc, right=of parse] (chunk) {切分文本块\\提取字段};
+  \node[proc, right=of chunk] (build) {构建FAISS/BM25\\生成结构化JSON};
+  \node[proc, below=of build] (manifest) {写入manifest\\语料指纹};
+  \node[proc, left=of manifest] (eval) {评测脚本\\回放样例};
+  \draw[flow] (docs) -- (parse);
+  \draw[flow] (parse) -- (chunk);
+  \draw[flow] (chunk) -- (build);
+  \draw[flow] (build) -- (manifest);
+  \draw[flow] (manifest) -- (eval);
+\end{tikzpicture}
+\caption{图5-2 知识库构建与索引重建流程图\\{\small 插入位置：5.5.1 非结构化知识库实现正文之后}}
+\label{fig:kb-build-flow}
+\end{figure}
+
+\clearpage
+\section*{第4章系统设计三级章节时序图}
+
+\seqfig{时序图4-2 Web咨询界面设计时序图}{fig:design-web-ui}{4.2.1 Web咨询界面设计正文之后}{自主选择模式并输入问题}{整理问题和模式状态}{提交mode与question}{保持界面与数据解耦}
+
+\seqfig{时序图4-3 多会话与流式展示设计时序图}{fig:design-stream-session}{4.2.2 多会话与流式展示设计正文之后}{选择会话并发送问题}{绑定session并监听SSE}{转发流式请求}{记录步骤和最终状态}
+
+\seqfig{时序图4-4 FastAPI统一入口设计时序图}{fig:design-fastapi-entry}{4.3.1 FastAPI统一入口设计正文之后}{发起咨询请求}{调用统一HTTP接口}{解析请求并分发}{调用对应业务模块}
+
+\seqfig{时序图4-5 健康检查与管理接口设计时序图}{fig:design-health-admin}{4.3.2 健康检查与管理接口设计正文之后}{查看系统状态}{请求管理接口}{读取健康检查路由}{汇总依赖与索引状态}
+
+\seqfig{时序图4-6 输入校验设计时序图}{fig:design-input-validation}{4.3.3 输入校验设计正文之后}{提交原始输入}{携带模式和参数}{校验格式与安全边界}{拒绝异常或转交业务层}
+
+\seqfig{时序图4-7 模式参数处理设计时序图}{fig:design-mode-select}{4.4.1 模式参数处理设计正文之后}{接收用户已选模式}{写入mode和features}{校验并传递参数}{进入业务能力链路}
+
+\seqfig{时序图4-8 专家模式设计时序图}{fig:design-expert-mode}{4.4.2 专家模式设计正文之后}{提出需核查的问题}{选择专家模式}{创建ReAct处理上下文}{调用检索/查询/工具}
+
+\seqfig{时序图4-9 深度研究模式设计时序图}{fig:design-research-flow}{4.4.3 深度研究模式设计正文之后}{提出复合问题}{选择深度研究模式}{启动长链路任务}{拆解计划并保存阶段结果}
+
+\seqfig{时序图4-10 熔断降级设计时序图}{fig:design-circuit-breaker}{4.4.4 熔断降级设计正文之后}{提交问题}{正常请求后端}{检测依赖或证据风险}{触发保守回答或降级}
+
+\seqfig{时序图4-11 RAG检索与答案生成设计时序图}{fig:design-rag-generation}{4.4.5 RAG检索与答案生成设计正文之后}{提出资料型问题}{进入RAG模式}{清洗改写并检索}{读取索引与候选片段}
+
+\seqfig{时序图4-12 结构化招生查询设计时序图}{fig:design-structured-query}{4.4.6 结构化招生查询设计正文之后}{询问分数/专业/学费}{提交字段型问题}{解析查询条件}{访问结构化招生数据}
+
+\seqfig{时序图4-13 专家模式智能体设计时序图}{fig:design-expert-agent}{4.4.7 专家模式智能体设计正文之后}{提出需推理问题}{启用专家模式}{ReAct Agent选择行动}{调用工具并观察结果}
+
+\seqfig{时序图4-14 会话记忆设计时序图}{fig:design-memory}{4.4.8 会话记忆设计正文之后}{连续追问}{携带session上下文}{读取短期和长期记忆}{返回相关历史片段}
+
+\seqfig{时序图4-15 可靠性与安全控制设计时序图}{fig:design-safety}{4.4.9 可靠性与安全控制设计正文之后}{提交敏感或高风险问题}{进入安全检查}{执行引用和质量闸门}{返回保守结论或拦截}
+
+\seqfig{时序图4-16 非结构化知识库设计时序图}{fig:design-unstructured-kb}{4.5.1 非结构化知识库设计正文之后}{更新招生资料}{上传或整理文档}{触发切分与摘要}{保存文本块和来源}
+
+\seqfig{时序图4-17 结构化招生数据设计时序图}{fig:design-structured-data}{4.5.2 结构化招生数据设计正文之后}{维护字段数据}{提交表格或JSON}{校验字段和年份}{保存专业/分数/政策数据}
+
+\seqfig{时序图4-18 索引与元数据设计时序图}{fig:design-index-meta}{4.5.3 索引与元数据设计正文之后}{触发索引构建}{提交重建请求}{生成向量/词项索引}{写入manifest和元数据}
+
+\seqfig{时序图4-19 持久化存储设计时序图}{fig:design-persistence}{4.6.1 持久化存储设计正文之后}{产生会话或评测结果}{交给后端保存}{选择存储目录或文件}{持久化索引/日志/缓存}
+
+\seqfig{时序图4-20 日志指标设计时序图}{fig:design-metrics}{4.6.2 日志指标设计正文之后}{发起一次咨询}{请求携带trace信息}{记录模式与执行步骤}{写入日志和耗时指标}
+
+\seqfig{时序图4-21 评测脚本与验证材料设计时序图}{fig:design-evaluation}{4.6.3 评测脚本与验证材料设计正文之后}{准备评测样本}{启动验证脚本}{调用同一知识库链路}{输出评测报告}
+
+\clearpage
+\section*{第5章系统实现三级章节时序图}
+
+\seqfig{时序图5-1 Web咨询界面实现时序图}{fig:impl-web-ui}{5.2.1 Web咨询界面实现正文之后}{自主点击模式按钮并输入}{App.vue更新状态}{构造请求体}{等待后端返回}
+
+\seqfig{时序图5-2 多会话与流式展示实现时序图}{fig:impl-stream-session}{5.2.2 多会话与流式展示实现正文之后}{切换会话并发送}{useStream监听事件}{POST到/api/chat/stream}{接收message/step/done}
+
+\seqfig{时序图5-3 FastAPI统一入口实现时序图}{fig:impl-fastapi-entry}{5.3.1 FastAPI统一入口实现正文之后}{发送HTTP请求}{调用前端API封装}{main.py路由接收}{交给GatewayOrchestrator}
+
+\seqfig{时序图5-4 健康检查与管理接口实现时序图}{fig:impl-health-admin}{5.3.2 健康检查与管理接口实现正文之后}{打开运维状态}{请求/healthz或admin接口}{读取依赖和索引状态}{返回健康与指标数据}
+
+\seqfig{时序图5-5 输入校验实现时序图}{fig:impl-input-validation}{5.3.3 输入校验实现正文之后}{提交参数}{requestBuilder规范化}{Pydantic模型校验}{安全检查后分发}
+
+\seqfig{时序图5-6 模式参数处理实现时序图}{fig:impl-mode-select}{5.4.1 模式参数处理实现正文之后}{接收mode}{读取features配置}{业务网关判断分支}{进入指定能力模块}
+
+\seqfig{时序图5-7 专家模式实现时序图}{fig:impl-expert-mode}{5.4.2 专家模式实现正文之后}{选择expert}{启用RAG和citation\_guard}{进入ReAct RAG分支}{调用工具并校验证据}
+
+\seqfig{时序图5-8 深度研究模式实现时序图}{fig:impl-research-flow}{5.4.3 深度研究模式实现正文之后}{选择research}{启用研究features}{AgentGraphRunner生成步骤}{逐步执行并推送事件}
+
+\seqfig{时序图5-9 熔断降级实现时序图}{fig:impl-circuit-breaker}{5.4.4 熔断降级实现正文之后}{发起请求}{正常进入网关}{隔离执行器捕获失败}{标记degraded并返回}
+
+\seqfig{时序图5-10 RAG检索与答案生成实现时序图}{fig:impl-rag-generation}{5.4.5 RAG检索与答案生成实现正文之后}{提出资料问题}{进入RagGraphService}{执行混合召回与重排}{读取FAISS/BM25/元数据}
+
+\seqfig{时序图5-11 结构化招生查询实现时序图}{fig:impl-structured-query}{5.4.6 结构化招生查询实现正文之后}{询问字段型问题}{抽取年份/专业/批次}{查询结构化仓库}{返回字段结果}
+
+\seqfig{时序图5-12 专家模式智能体实现时序图}{fig:impl-expert-agent}{5.4.7 专家模式智能体实现正文之后}{提交专家问题}{构建智能体上下文}{create\_react\_agent执行}{调用本地工具和MCP工具}
+
+\seqfig{时序图5-13 会话记忆实现时序图}{fig:impl-memory}{5.4.8 会话记忆实现正文之后}{继续追问}{携带session\_id}{读取/压缩历史对话}{返回记忆上下文}
+
+\seqfig{时序图5-14 可靠性与安全控制实现时序图}{fig:impl-safety}{5.4.9 可靠性与安全控制实现正文之后}{提交高风险问题}{进入网关和质量闸门}{执行引用/冲突/安全检查}{返回拦截或保守回答}
+
+\seqfig{时序图5-15 非结构化知识库实现时序图}{fig:impl-unstructured-kb}{5.5.1 非结构化知识库实现正文之后}{准备原始文档}{运行构建脚本}{切分文本并提取来源}{写入知识库文件}
+
+\seqfig{时序图5-16 结构化招生数据实现时序图}{fig:impl-structured-data}{5.5.2 结构化招生数据实现正文之后}{准备招生表格}{执行解析和清洗}{生成JSON字段数据}{保存结构化结果}
+
+\seqfig{时序图5-17 索引与元数据实现时序图}{fig:impl-index-meta}{5.5.3 索引与元数据实现正文之后}{触发索引重建}{调用reindex接口}{生成FAISS/BM25索引}{保存manifest和指纹}
+
+\seqfig{时序图5-18 持久化存储实现时序图}{fig:impl-persistence}{5.6.1 持久化存储实现正文之后}{产生运行数据}{交给存储逻辑}{写入本地目录}{保存索引/缓存/日志/记忆}
+
+\seqfig{时序图5-19 日志指标实现时序图}{fig:impl-metrics}{5.6.2 日志指标实现正文之后}{发起请求}{生成trace\_id}{记录步骤/工具/耗时}{写入日志和指标接口}
+
+\seqfig{时序图5-20 评测脚本与验证材料实现时序图}{fig:impl-evaluation}{5.6.3 评测脚本与验证材料实现正文之后}{运行测试或评测}{调用评测脚本}{复用知识库和接口}{输出报告和验证结果}
+
+\end{document}

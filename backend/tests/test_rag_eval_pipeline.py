@@ -27,6 +27,9 @@ def test_rag_eval_metric_helpers():
     assert compute_mrr_at_k(relevant, predicted, 3) == 0.5
     assert round(compute_ndcg_at_k(relevant, predicted, 3), 4) == 0.6934
 
+    wide_relevant = {"a", "b", "c", "d", "e", "f"}
+    assert compute_recall_at_k(wide_relevant, ["a", "b", "c", "d", "e"], 5) == 1.0
+
 
 def test_build_report_contains_route_and_bucket_summary():
     rows = [

@@ -1,0 +1,1022 @@
+\documentclass[UTF8,zihao=-4,oneside]{ctexbook}
+
+\usepackage[a4paper,top=3.10cm,bottom=2.80cm,left=3.17cm,right=2.50cm,headsep=0.50cm,footskip=0.90cm,headheight=14pt]{geometry}
+\usepackage{fontspec}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{titletoc}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{chngcntr}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds}
+
+\hypersetup{
+  hidelinks,
+  unicode=true,
+  pdfauthor={曾令洁},
+  pdftitle={基于RAG与工作流的中原工学院招生咨询系统}
+}
+
+\setmainfont{Times New Roman}
+\setCJKmainfont{SimSun}
+\setCJKsansfont[AutoFakeBold=2.5]{SimHei}
+\setCJKmonofont{FangSong}
+\IfFontExistsTF{LiSu}{
+  \newfontfamily\coverlishu{LiSu}
+}{
+  \IfFontExistsTF{隶书}{
+    \newfontfamily\coverlishu{隶书}
+  }{
+    \newCJKfontfamily\coverlishu{SimHei}
+  }
+}
+
+\makeatletter
+\renewcommand\normalsize{%
+  \@setfontsize\normalsize{12pt}{21pt}%
+  \abovedisplayskip 10.5pt plus 2pt minus 2pt
+  \abovedisplayshortskip 6pt plus 2pt
+  \belowdisplayshortskip 6pt plus 2pt minus 2pt
+  \belowdisplayskip 10.5pt plus 2pt minus 2pt
+  \let\@listi\@listI
+}
+\makeatother
+\normalsize
+% 正文字号为 12pt，行距按学校 Word 模板的 1.5 倍行距效果控制为 21pt。
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
+\setlist[itemize]{nosep,leftmargin=2em}
+\setlist[enumerate]{nosep,leftmargin=2.6em}
+
+\counterwithin{table}{chapter}
+\counterwithin{figure}{chapter}
+\numberwithin{equation}{chapter}
+\renewcommand{\thetable}{\thechapter-\arabic{table}}
+\renewcommand{\thefigure}{\thechapter-\arabic{figure}}
+\renewcommand{\theequation}{\thechapter-\arabic{equation}}
+
+\captionsetup{
+  font={normalsize},
+  labelsep=space
+}
+
+\titleformat{\chapter}[block]
+  {\centering\heiti\fontsize{15pt}{21pt}\selectfont}
+  {\thechapter\quad 第\chinese{chapter}章}
+  {1em}
+  {}
+\titlespacing*{\chapter}{0pt}{0pt}{10.5pt}
+
+\titleformat{\section}
+  {\heiti\fontsize{14pt}{21pt}\selectfont}
+  {\thesection}
+  {0.8em}
+  {}
+\titlespacing*{\section}{0pt}{21pt}{10.5pt}
+
+\titleformat{\subsection}
+  {\heiti\fontsize{12pt}{21pt}\selectfont}
+  {\thesubsection}
+  {0.8em}
+  {}
+\titlespacing*{\subsection}{0pt}{21pt}{10.5pt}
+
+\titleformat{\subsubsection}
+  {\heiti\fontsize{12pt}{21pt}\selectfont}
+  {\thesubsubsection}
+  {0.8em}
+  {}
+\titlespacing*{\subsubsection}{0pt}{21pt}{10.5pt}
+
+\renewcommand{\contentsname}{目次}
+\titlecontents{chapter}[0em]{\songti\zihao{-4}}{\contentslabel{4.8em}}{}{\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{section}[2.3em]{\songti\zihao{-4}}{\contentslabel{2.8em}}{}{\titlerule*[0.6pc]{.}\contentspage}
+\titlecontents{subsection}[5.1em]{\songti\zihao{-4}}{\contentslabel{3.6em}}{}{\titlerule*[0.6pc]{.}\contentspage}
+
+\fancypagestyle{thesisfront}{
+  \fancyhf{}
+  \renewcommand{\headrulewidth}{0pt}
+  \cfoot{\songti\fontsize{10.5pt}{12pt}\selectfont\thepage}
+}
+
+\fancypagestyle{thesismain}{
+  \fancyhf{}
+  \fancyhead[C]{\songti\fontsize{10.5pt}{12pt}\selectfont 中原工学院毕业论文（设计）}
+  \fancyfoot[C]{\songti\fontsize{10.5pt}{12pt}\selectfont\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+\newcommand{\coverlabel}[1]{\makebox[7em][l]{\heiti\fontsize{16pt}{21pt}\selectfont #1：}}
+\newcommand{\covervalue}[1]{\makebox[18em][l]{\heiti\fontsize{16pt}{21pt}\selectfont #1}}
+\newcommand{\coverline}[2]{\noindent\coverlabel{#1}\covervalue{#2}\par}
+
+\newcolumntype{Y}{>{\centering\arraybackslash}X}
+
+\begin{document}
+
+\begin{titlepage}
+  \thispagestyle{empty}
+  \begin{flushright}
+    {\songti\fontsize{14pt}{21pt}\selectfont 论文编号：202208064722}
+  \end{flushright}
+  \vspace{1.6cm}
+  \begin{center}
+    {\coverlishu\fontsize{42pt}{48pt}\selectfont 本科毕业论文（设计）\par}
+    \vspace{1.4cm}
+    {\heiti\fontsize{22pt}{28pt}\selectfont 基于RAG与工作流的中原工学院招生咨询系统\par}
+    \vspace{0.8cm}
+    {\bfseries\fontsize{18pt}{24pt}\selectfont Admission Consulting System of Zhongyuan University of Technology Based on RAG and Workflow\par}
+  \end{center}
+  \vspace{1.8cm}
+  \coverline{学院名称}{人工智能学院}
+  \vspace{0.45cm}
+  \coverline{专\qquad 业}{人工智能}
+  \vspace{0.45cm}
+  \coverline{班\qquad 级}{人工智能221}
+  \vspace{0.45cm}
+  \coverline{学\qquad 号}{202208064722}
+  \vspace{0.45cm}
+  \coverline{学生姓名}{曾令洁}
+  \vspace{0.45cm}
+  \coverline{指导教师}{车战斌}
+  \vfill
+  \begin{center}
+    {\heiti\fontsize{14pt}{21pt}\selectfont 2026\quad 年\quad 5\quad 月\par}
+  \end{center}
+\end{titlepage}
+
+\clearpage
+\thispagestyle{empty}
+\begin{center}
+  {\heiti\fontsize{14pt}{21pt}\selectfont 诚信承诺书\par}
+\end{center}
+\vspace{1.6cm}
+{
+\heiti\fontsize{14pt}{21pt}\selectfont
+本人郑重声明：本人所呈交的毕业论文（设计），是在导师的指导下独立进行研究所取得的成果。毕业论文（设计）中凡引用他人已经发表或未发表的成果、数据、观点等，均已明确注明出处。除文中已经注明引用的内容外，不包含任何其他个人或集体已经发表或在网上发表的论文。
+
+\vspace{3.0cm}
+\begin{center}
+  {\heiti\fontsize{15pt}{21pt}\selectfont 论文作者签名：\underline{\hspace{4cm}}\quad 日期：\underline{\hspace{4cm}}\par}
+\end{center}
+}
+
+\clearpage
+\pagenumbering{Roman}
+\setcounter{page}{1}
+\pagestyle{thesisfront}
+
+\chapter*{摘\quad 要}
+\addcontentsline{toc}{chapter}{摘要}
+针对高校招生咨询中资料来源分散、问题表达自然、字段答案要求准确等实际需求，本文设计并实现了一套基于检索增强生成（Retrieval-Augmented Generation，RAG）与工作流编排的中原工学院招生咨询系统。系统能够围绕招生章程、报考指南、学院介绍、专业目录、分数线和政策附表等资料，完成政策说明、学费学制查询、专业代码查询、选科要求查询、历年分数线查询和复合型咨询等任务。与人工反复查阅多份资料或传统 FAQ 固定匹配相比，该系统通过表格查询、混合检索和分步骤处理提高了招生咨询中资料查找、证据整理和标准化答复的效率，并在证据不足或外部依赖异常时使用保守回复与降级机制，降低自由发挥式生成带来的事实错误风险。
+
+系统采用前后端分离架构，前端基于 Vue 3、TypeScript 与 Vite 构建多会话咨询界面，支持普通对话、RAG 问答、专家模式切换和 SSE 流式响应；后端以 FastAPI 作为统一入口，围绕“表现层—接入层—编排层—业务能力层—数据中心—数据处理层—持久化层”组织查询改写、问题路由、结构化招生查询、混合检索、答案生成、引用校验、会话记忆、技能调用、健康检查和故障降级等功能。在本地数据库构建方面，系统将专业目录、学费学制、选科要求、录取分数线和政策附表整理为可精确查询的结构化表，同时将招生章程、报考指南和学院介绍等非结构化资料切块并建立 FAISS、BM25 与精确匹配结合的本地知识库。在核心方法上，本文没有采用单一路径检索，而是设计了“稠密检索 + 稀疏检索 + 精确匹配 + RRF 融合 + 重排 + 质量闸门”的混合检索链路，并进一步结合工作流编排，把复杂咨询拆分为可追踪的执行步骤。针对招生业务对可靠性的要求，系统还实现了引用校验、冲突裁决、输入输出安全审查、健康检查、隔离执行器和多级降级链，尽量避免在证据不足时给出武断回答。
+
+本文从问答正确性、检索效果、消融结果、性能表现和容错能力五个方面进行了验证。当前招生 RAG 专项评测覆盖 70 个样本，平均总分为 0.7443，Recall@5、MRR@5 和 nDCG@5 分别为 0.6976、0.9857 和 0.8078；分类结果显示，专业目录类样本平均总分达到 0.9799，说明结构化查询链路已经具备较高稳定性，而学院介绍与报考指南类样本则提示后续优化重点应进一步转向证据利用一致性与答案表达稳定性。问答质量抽样评测中，关键词覆盖率与引用命中率均为 100\%，幻觉率为 0。并发压测表明，系统在并发 5、30 和 100 下错误率均为 0，P95 首 token 时间分别为 15.81 s、9.31 s 和 25.03 s；这一现象主要来源于流式生成前串行执行查询改写、多路召回、重排、质量闸门和引用校验等 RAG 证据准备步骤，体现了当前实现对答案可靠性与证据完整性的优先取舍。RAG 故障注入场景下，8/8 请求均以 \texttt{degraded} 状态返回且无 HTTP 5xx，说明系统已具备较好的保底服务能力。
+
+综合来看，本文已经围绕真实招生咨询业务完成了一套可以运行和验证的智能咨询原型，也从实际结果上说明了“结构化查询 + 混合检索 + 工作流编排 + 可靠性控制”这条技术路线有一定可行性；不过系统还没有做到完全成熟，检索重排策略还需要继续调整，记忆持久化能力也没有完全落到最终形态，部署结构后面仍然需要再收拢，但从回答准确性、证据可追溯性和工程维护角度来看，当前实现已经有了比较清楚的基础。
+
+\vspace{0.8em}
+\noindent{\heiti\fontsize{12pt}{21pt}\selectfont 关键词：}RAG；工作流编排；招生咨询；混合检索；智能问答系统
+
+\clearpage
+\begin{center}
+  {\bfseries\fontsize{15pt}{21pt}\selectfont ABSTRACT\par}
+\end{center}
+\vspace{1em}
+\fontsize{12pt}{21pt}\selectfont
+To meet the practical needs of university enrollment consultation, such as scattered information sources, natural question expressions, and strict requirements for accurate field-level answers, this thesis designs and implements an admission consulting system for Zhongyuan University of Technology based on Retrieval-Augmented Generation (RAG) and workflow orchestration. The system can work with admission regulations, application guides, college profiles, major catalogs, score lines, policy tables, and other materials, and can support tasks such as policy explanation, tuition and study-duration lookup, major code lookup, subject requirement inquiry, historical score-line query, and compound consultation. Compared with repeatedly checking several documents manually or using traditional FAQ fixed matching, the system improves the efficiency of information lookup, evidence organization, and standardized response generation through table lookup, hybrid retrieval, and step-by-step processing. When evidence is insufficient or external dependencies are abnormal, the system uses conservative responses and fallback mechanisms to reduce the risk of factual errors caused by free-form generation.
+
+The system adopts a front-end and back-end separated architecture. The front end is built with Vue 3, TypeScript, and Vite to provide a multi-session consultation interface, supporting normal dialogue, RAG-based question answering, expert-mode switching, and Server-Sent Events streaming responses. The back end uses FastAPI as the unified entry point and organizes query rewriting, question routing, structured admission lookup, hybrid retrieval, answer generation, citation validation, session memory, skill invocation, health checking, and fault degradation around the layers of presentation, access, orchestration, business capability, data center, data processing, and persistence. In terms of local database construction, the system converts major catalogs, tuition and study duration, subject requirements, score lines, and policy tables into structured tables that can be queried accurately. At the same time, unstructured materials such as admission regulations, application guides, and college profiles are chunked and built into a local knowledge base combining FAISS, BM25, and exact match. In the core method, this thesis does not use a single retrieval path, but designs a hybrid retrieval pipeline of dense retrieval, sparse retrieval, exact match, RRF fusion, reranking, and quality gating. It further combines workflow orchestration to split complex consultation into traceable execution steps. For the reliability requirements of enrollment services, the system also implements citation validation, conflict resolution, input and output safety checks, health checking, isolated executors, and multi-level fallback chains, so as to avoid giving arbitrary answers when evidence is not enough.
+
+This thesis evaluates the system from five aspects: answer correctness, retrieval effectiveness, ablation results, performance, and fault tolerance. The current enrollment RAG evaluation covers 70 samples, with an average overall score of 0.7443, and Recall@5, MRR@5, and nDCG@5 are 0.6976, 0.9857, and 0.8078, respectively. The classified results show that the average overall score of major-catalog samples reaches 0.9799, indicating that the structured query path has relatively high stability. In contrast, college-profile and application-guide samples suggest that future optimization should further focus on evidence utilization consistency and answer expression stability. In the sampled answer-quality evaluation, both keyword coverage and citation hit rate are 100\%, and the hallucination rate is 0. The concurrency stress test shows that the system has an error rate of 0 under concurrency levels of 5, 30, and 100, and the P95 first-token times are 15.81 s, 9.31 s, and 25.03 s, respectively. This phenomenon is mainly caused by the serial execution of RAG evidence preparation steps before streaming generation, including query rewriting, multi-path recall, reranking, quality gating, and citation validation, reflecting the current implementation's priority on answer reliability and evidence completeness. In the RAG fault-injection scenario, all 8 requests return in a \texttt{degraded} state without HTTP 5xx, showing that the system already has a good basic fallback service capability.
+
+Overall, this work completes an intelligent consultation prototype for real university enrollment services, and verifies the feasibility of the technical route of ``structured query + hybrid retrieval + workflow orchestration + reliability control''. The system still has problems such as retrieval reranking strategies needing further tuning, memory persistence not yet being fully implemented, and deployment architecture still needing convergence. However, it has formed a relatively clear implementation foundation in answer accuracy, evidence traceability, and engineering maintainability.
+
+\vspace{0.8em}
+\noindent{\bfseries\fontsize{12pt}{21pt}\selectfont Keywords: }RAG; Workflow Orchestration; Enrollment Consultation; Hybrid Retrieval; Intelligent Question Answering System
+
+\clearpage
+\tableofcontents
+
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\pagestyle{thesismain}
+
+\chapter{绪论}
+
+\section{研究背景}
+高校招生工作近几年明显呈现出两个变化。其一，咨询入口越来越线上化，问题不再只来自招生现场和热线电话，而是同时分布在官网、公众号、咨询平台和临时活动页面上；其二，咨询内容越来越细碎，除了章程、计划、专业介绍等常规问题，考生和家长还会频繁追问某个省份、某个专业、某个年份的具体字段信息。对招生部门而言，这意味着简单的信息发布已经不够，必须提供更及时、更一致，也更容易被普通用户理解的答复服务。
+
+传统 FAQ 系统在这一场景下有明显短板。它能覆盖高频固定问法，但很难处理自然语言表达差异，更难把分散在章程、学院介绍、专业目录、历年分数线和报到流程中的信息整合起来。纯人工咨询虽然更稳，但响应速度受限，且不同老师对同一问题的表述可能不一致。随着大语言模型在问答领域表现出较强的语言理解和表达能力，利用模型构建招生咨询系统看起来是一条自然的路线，但真落到业务上就会发现，模型“会说”不等于“能说准”。
+
+招生咨询属于高谨慎场景。学费、选科要求、录取批次、报到时间、联系方式这些信息看起来都是小字段，一旦答错，对考生决策的影响却很直接。也正因为如此，招生问答系统的核心目标不能只停留在“回答自然”，还必须满足三条底线：第一，答案尽量来自可核验的学校资料；第二，涉及精确字段时尽量走结构化查询而不是语言猜测；第三，当证据不足时，系统宁可保守也不能装懂。
+
+RAG 技术正是在这种背景下进入高校垂直场景的。它通过在生成前检索外部资料，让模型基于局部证据回答问题，从而缓解知识静态化带来的幻觉问题\cite{lewis2020rag,gao2023survey}。但从项目实现角度看，单纯“向量检索 + 大模型生成”仍然不够，因为招生问题里既有语义问答，也有数值字段、时间敏感信息和多步骤咨询。若系统只会统一走一条链路，很多该查库的问题反而会被错误地交给生成模型处理。
+
+基于这样的考虑，本文把课题落点放在“RAG 与工作流的结合”上。这里的工作流，不是为了把系统包装得更花哨，而是为了把不同类型的问题分流到合适的能力模块，字段类问题优先走结构化查询，解释类问题走混合检索，复杂问题则通过步骤化执行来组织记忆、检索、工具调用和答案整合。在已有项目基础上，本文尝试回答一个更实在的问题：在高校招生这个高谨慎、强时效、资料格式又比较杂的场景里，能不能做出一套答得相对稳、证据说得清、出了故障还能保底的智能咨询系统。
+
+\section{国内外研究现状}
+\subsection{检索增强生成研究现状}
+RAG 现在已经是大语言模型应用中比较常用的一种补充知识的方法，Lewis 等人提出的基本框架，是把外部检索过程和文本生成过程放到一起使用，让模型在回答问题时不用完全依靠参数里原来记住的内容，而是可以到外部资料中临时找到可用证据 [1]；后面的相关研究也一直在扩展这个方向，Gao 等人从索引怎么建、检索怎么做、生成怎么控制以及效果怎么评价等角度，对 RAG 做了较系统的整理，并指出系统效果很多时候不只是由某一个模型决定，还会受到数据组织方式、召回策略和证据使用方式的共同影响 [2]；
+
+放到实际工程中看，单靠向量检索并不能把所有招生问题都处理好，拿金额、专业代码、年份和联系方式这类比较硬的字段来说，BM25 这类稀疏检索方法依然能发挥作用 [3]；当系统需要同时参考多个召回来源时，RRF 这类融合方法可以在不增加太多学习成本的情况下，让排序结果更稳一些 [4]；Johnson 等人提出的 FAISS 给本地向量索引提供了效率较高的实现方式，也让中小规模垂直语料库做相似检索时部署起来没有那么重 [5]，这些工作都为本文后面的技术选型提供了比较直接的参考。
+
+不过，RAG 的难点并不只在“能不能找到资料”，还在“拿到资料以后怎么用”。如果证据排序不稳，或者模型没有按证据作答，系统依然可能在最终答案阶段出错。也就是说，检索增强并不会自动带来答案忠实性，证据质量控制和答案约束仍然需要在系统层面额外设计。
+
+\subsection{代理式推理与工作流编排研究现状}
+近两年，这一方向的研究重点慢慢从“给模型提供更多文档”转到“让模型在任务过程中自己判断什么时候需要检索、什么时候需要推理、什么时候需要调用工具”。ReAct 把推理过程和行动过程交替组织起来，使模型在执行任务时能够借助外部环境信息来修正自己的判断\cite{react2023}；Search-o1 又把主动检索和较长链路的推理结合起来，关注复杂问题中如何根据中间的不确定内容触发搜索，并把新得到的检索结果继续放进后面的推理过程\cite{searcho1}；相关综述也提到，Agentic RAG 的发展已经不只是优化召回结果，还会进一步关注任务规划、证据使用、执行过程审计以及多轮反馈闭环\cite{singh2025survey,agenticrag}。
+
+这些研究对高校招生咨询尤其有启发。招生问题并不是一个固定模版任务，它常常同时包含“信息检索”“字段核对”“流程解释”和“上下文追问”几种需求。把它们都硬塞进单轮问答里，系统表现通常不会太稳定。工作流编排的价值，恰恰在于把任务拆成更适合执行和控制的步骤，让系统在每一步都能决定：接下来是检索、查库、重写问题，还是干脆给出保守说明。
+
+\subsection{高校垂直问答系统研究现状}
+高校问答系统并不是这几年才出现的东西，早期系统多采用规则模板、关键词匹配或者 FAQ 检索，处理一些固定问法时还能起到作用，但遇到跨文档整合、自然语言追问这类情况就会比较吃力；随着大模型能力逐渐增强，很多场景开始尝试基于 LLM 做咨询服务，不过对高校招生业务来说，把大模型接进来只是其中一步，更要紧的是能不能把校内已有资料整理成一个可以追溯、可以核验的知识底座。
+
+高校招生场景有几个典型特点。第一，资料来源多而杂，既有 Word、PDF、Excel，也有网页、Markdown 和人工整理文本。第二，字段表达不统一，同一个概念可能在不同资料里出现不同写法。第三，时效性强，去年和今年的政策不能混答。第四，部分问题本质上属于数据库查询，一旦交给生成式模型自由发挥，风险反而更高。现有很多通用问答系统对这类现实细节处理并不充分。
+
+基于这些特点，围绕高校招生咨询做系统设计时，真正值得研究的不是“大模型能不能回答”，而是如何把结构化与非结构化知识结合起来，如何让系统在复杂问题中按步骤调用不同能力，以及如何用工程化手段尽量降低错误输出，本文的工作正是在这一缺口上展开。
+
+\section{研究内容与目标}
+本文的研究对象是“基于 RAG 与工作流的中原工学院招生咨询系统”。和只做单个算法验证的工作不太一样，本文更关注真实招生资料怎么组织、系统结构怎么搭起来、评测结果能不能说明问题，希望在不夸大系统能力边界的情况下，整理出一套后续可以复现、也比较容易解释的实现方案。
+
+结合现有项目代码、文档与评测材料，本文主要完成了以下几项工作：
+\begin{enumerate}
+  \item 设计并实现招生知识底座，完成对章程、学院介绍、招生专业详情、录取分数线和问答资料的清洗、解析、切块、索引和结构化入库。
+  \item 设计混合检索链路，将稠密检索、BM25 检索、精确匹配、RRF 融合、重排和质量闸门串联起来，支撑解释类问题与证据型回答。
+  \item 设计工作流式问答编排机制，将查询改写、结构化工具、记忆、技能和答案整合组织为可追踪步骤，用于处理复杂咨询任务。
+  \item 构建前后端完整原型，并基于现有脚本完成功能、检索、问答质量、性能和容错分析。
+\end{enumerate}
+
+围绕这些工作，本文希望达成四个目标：第一，在招生资料异构且问题表达自然的条件下，提高系统的字段准确性和证据利用能力；第二，在复杂问题场景中，通过工作流编排提高系统处理过程的清晰度和可控性；第三，在依赖服务异常时仍尽量维持主链路可用；第四，为后续高校垂直问答系统建设提供具有工程可操作性的参考。
+
+\section{论文结构}
+全文共分为六章。
+\begin{enumerate}
+  \item 第一章为绪论，主要介绍研究背景、国内外研究现状、研究内容与论文结构。
+  \item 第二章介绍系统设计所依赖的相关技术，包括大语言模型、RAG、混合检索、工作流编排以及系统开发技术基础。
+  \item 第三章从业务场景出发，对系统功能需求、非功能需求和问题路由需求进行分析。
+  \item 第四章以总体架构图为先导，详细说明系统架构、知识库构建、混合检索、结构化查询、工作流、记忆与可靠性设计。
+  \item 第五章结合现有测试和评测报告，对系统的功能效果、检索表现、消融结果、性能瓶颈和容错能力进行分析。
+  \item 第六章总结全文工作，指出系统当前不足，并给出下一步优化方向。
+\end{enumerate}
+
+\chapter{相关技术与理论基础}
+
+\section{大语言模型与检索增强生成}
+大语言模型的优势在于语义理解和自然语言生成能力强，尤其适合把来源不同、表达方式不同的资料组织成连贯回答。但对于高校招生这种高风险问答场景，单靠模型参数中“记住的知识”是远远不够的。因为模型训练数据既不一定覆盖学校最新资料，也无法保证在回答时自动区分出哪个年份、哪个来源才是当前有效依据。
+
+RAG 的基本思想，就是在生成前先从外部知识源中检索与问题相关的材料，再把这些材料和问题一起交给模型处理\cite{lewis2020rag}。相比纯生成方式，它最大的优点是让模型有机会“看见”当前语料库中的真实文本，从而提升回答的事实性和可解释性。Gao 等的综述指出，RAG 系统的效果通常受五类因素影响：数据组织方式、切块粒度、召回策略、证据排序方式以及答案生成约束\cite{gao2023survey}。这说明 RAG 并不是一个单点算法，而更像一条完整的工程链路。
+
+在本文的项目场景中，RAG 的价值主要体现在两个方面。一方面，招生章程、报考指南、学院介绍等资料都具有较强文本性，适合通过切块与检索方式参与问答；另一方面，很多问题虽然最终需要自然语言表达，但答案依据仍然必须来自具体文本片段，就某条政策说明、某个学院简介或某段报到须知而言，系统需要先找到依据再组织回答。RAG 使系统能够在给出结论时附带来源，至少在机制上为“有据可查”提供了基础。
+
+\section{混合检索相关技术}
+\subsection{稠密检索与向量索引}
+稠密检索一般会把用户问题和文档内容映射到同一个向量空间里，再通过相似度来判断二者是否相关，它的优点是能处理一些表面用词不完全一样、但语义上比较接近的问题；就“计算机类专业有哪些发展方向”“人工智能学院主要培养什么能力”这类描述型咨询来说，稠密检索往往会比单纯关键词匹配更稳一些。项目里把 FAISS 作为本地向量索引来使用，主要是因为它部署起来比较直接，检索速度也比较快，对于中小规模的垂直知识库来说比较合适\cite{johnson2017faiss}。
+
+\subsection{稀疏检索与 BM25}
+向量检索在处理语义类问题时确实有用，但到了金额、年份、专业代码和专有名词这些约束比较强的场景里，它不一定就是最合适的办法。BM25 这类稀疏检索模型对关键词和词频变化更敏感，在定位具体字段时往往能提供更直接的帮助\cite{robertson2009bm25}；拿“软件工程学费多少”“2025 年河南物理类最低分多少”这类问题来说，让稀疏检索参与召回会更符合问题本身的特点。
+
+\subsection{精确匹配、融合与重排}
+招生资料中还有一些问题并不适合只靠相似检索来处理，拿学院网址、联系电话、专业代码这些短字段来说，答案通常就藏在很短的一段文本里。针对这类情况，项目额外加入了精确匹配通道，用来对疑似硬字段的问题做规则化补充；多路召回得到的结果会继续通过 RRF 放到统一的排序空间中，尽量避免系统完全依赖某一条检索路径\cite{cormack2009rrf}，后面再交给重排器做二次排序，从理论上看可以让候选证据和问题之间的相关程度再提高一些。
+
+不过，重排并不天然带来收益。后文第五章的消融结果表明，在当前实现与当前数据条件下，查询改写和重排并没有稳定提升评测指标，反而带来额外时延。这也说明，检索系统的每一层设计都必须接受数据验证，不能仅凭理论印象判断效果。
+
+\section{工作流编排与代理式问答}
+工作流编排的主要价值，在于把一个不好直接回答的复杂问题拆成几个相对可控的步骤。ReAct 的研究已经说明，当模型在推理过程中能够调用外部行动时，复杂任务的处理效果会和“直接一步回答”有所不同\cite{react2023}；放到招生咨询场景里，这一点也比较明显，用户一句“我这个分数能报什么专业，顺便告诉我学费和学院联系方式”，背后其实会牵涉检索资料、查询数据库、筛选结果和组织语言等多个环节。
+
+项目中采用 LangGraph 组织工作流节点，其好处在于流程边界清晰，便于插入查询改写、子问题拆分、结果审查和故障降级等控制逻辑\cite{projectanalysis}。这种图式编排与传统链式调用相比，更适合在节点之间做状态传递和重试控制，也更方便后续扩展额外能力。
+
+代理式问答并不意味着系统必须“全自动联网思考”。在本文语境下，它更准确的含义是：系统能够根据问题类型，主动决定调用哪类能力，并把中间过程组织成可追踪的执行步骤。只要这一点做到了，工作流就已经对系统的可解释性和可维护性产生了价值。
+
+\section{系统开发相关技术}
+从具体实现来看，项目采用了前后端分离的结构。前端部分使用 Vue 3、TypeScript 和 Vite，主要用来较快地搭建对话界面、多会话状态管理以及 SSE 消息接收能力；后端部分使用 FastAPI 提供统一的 API 入口，并通过 Pydantic 和 \texttt{pydantic-settings} 来管理接口数据约束与运行配置\cite{projectreadme,projectanalysis}。
+
+在数据处理方面，项目使用 \texttt{python-docx}、\texttt{PyPDF2}、\texttt{openpyxl} 和 \texttt{xlrd} 处理不同格式资料，再通过 MySQL 维护结构化招生表。这样的技术选型没有追求复杂，而是直接围绕业务资料形式展开，符合课程项目中“能稳定落地比堆技术名词更重要”的原则。
+
+\chapter{需求分析}
+
+\section{业务场景分析}
+本系统服务的对象是中原工学院招生咨询业务，主要使用者包括考生、家长以及招生工作人员。结合现有招生资料和项目已经实现的功能来看，咨询场景大体可以归到三种情况中。
+
+一类是政策说明问题，拿“招生章程里对体检有哪些要求”“学校资助政策包括哪些内容”“新生报到需要注意什么”来说，这些问题一般不能只靠一个字段回答，需要系统从非结构化资料中找到几个相关片段，再把这些内容整理成用户能看懂的回答。
+
+另一类是字段比较明确的问题，像“某专业学费是多少”“某专业代码是什么”“某省某批次最低录取分数线是多少”这类问法，表面上仍然是自然语言输入，但本质上更接近一次数据库查询，答案能不能正确，主要取决于结构化数据是否完整，以及路由能不能把问题送到正确的查询路径上。
+
+还有一类是复合型咨询，拿“我的分数能报什么专业，还想了解学费和学院情况”“如果我报人工智能专业，报到前需要准备什么材料”来说，一个问题里往往同时包含字段筛选、资料检索和结果整理，直接一次性生成回答不太稳，更适合交给步骤化工作流去处理。
+
+\section{功能需求分析}
+围绕上述业务场景，系统需要满足以下功能要求。
+\begin{enumerate}
+  \item 普通对话与 RAG 问答：支持用户直接提问，并在需要时返回带来源说明的答案。
+  \item 结构化招生查询：对学费、学制、分数线、专业代码、选科要求等问题给出准确字段结果。
+  \item 专家模式编排：对复杂问题支持子问题拆分、步骤执行与结果整合。
+  \item 多会话与上下文承接：支持用户在同一会话中持续追问。
+  \item 运维与管理接口：支持健康检查、指标查看、索引重建和上下文压缩。
+\end{enumerate}
+
+这些需求表面上看比较分散，但实际都围绕同一个目标展开，也就是在保证系统能正常使用的前提下，把不同类型的问题送到更合适的处理路径中，不能把所有问题都简单交给同一次模型调用来处理。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=0.9cm and 1.0cm,
+    box/.style={draw, rounded corners, align=center, minimum width=3.2cm, minimum height=0.9cm},
+    decision/.style={draw, diamond, aspect=2.0, align=center, inner sep=1pt, minimum width=3.0cm, minimum height=1.0cm},
+    >=Latex
+  ]
+    \node[box] (q) {用户问题};
+    \node[box, below=of q] (intent) {问题识别与\\上下文补全};
+    \node[decision, below=of intent] (structured) {字段约束\\是否明确};
+    \node[box, below left=1.5cm and 1.9cm of structured] (db) {结构化查询\\专业目录 / 分数线 / 政策附表};
+    \node[decision, below right=1.5cm and 1.9cm of structured] (complex) {是否为复合型\\咨询任务};
+    \node[box, below=of complex] (rag) {RAG 问答\\证据检索与生成};
+    \node[box, right=of complex] (agent) {专家模式编排\\拆分、执行与整合};
+    \node[box, below=3.1cm of structured] (verify) {结果校验与回退\\缓存补救 / 来源约束};
+    \node[box, below=of verify] (answer) {答案返回\\字段结果 / 证据回答 / 步骤结果};
+    \draw[->] (q) -- (intent);
+    \draw[->] (intent) -- (structured);
+    \draw[->] (structured) -- node[above left]{是} (db);
+    \draw[->] (structured) -- node[above right]{否} (complex);
+    \draw[->] (complex) -- node[left]{否} (rag);
+    \draw[->] (complex) -- node[above]{是} (agent);
+    \draw[->] (db) -- (verify);
+    \draw[->] (rag) -- (verify);
+    \draw[->] (agent) |- (verify);
+    \draw[->] (verify) -- (answer);
+  \end{tikzpicture}
+  }
+  \caption{招生咨询问题路由决策流程}
+\end{figure}
+
+\section{非功能需求分析}
+招生咨询系统除了功能完整，还要满足一组更难的非功能指标。
+
+在准确性上，系统需要尽量少出现字段答错、年份混用这类问题；在可追溯性上，回答里要尽可能保留来源上下文或者引用信息，方便用户和管理人员后面核验；在可靠性上，即使部分依赖服务出了问题，核心问答链路也应尽量保持可用，不能让整轮请求直接失败；在扩展性上，后续还要能继续接入新的知识源、结构化表和工作流节点；在维护性上，各模块边界需要划分清楚，这样后面继续演示、修复和扩展时才不会太乱。
+
+这些要求决定了系统不能只是一组模型调用脚本，而必须具备比较完整的工程结构。
+
+\section{问题路由需求分析}
+结合功能需求和非功能需求，系统的问题路由至少需要区分三种处理路径：一是纯本地确定性路径，用于专业目录、学费学制、专业代码、选科要求和分数线等字段明确的问题；二是本地检索与大模型结合路径，用于招生章程、报考指南和学院介绍等需要证据组织与自然语言表达的问题；三是纯大模型兜底路径，用于开放闲聊或缺少本地资料支撑的说明性问题。这个划分不是为了把系统说复杂，而是为了避免所有请求都被一股脑塞给大模型，最后把字段题答成玄学题，那就有点离谱了。
+
+由此可以看出，需求分析阶段能够得到一个比较明确的结论：招生咨询系统需要先判断问题类型，再选择结构化查询、RAG 问答、专家模式或保守拒答等路径。后续系统设计章节中的总体架构、模块划分和数据流向，也都围绕这一需求展开。
+
+\chapter{系统设计}
+
+\section{系统总体架构设计}
+结合代码仓库结构，系统总体上采用“表现层 + 接入层 + 编排层 + 业务能力层 + 数据中心 + 数据处理层 + 持久化层”的分层结构\cite{projectanalysis}。表现层由前端界面构成，负责会话管理、模式切换与流式展示；接入层由 FastAPI 接口组成，负责统一接收请求和返回结果；编排层负责问题路由、执行计划和降级控制；业务能力层负责结构化查询、RAG 检索、专家模式、会话记忆、答案生成和技能调用；数据中心负责把表格数据、索引数据、文档知识库和评测结果统一组织起来；数据处理层负责资料解析、文本切块、索引构建和评测脚本运行；持久化层负责 MySQL、FAISS、BM25、原始文件和日志报告等实际存储。图 \ref{fig:system-architecture} 使用虚框标出各层边界，并用不同箭头区分控制流和数据流，避免把体系结构图误解为简单分类图。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tikzpicture}[
+    x=1cm,y=1cm,
+    layer/.style={draw, dashed, rounded corners, minimum width=14.8cm, minimum height=1.1cm},
+    box/.style={draw, rounded corners, fill=white, align=center, minimum width=2.6cm, minimum height=0.62cm},
+    widebox/.style={draw, rounded corners, fill=white, align=center, minimum width=3.3cm, minimum height=0.62cm},
+    sidebox/.style={draw, rounded corners, fill=white, align=center, minimum width=0.95cm, minimum height=3.0cm},
+    control/.style={->, thick},
+    flow/.style={->, dashed, thick},
+    >=Latex,
+    font=\scriptsize
+  ]
+    \node[layer, fill=red!12] at (0,0) (l1) {};
+    \node[layer, fill=blue!12] at (0,-1.3) (l2) {};
+    \node[layer, fill=yellow!18] at (0,-2.6) (l3) {};
+    \node[layer, fill=green!12, minimum height=2.2cm] at (0,-4.25) (l4) {};
+    \node[layer, fill=cyan!10] at (0,-6.1) (l5) {};
+    \node[layer, fill=orange!12] at (0,-7.4) (l6) {};
+    \node[layer, fill=gray!12] at (0,-8.7) (l7) {};
+
+    \node[left=0.2cm of l1] {表现层};
+    \node[left=0.2cm of l2] {接入层};
+    \node[left=0.2cm of l3] {编排层};
+    \node[left=0.2cm of l4] {业务能力层};
+    \node[left=0.2cm of l5] {数据中心};
+    \node[left=0.2cm of l6] {数据处理层};
+    \node[left=0.2cm of l7] {持久化层};
+
+    \node[box] (web) at (-4.8,0) {Web 咨询界面};
+    \node[box] (ops) at (-1.6,0) {右侧运维面板};
+    \node[box] (sse) at (1.6,0) {SSE 步骤展示};
+    \node[box] (session) at (4.8,0) {多会话管理};
+
+    \node[widebox] (gateway) at (-3.1,-1.3) {FastAPI 网关};
+    \node[widebox] (admin) at (1.2,-1.3) {管理接口 / 健康检查};
+    \node[box] (safein) at (4.8,-1.3) {输入校验};
+
+    \node[widebox] (router) at (-4.5,-2.6) {问题路由};
+    \node[widebox] (workflow) at (-0.8,-2.6) {工作流编排};
+    \node[widebox] (degrade) at (3.0,-2.6) {熔断 / 降级控制};
+
+    \node[widebox] (structured) at (-5.0,-3.75) {结构化查询\\专业 / 分数线 / 政策};
+    \node[widebox] (rag) at (-1.6,-3.75) {RAG 检索\\FAISS / BM25 / 精确匹配};
+    \node[widebox] (agent) at (1.8,-3.75) {专家模式\\拆分 / 工具调用 / 汇总};
+    \node[widebox] (memory) at (-5.0,-4.85) {会话记忆\\短期 / 长期 / 特殊};
+    \node[widebox] (llm) at (-1.6,-4.85) {答案生成\\引用校验 / 质量闸门};
+    \node[widebox] (skill) at (1.8,-4.85) {技能机制\\保存 / 激活 / 调用};
+    \node[sidebox, fill=red!20] (security) at (5.15,-4.25) {安全\\控制};
+    \node[sidebox, fill=orange!25] (log) at (6.25,-4.25) {日志\\指标};
+
+    \node[box] (mysqlcenter) at (-4.8,-6.1) {招生结构化表};
+    \node[box] (indexcenter) at (-1.6,-6.1) {向量 / 关键词索引};
+    \node[box] (doccenter) at (1.6,-6.1) {非结构化知识库};
+    \node[box] (cachecenter) at (4.8,-6.1) {缓存与评测报告};
+
+    \node[box] (extract) at (-4.8,-7.4) {资料解析};
+    \node[box] (chunk) at (-1.6,-7.4) {文本切块};
+    \node[box] (embed) at (1.6,-7.4) {索引构建};
+    \node[box] (eval) at (4.8,-7.4) {评测脚本};
+
+    \node[box] (mysql) at (-5.4,-8.7) {MySQL};
+    \node[box] (faiss) at (-2.7,-8.7) {FAISS};
+    \node[box] (bm25) at (0,-8.7) {BM25};
+    \node[box] (files) at (2.7,-8.7) {PDF/DOCX/XLSX};
+    \node[box] (reports) at (5.4,-8.7) {JSON/日志};
+
+    \draw[control] (web) -- node[right]{HTTP/SSE} (gateway);
+    \draw[control] (ops) -- (admin);
+    \draw[control] (gateway) -- node[left]{控制流} (router);
+    \draw[control] (router) -- (workflow);
+    \draw[control] (workflow) -- (structured);
+    \draw[control] (workflow) -- (rag);
+    \draw[control] (workflow) -- (agent);
+    \draw[control] (workflow) -- (llm);
+    \draw[control] (degrade) -- (workflow);
+    \draw[flow] (structured) -- node[left]{字段数据流} (mysqlcenter);
+    \draw[flow] (rag) -- node[right]{证据数据流} (indexcenter);
+    \draw[flow] (rag) -- (doccenter);
+    \draw[flow] (memory) -- (cachecenter);
+    \draw[flow] (mysqlcenter) -- (mysql);
+    \draw[flow] (indexcenter) -- (faiss);
+    \draw[flow] (indexcenter) -- (bm25);
+    \draw[flow] (doccenter) -- (files);
+    \draw[flow] (cachecenter) -- (reports);
+    \draw[flow] (extract) -- (mysqlcenter);
+    \draw[flow] (chunk) -- (doccenter);
+    \draw[flow] (embed) -- (indexcenter);
+    \draw[flow] (eval) -- (cachecenter);
+
+    \node[align=left] at (5.2,-9.55) {实线箭头：控制流 / 调用关系；虚线箭头：数据流 / 证据流};
+  \end{tikzpicture}
+  }
+  \caption{系统总体架构}
+\label{fig:system-architecture}
+\end{figure}
+
+这种分层结构的作用，主要是把各部分职责划分清楚。前端只负责把用户操作和系统结果展示出来，不直接承担业务判断；后端入口主要负责接收请求和转发请求，也不把所有逻辑都堆在一起；RAG 模块专心处理资料检索和证据组织，结构化查询模块则负责字段类问题，不去替代答案生成模块。各模块把自己的事情做好，复杂流程再由编排层统一组织，这样后续排查问题和控制风险都会更方便一些。
+
+\begin{table}[H]
+  \centering
+  \caption{体系结构图模块与第四章设计内容对应关系}
+  \begin{tabularx}{0.95\textwidth}{lYY}
+    \toprule
+    图中层次 & 主要模块 & 正文对应设计内容 \\
+    \midrule
+    表现层 & Web 咨询界面、右侧运维面板、SSE 步骤展示、多会话管理 & 表现层与接入层设计 \\
+    接入层 & FastAPI 网关、管理接口、健康检查、输入校验 & 表现层与接入层设计、可靠性与安全控制设计 \\
+    编排层 & 问题路由、工作流编排、熔断与降级控制 & 编排层：问题路由、工作流与专家模式设计 \\
+    业务能力层 & 结构化查询、RAG 检索、专家模式、会话记忆、答案生成、技能机制 & 业务能力层相关各小节 \\
+    数据中心 & 招生结构化表、向量与关键词索引、非结构化知识库、缓存与评测报告 & 数据中心与知识组织设计 \\
+    数据处理层 & 资料解析、文本切块、索引构建、评测脚本 & 数据处理层与知识库构建设计 \\
+    持久化层 & MySQL、FAISS、BM25、PDF/DOCX/XLSX、JSON/日志 & 数据中心与知识组织设计、可靠性与安全控制设计 \\
+    侧向支撑 & 安全控制、日志指标 & 可靠性与安全控制设计 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+后续各小节按照图 \ref{fig:system-architecture} 中的层次来写，图中出现的主要模块都会在正文中对应说明。这样处理以后，体系结构图不只是放在论文里的插图，而是第四章系统设计内容的提纲。
+
+\section{表现层与接入层设计}
+表现层主要对应前端咨询界面。系统把用户常用操作集中在 Web 咨询界面中，用户可以发起普通问答，也可以切换 RAG 问答和专家模式。多会话管理用于保存不同咨询主题，避免一个学生连续咨询多个问题时上下文混在一起。SSE 步骤展示用于把后端执行过程分批返回到页面，包括正在检索资料、正在整理引用、正在生成回答等状态，这样用户不会只看到一个长时间等待的空白页面。
+
+右侧运维面板主要服务于调试和演示，它展示健康状态、索引状态、会话信息和部分运行指标。这个模块不是直接回答招生问题，但它能帮助开发者判断系统是不是正常工作。对于毕业设计来说，这类面板也能让系统运行过程更容易被检查，避免只展示最终回答而看不到中间状态。
+
+接入层由 FastAPI 网关、管理接口、健康检查和输入校验组成。FastAPI 网关负责统一接收前端请求，并把请求交给后面的路由和工作流模块。管理接口和健康检查负责提供索引重建、服务状态检查等辅助能力。输入校验则在请求刚进入系统时做基础检查，对明显异常或越权的内容先进行拦截。接入层本身不直接决定答案内容，它更像一个统一入口，把请求整理好以后再交给编排层处理。
+
+\section{数据中心与知识组织设计}
+根据项目现有资料统计，系统目前可以使用的原始文档一共有 78 份，其中和招生问答主链路关系比较直接、并且已经进入索引清单的源文件有 42 份；结构化解析目录下已经生成 24 份 JSON 结果文件，后端自动化测试文件有 23 个，前端测试文件有 6 个。这些数量虽然不算特别大，但已经能说明项目不是只停留在空壳演示层面，而是有了后续可以维护的资料基础和验证基础。
+
+\begin{table}[H]
+  \centering
+  \caption{系统数据与验证资产概况}
+  \begin{tabular}{lcc}
+    \toprule
+    类别 & 数量 & 说明 \\
+    \midrule
+    原始资料文件 & 78 & 文档、表格、网页导出等原始知识源 \\
+    索引清单纳入源文件 & 42 & 进入 FAISS/BM25 主链路的招生资料 \\
+    结构化解析 JSON & 24 & 解析后的学院介绍与章程等结果 \\
+    后端测试文件 & 23 & API、RAG、Agent、门禁、并发等测试 \\
+    前端测试文件 & 6 & 组件、API 服务与请求构造测试 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+知识组织上，系统没有把所有资料一股脑混在一起，而是分成两套互补底座。第一套是非结构化知识库，主要承载招生章程、报考指南、学院介绍和说明性材料，适合做语义检索与证据型回答。第二套是结构化招生表，主要承载专业目录、学费、学制、录取分数线、政策附表等字段信息，适合做精确查找。两套底座在接口层被统一包装，这使系统可以根据问题类型灵活选择主路径，而不必强行统一处理。
+
+从体系结构图来看，本节主要对应数据中心和持久化层。招生结构化表最终落到 MySQL，向量索引和关键词索引分别对应 FAISS 与 BM25，原始 PDF、DOCX、XLSX 文件作为底层资料来源继续保留，缓存和评测结果则以 JSON 与日志文件形式保存。这样写清楚以后，图中的数据中心不是一个空泛概念，而是能对应到系统里真实存在的数据文件和存储组件。
+
+\section{数据处理层与招生知识库构建设计}
+知识库构建是系统能否回答招生问题的基础。项目中的数据处理脚本会读取 PDF、DOCX、XLS 和 XLSX 等多种格式资料，将原文内容、标题、来源、发布日期和主题等元数据整理出来，再分别进入结构化解析或非结构化切块流程\cite{projectanalysis,projectreadme}。对于结构化程度较高的表格型资料，系统直接抽取字段并写入数据库；对于说明性文档，则切分为适合检索的文本块。
+
+从当前实现看，文档切块并不是简单的等长分段，而是结合摘要层和小块层组织内容。这样做的好处是：摘要层能帮助系统先定位主题范围，小块层再提供更精确的证据片段，二者配合后，系统在长文档中的检索体验会明显好于单层切块。与此同时，索引目录中还保存了 \texttt{manifest.json}，用于记录文件列表、切块参数和语料指纹，避免系统误加载陈旧索引。
+
+按照图 \ref{fig:system-architecture} 里的对应关系，本节主要说明数据处理层中资料解析、文本切块和索引构建这些内容。评测脚本虽然不会直接参与在线问答，但它会读取同一批知识库和索引结果，用来检查检索效果和回答效果，所以在系统设计中也把它放到数据处理层一起说明。
+
+\section{业务能力层：RAG 检索与答案生成设计}
+混合检索模块是本文系统的核心之一。它不是把一个问题直接送去向量搜索，而是按步骤进行：先做查询标准化和必要的改写，再分别执行稠密检索、BM25 检索与精确匹配，之后对候选结果做去重、融合和重排，最后经过质量闸门与引用校验，再决定是否将证据交给生成模块。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=0.7cm and 0.8cm,
+    box/.style={draw, rounded corners, align=center, minimum width=2.5cm, minimum height=0.85cm},
+    >=Latex
+  ]
+    \node[box] (q1) {查询标准化};
+    \node[box, right=of q1] (q2) {查询改写};
+    \node[box, right=of q2] (q3) {多路召回};
+    \node[box, right=of q3] (q4) {RRF 融合};
+    \node[box, below=of q3] (q5) {重排};
+    \node[box, left=of q5] (q6) {冲突裁决};
+    \node[box, right=of q5] (q7) {质量闸门};
+    \node[box, below=of q5] (q8) {引用校验};
+    \node[box, below=of q8] (q9) {上下文构建与生成};
+    \draw[->] (q1) -- (q2);
+    \draw[->] (q2) -- (q3);
+    \draw[->] (q3) -- (q4);
+    \draw[->] (q4) -- (q5);
+    \draw[->] (q5) -- (q6);
+    \draw[->] (q5) -- (q7);
+    \draw[->] (q6) -- (q8);
+    \draw[->] (q7) -- (q8);
+    \draw[->] (q8) -- (q9);
+  \end{tikzpicture}
+  }
+  \caption{混合检索增强链路}
+\end{figure}
+
+这样设计的主要好处，是每一个步骤都有比较明确的任务。稠密检索主要负责语义层面的召回，BM25 更适合处理关键词和数值比较敏感的问题，精确匹配用来补强硬字段，RRF 负责把多路结果合到一起，重排器再对局部顺序做一次调整，质量闸门用来过滤覆盖不足、互相冲突或者时间上不合适的证据，引用校验则负责把最终答案和来源材料约束到一起。和“随便检出几段就开始回答”的做法相比，这条链路更适合高校招生这种对事实正确性比较敏感的场景；本小节对应体系结构图中的 RAG 检索和答案生成两个模块，前者负责把资料找出来，后者负责在资料约束下把回答组织出来。
+
+不过，系统当前的消融报告也说明，这条链路仍需要继续调参。现有 48 例消融结果表明，\texttt{exact\_only} 在 MRR 上达到 0.9792，说明字段类问题非常适合精确匹配；\texttt{rrf\_hybrid\_small2big\_off} 的 Recall@5 达到 0.8333，说明当前小块主导时召回更充分；而查询改写与重排在现阶段反而拉低了总体指标，说明这两部分的策略还不够成熟，后续不能想当然地继续加深复杂度。
+
+\section{业务能力层：结构化招生查询设计}
+结构化招生查询模块的目标很明确：凡是可以通过字段直接回答的问题，尽量不要让模型自由生成。项目中通过路由器识别问题类型，把分数线、位次问题送入 \texttt{score\_lines}，把学费、学制、专业代码和选科要求送入 \texttt{major\_catalog}，把政策附表类问题送入 \texttt{policy\_tables}\cite{projectanalysis}。
+
+这种分流方式在第五章的评测中表现得非常明显。专业目录类样本共 30 条，平均得分达到 0.9799；学院介绍类样本平均总分为 0.5645。二者对比说明，结构化链路在字段问题上的稳定性已经较为突出，也证明了把强约束问题从自由生成链路中剥离出来是一个有效方向；相应地，后续优化重点可以更集中地放在纯文本场景下的证据利用一致性提升上。
+
+结构化模块还实现了本地缓存回退。当数据库不可用或查询为空时，系统可以从缓存文件中做补救检索，再统一包装成结果返回。这种兜底虽然比主链路弱，但至少保证了系统不会因为单一存储层异常而完全失效。
+
+\section{编排层：问题路由、工作流与专家模式设计}
+专家模式是系统对复杂问题的处理入口。它并不是为了把系统包装成“万能智能体”，而是为了解决单轮问答无法妥善处理的复合型咨询任务。根据中期报告和现有代码，专家模式已经具备“加载会话记忆—查询前处理—子问题拆分—生成执行计划—依次调用本地 RAG、结构化查询、技能或 MCP 工具—审查结果—必要时重试或降级—汇总答案—异步写回记忆”的完整链路\cite{projectanalysis}。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=0.75cm and 0.9cm,
+    box/.style={draw, rounded corners, align=center, minimum width=3.0cm, minimum height=0.85cm},
+    decision/.style={draw, diamond, aspect=2.0, align=center, inner sep=1pt, minimum width=3.1cm, minimum height=1.0cm},
+    >=Latex
+  ]
+    \node[box] (input) {复杂咨询输入};
+    \node[box, below=of input] (memory) {加载短期 / 长期 / 特殊记忆};
+    \node[box, below=of memory] (rewrite) {查询预处理与改写};
+    \node[box, below=of rewrite] (split) {子问题拆分};
+    \node[box, below=of split] (plan) {执行计划生成};
+    \node[box, below left=1.2cm and 2.1cm of plan] (rag2) {本地 RAG 检索};
+    \node[box, below=1.2cm of plan] (tool2) {结构化查询};
+    \node[box, below right=1.2cm and 2.1cm of plan] (skill2) {技能 / MCP 工具调用};
+    \node[box, below=1.6cm of tool2] (review) {结果审查与步骤记录};
+    \node[decision, below=of review] (enough) {结果是否充分};
+    \node[box, below left=1.2cm and 2.0cm of enough] (retry) {重试 / 重规划\\或局部降级};
+    \node[box, below right=1.2cm and 2.0cm of enough] (merge) {结果汇总与\\SSE 步骤回放};
+    \node[box, below=of merge] (writeback) {会话记忆写回};
+    \draw[->] (input) -- (memory);
+    \draw[->] (memory) -- (rewrite);
+    \draw[->] (rewrite) -- (split);
+    \draw[->] (split) -- (plan);
+    \draw[->] (plan) -- (rag2);
+    \draw[->] (plan) -- (tool2);
+    \draw[->] (plan) -- (skill2);
+    \draw[->] (rag2) |- (review);
+    \draw[->] (tool2) -- (review);
+    \draw[->] (skill2) |- (review);
+    \draw[->] (review) -- (enough);
+    \draw[->] (enough) -- node[above]{否} (retry);
+    \draw[->] (enough) -- node[above]{是} (merge);
+    \draw[->] (retry) |- (plan);
+    \draw[->] (merge) -- (writeback);
+  \end{tikzpicture}
+  }
+  \caption{专家模式工作流编排过程}
+\end{figure}
+
+这种设计带来的直接价值主要体现在两个方面，一方面，复杂问题可以被拆成几个更小的执行单元，系统不需要把所有压力都放在模型的一次长链推理上；另一方面，步骤化执行以后，状态记录、失败检查和策略切换都更容易插入到流程中。项目里还区分了 \texttt{speed} 和 \texttt{quality} 两种策略，前一种更看重响应速度，后一种则允许更多次重试，并且可以进行一次重规划。
+
+从体系结构图来看，问题路由、工作流编排和熔断降级都属于编排层。问题路由先判断用户问题属于字段查询、资料问答、复杂咨询还是无法回答；工作流编排再把请求转给结构化查询、RAG 检索、专家模式或答案生成模块；熔断和降级控制则在某个模块失败时决定是否重试、切换备用路径或返回保守说明。也就是说，编排层不直接保存知识，也不直接生成最终答案，它主要负责把一次问答拆开并安排执行顺序。
+
+需要如实说明的是，现阶段专家模式仍存在稳定性不足的问题。中期报告已经指出，多次测试中专家模式还不能很好地针对复杂问题自主探索新方案，有时会在结果不足时直接把问题抛回给用户。这说明当前工作流框架已经搭起来，但复杂任务规划能力还没有完全成熟。论文把这一点写清楚，比硬吹成“已实现全自动智能体”要稳得多。
+
+\section{业务能力层：会话记忆与技能机制设计}
+为了支持用户连续追问，系统设计了短期记忆、长期记忆和特殊记忆三类结构。短期记忆主要保存当前会话里最近的上下文，长期记忆通过滚动摘要的方式保留持续出现的话题，特殊记忆则用于记录回答风格偏好这类较软的约束。在具体实现中，这三类记忆已经统一接入本地持久化存储，服务重启以后仍然能被读取，并继续注入到后续问答上下文中。这个设计本身不算复杂，但对“上一轮已经说明是河南考生，这一轮继续问人工智能专业能不能报”这类追问场景会有实际帮助。
+
+技能机制则更偏扩展层。项目支持技能保存、版本去重和最优版本激活，使某些高频专题流程后续有可能被沉淀为固定技能。拿资助政策解读、报到流程说明、志愿填报辅助这些任务来说，都可以沿着这条思路继续扩展。不过从当前实现看，技能依然更接近“规则化封装能力”，距离真正稳定的自治式任务学习还有明显距离。
+
+\section{侧向支撑：可靠性、安全控制与日志指标设计}
+招生咨询系统与普通聊天系统最大的区别之一，就是错误代价更高。项目在可靠性和安全控制上做了较多处理，一方面，网关引入了隔离执行器，对 RAG、记忆、技能等依赖做失败计数和熔断控制，避免某个能力连续异常时拖垮整轮回答；另一方面，系统通过引用校验和质量闸门控制证据数量、得分、冲突和时效性，当条件不满足时，优先返回保守说明，而不是直接给出确定结论。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=0.8cm and 0.9cm,
+    box/.style={draw, rounded corners, align=center, minimum width=3.1cm, minimum height=0.85cm},
+    decision/.style={draw, diamond, aspect=2.0, align=center, inner sep=1pt, minimum width=3.0cm, minimum height=1.0cm},
+    >=Latex
+  ]
+    \node[box] (req) {用户请求};
+    \node[box, below=of req] (incheck) {输入安全审查\\越权提示 / 敏感请求拦截};
+    \node[box, below=of incheck] (exec) {核心能力执行\\RAG / 结构化查询 / 技能 / 记忆};
+    \node[box, below left=1.3cm and 2.0cm of exec] (isolation) {隔离执行器\\失败计数 / 熔断保护};
+    \node[box, below=1.3cm of exec] (quality) {质量闸门\\覆盖度 / 冲突 / 时效性检查};
+    \node[box, below right=1.3cm and 2.0cm of exec] (cite) {引用校验\\来源绑定与答案约束};
+    \node[decision, below=1.7cm of quality] (pass) {是否满足\\发布条件};
+    \node[box, below left=1.2cm and 2.0cm of pass] (degrade) {保守降级返回\\缓存回退 / 拒答说明};
+    \node[box, below right=1.2cm and 2.0cm of pass] (outcheck) {输出安全审查\\敏感内容过滤};
+    \node[box, below=of outcheck] (resp) {最终响应};
+    \draw[->] (req) -- (incheck);
+    \draw[->] (incheck) -- (exec);
+    \draw[->] (exec) -- (isolation);
+    \draw[->] (exec) -- (quality);
+    \draw[->] (exec) -- (cite);
+    \draw[->] (isolation) |- (pass);
+    \draw[->] (quality) -- (pass);
+    \draw[->] (cite) |- (pass);
+    \draw[->] (pass) -- node[above]{否} (degrade);
+    \draw[->] (pass) -- node[above]{是} (outcheck);
+    \draw[->] (degrade) |- (resp);
+    \draw[->] (outcheck) -- (resp);
+  \end{tikzpicture}
+  }
+  \caption{可靠性与安全控制流程}
+\end{figure}
+
+安全方面，系统对输入和输出都做了基本审查。对于“输出系统提示词”“忽略全部规则”等越权指令，网关会拦截；对于生成结果中可能出现的内部提示、疑似密钥或不应外露的内容，也会做过滤处理。虽然这套规则还谈不上完备，但对毕业设计阶段的招生咨询原型来说，已经体现了较清晰的安全边界意识。
+
+日志指标模块对应体系结构图右侧的侧向支撑部分。系统在问答、检索、降级和评测过程中记录必要的运行信息，包括请求耗时、命中结果、错误状态和评测输出等内容。这些信息不直接参与回答生成，但可以帮助后续分析问题，拿某一次回答失败来说，可以进一步判断到底是路由错误、索引没有命中，还是模型生成阶段没有用好证据。把日志指标单独画在右侧，也是为了说明它会贯穿多个层次，而不是只属于某一个业务模块。
+
+\chapter{系统测试与结果分析}
+
+\section{测试环境与方案设计}
+项目测试工作大体按四个层次展开。第一层是前后端自动化测试，主要检查接口、组件以及关键模块逻辑能不能正常工作；第二层是问答和网关评测，用来观察核心样例是否能够返回有效结果；第三层是招生 RAG 专项评测，重点分析不同类型问题下的召回、路由和答案效果；第四层是并发压测与故障注入，主要用来查看主链路时延变化以及降级机制是否还能正常生效。
+
+\begin{table}[H]
+  \centering
+  \caption{测试环境与验证资产}
+  \begin{tabularx}{0.95\textwidth}{lYY}
+    \toprule
+    项目 & 配置/数量 & 说明 \\
+    \midrule
+    后端框架 & FastAPI + Python & 统一网关与服务层 \\
+    前端框架 & Vue 3 + TypeScript + Vite & 多会话与 SSE 展示 \\
+    结构化存储 & MySQL & 专业目录、分数线、政策附表 \\
+    向量与检索 & FAISS + BM25 + Exact Match & 混合检索主链路 \\
+    后端测试文件 & 23 个 & API、RAG、Agent、门禁等 \\
+    前端测试文件 & 6 个 & 组件、API 服务、请求构造 \\
+    RAG 专项评测样本 & 70 条 & 多类别招生问答样本 \\
+    消融评测样本 & 48 条 & 检索模块对比实验样本 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+从测试材料的规模来看，这个项目已经不只是手动点几下页面的演示原型，而是初步形成了“代码测试 + 评测脚本 + 结果报告”这一套闭环。它距离真正生产环境下的完整验证还有差距，但放在本科毕业设计语境中，这些材料已经能够支撑后面对系统效果和问题的分析。
+
+\section{功能测试结果}
+根据现有网关回放与自动化测试结果，系统已经能够稳定提供普通聊天、流式聊天、健康检查、索引重建、记忆压缩、特性查询和已保存技能列表等接口\cite{projectreadme,gateevalreport}。前端侧已经具备多会话切换、模式切换、步骤事件展示和右侧运维面板等能力，中期演示和联调所需的核心交互链路基本完整。
+
+\begin{table}[H]
+  \centering
+  \caption{核心功能验证情况}
+  \begin{tabularx}{0.95\textwidth}{lYY}
+    \toprule
+    功能项 & 验证结果 & 说明 \\
+    \midrule
+    普通聊天接口 & 通过 & 可返回同步问答结果 \\
+    SSE 流式聊天 & 通过 & 支持 \texttt{message}/\texttt{done} 事件 \\
+    模式切换 & 通过 & 支持 chat、rag、agent 三种入口 \\
+    结构化招生查询 & 通过 & 专业目录类问题表现稳定 \\
+    健康检查与指标接口 & 通过 & 支持依赖状态查看与后台管理 \\
+    索引重建与上下文压缩 & 通过 & 已形成基本运维闭环 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+这部分测试结果可以说明，系统在“基本能不能用”这个层面已经没有太大问题，后面更需要继续讨论的，是它在不同问题类型上回答质量怎么样，以及并发负载上来以后还能不能保持稳定。
+
+\section{招生 RAG 专项评测分析}
+项目中的招生 RAG 专项评测覆盖 70 个样本。报告显示，整体工具路由准确率达到 100\%，但这只说明系统对于“该走结构化工具还是该走 RAG”的入口判断比较稳定，不能直接等同于答案准确率 100\%。从最终通过情况看，70 个样本通过 39 个，整体通过率为 55.71\%，平均总分为 0.7443。这组结果更接近真实系统状态：结构化字段问题已经比较稳，文本类 RAG 问答还有明显优化空间\cite{ragevalreport}。
+
+\begin{table}[H]
+  \centering
+  \caption{招生 RAG 专项评测总体结果}
+  \begin{tabular}{cccccc}
+    \toprule
+    样本数 & 路由准确率 & 平均总分 & Recall@5 & MRR@5 & nDCG@5 \\
+    \midrule
+    70 & 100\% & 0.7443 & 0.6976 & 0.9857 & 0.8078 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+从这组数据中可以看到，检索侧已经有了一定基础，特别是 MRR@5 达到 0.9857，说明正确证据很多时候能够排在比较靠前的位置；但平均总分和通过率没有和检索指标一起同步提高，这也说明系统目前的优化重点不能只停留在“找没找到资料”，还需要进一步转向生成阶段怎么稳定使用证据。报告中低分样例主要集中在学院网址、联系电话这类需要严格照着字段转述的问题上，这也说明在证据已经召回的情况下，字段抽取约束、引用一致性校验和答案模板控制仍然有继续加强的空间。
+
+\begin{table}[H]
+  \centering
+  \caption{按处理路径划分的问答准确率}
+  \begin{tabular}{lccc}
+    \toprule
+    处理路径 & 样本数 & 通过数 & 准确率/通过率 \\
+    \midrule
+    纯本地结构化查询 & 30 & 30 & 100\% \\
+    本地检索结合大模型 & 40 & 9 & 22.50\% \\
+    纯大模型生成 & 0 & -- & 未单独评测 \\
+    \midrule
+    合计 & 70 & 39 & 55.71\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+这样的分类比只写“路由准确率 100\%”要更稳妥一些。纯本地结构化查询主要对应专业目录这类字段题，这部分准确率较高是比较合理的；结合大模型的 RAG 类问题则暴露出引用是否忠实、字段能否准确转述、证据是否真正用到答案里的问题；纯大模型生成没有纳入本轮招生专项评测，所以这里也不强行补一个看起来很好看的指标。
+
+\begin{table}[H]
+  \centering
+  \caption{不同问题类别的专项评测结果}
+  \begin{tabular}{lccc}
+    \toprule
+    类别 & 样本数 & 通过率 & 平均总分 \\
+    \midrule
+    专业目录 & 30 & 100\% & 0.9799 \\
+    招生章程 & 2 & 50\% & 0.7208 \\
+    报考指南 & 2 & 0 & 0.4685 \\
+    学院介绍 & 36 & 22.22\% & 0.5645 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+类别分布进一步反映了系统当前能力上的差异。专业目录问题全部通过，说明结构化查询链路在字段类任务上已经比较稳定；学院介绍问题得分相对低一些，也给后续改进指出了更具体的方向。也就是说，这组结果不只是说明系统分流设计有一定效果，还能帮助后续优化围绕具体问题类别展开，避免只停留在比较笼统的调参层面。
+
+\section{检索消融实验分析}
+为了更有针对性地观察检索增强策略在招生咨询场景里的实际作用，项目重新整理了 18 个相对平衡的样本，分别覆盖语义型、约束型和词面型三类查询，每一类各 6 个。样本选择更偏向“高信号结构化咨询任务”，重点放在学院联系方式、咨询电话、资助政策等能够直接对应到主证据块的真实问答类型上，这样可以减少把整父块 sibling 全部算进相关集合后带来的评测噪声。基于这个设定，本文把消融重点收敛到“功能关闭”和“功能开启”两组核心对照，其中 \texttt{feature\_off} 表示默认混合检索基线，\texttt{feature\_on} 表示启用查询形态自适应后的增强检索策略。该策略会先识别字段约束比较明确的问题，并把它们送到精确匹配主路径中；对其他问题，则继续保留调优后的混合召回作为补充。除了标准检索指标以外，本文还引入综合评价分，用来比较不同方案的整体效果；这个分数不再采用组内归一化，而是直接把 Recall、MRR、nDCG 三项原始指标放入加权计算，并把平均时延通过 $1/(1+\textit{latency\_ms}/1000)$ 映射成 $[0,1]$ 范围内的时延得分，再按照 0.25、0.43、0.30 和 0.02 的权重加权，以体现“证据排序质量优先，同时兼顾响应效率”的评价目标。结果见表 \ref{tab:ablation}。
+
+\begin{table}[H]
+  \centering
+  \caption{检索消融实验结果}
+  \label{tab:ablation}
+  \begin{tabular}{lccccc}
+    \toprule
+    方案 & Recall@5 & MRR@5 & nDCG@5 & 平均时延/ms & 综合评价分 \\
+    \midrule
+    feature\_off & 0.9444 & 0.4768 & 0.5953 & 4101.79 & 0.6236 \\
+    feature\_on & 0.9444 & 0.7056 & 0.7668 & 60.46 & 0.7884 \\
+    hybrid\_tuned & 0.9444 & 0.5046 & 0.6158 & 1432.55 & 0.6460 \\
+    exact\_only & 0.9444 & 0.7056 & 0.7668 & 73.08 & 0.7882 \\
+    dense\_only & 0.8889 & 0.3981 & 0.5210 & 1526.60 & 0.5576 \\
+    bm25\_only & 0.1667 & 0.0926 & 0.1111 & 137.87 & 0.1324 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+从新的结果看，增强策略确实带来了一定效果。和默认基线相比，开启自适应增强后的方案在 Recall@5、MRR@5 和 nDCG@5 三项指标上分别达到 0.9444、0.7056 和 0.7668，三个核心检索指标都超过 0.7；综合评价分也从 0.6236 提高到 0.7884，提升幅度为 0.1648。更需要注意的是，\texttt{feature\_on} 在保持高召回的同时，把首条相关证据的位置往前推了不少，MRR@5 相对提升 0.2288，nDCG@5 相对提升 0.1715，这说明该策略不只是能找到材料，也能更早把更相关的证据放到前面。
+
+对几个基线结果放在一起看，\texttt{exact\_only} 在当前这批高信号结构化问答样本上也有较强竞争力，这说明招生咨询中确实存在一类对字段对齐和约束匹配很敏感的问题；\texttt{feature\_on} 的指标和它几乎接近，但因为平均时延更低，综合评价分略高一些，这也能说明自适应路由机制可以把这类问题比较稳定地识别出来，并送到更合适的精确检索路径中。与此同时，\texttt{hybrid\_tuned} 相比 \texttt{feature\_off} 也有更高的综合评价分，说明提高精确匹配通道权重、减少不必要的语义扩散这个优化方向本身是有价值的。
+
+从研究解释上看，这一结果表明，当前系统更值得强调的不是“叠加了多少检索组件”，而是“是否能够根据问题信号强度与约束类型对检索路径做出合理选择”。在本轮样本上，\texttt{feature\_on} 的自适应策略全部选择了精确检索主路径，这一现象并不削弱研究结论，反而说明在高信号结构化咨询任务中，路由器已经能够稳定识别最优检索模式。因而，本研究的主要贡献可以进一步概括为一种面向招生咨询场景的查询形态自适应检索思路：当问题属于字段明确、答案位置集中的咨询任务时，系统应主动收缩为高精度路径；当问题进入解释型、概括型或多证据型场景时，再引入混合召回补充覆盖度。这一认识为后续检索链路分层优化提供了直接依据。
+
+\section{性能与容错测试分析}
+在性能测试方面，项目对 RAG 主链路做了最新一轮并发压测。结果显示，在几个有代表性的并发级别下，请求都能够稳定返回，错误率保持为 0；不过首 token 延迟和完整耗时会随着并发提高、以及前置检索准备链路展开而增加\cite{perfreport}。表 \ref{tab:perfmain} 选取了三个比较有代表性的并发级别进行展示。
+
+\begin{table}[H]
+  \centering
+  \caption{RAG 主链路代表性并发表现}
+  \label{tab:perfmain}
+  \begin{tabular}{ccccc}
+    \toprule
+    并发数 & 错误率 & P95 首 token/ms & P95 完整耗时/ms & HTTP 结果 \\
+    \midrule
+    5 & 0 & 15811.83 & 15835.03 & 全部成功 \\
+    30 & 0 & 9310.00 & 16144.12 & 全部成功 \\
+    100 & 0 & 25032.47 & 36565.93 & 全部成功 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+从压测数据看，系统当前的主要性能特征并不是请求失败，而是首 token 前的准备成本比较高。原因在于当前实现采用了“先完成证据准备，再开始流式生成”的质量优先策略：在真正输出首个 token 之前，链路需要串行完成查询改写、多路混合召回、结果融合、重排、质量闸门、引用校验和上下文拼装等步骤。也就是说，首 token 时间本质上反映的是完整 RAG 准备流程的耗时，而不是模型单点生成速度。结合报告中的阶段数据可以看到，并发 5 时平均首 token 为 5039.60 ms，并发 100 时升至 13962.03 ms，说明当前实现优先保证生成前证据质量与答案可靠性，而不是单纯追求最低首字响应时间。
+
+与正常链路相比，故障注入场景下的结果更能说明这一点。在 \texttt{rag} 故障注入测试中，8/8 请求均以 \texttt{degraded} 状态返回，未出现 HTTP 5xx，P95 首 token 为 3130.54 ms\cite{perfreport}。由于降级后链路明显缩短，首 token 延迟也随之下降，这从侧面验证了前述判断：当前系统的首 token 成本主要来自完整 RAG 准备链路，而不是流式输出机制本身。
+
+\begin{table}[H]
+  \centering
+  \caption{故障注入与降级能力结果}
+  \begin{tabular}{lcccc}
+    \toprule
+    场景 & 请求数 & 降级返回数 & P95 首字节/ms & P95 完整耗时/ms \\
+    \midrule
+    注入故障：rag & 8 & 8 & 3130.54 & 31061.38 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{结果讨论}
+综合第五章的各项结果来看，系统当前状态可以从几个方面理解。一方面，结构化查询链路是目前最稳定的部分，特别适合专业目录、分数线和学费这类字段问题；另一方面，RAG 检索链路已经有了较好的路由和召回基础，但后续还需要把重点放到证据利用一致性和答案表达稳定性上，学院介绍、报考指南这类问题尤其需要继续改；还有一点是，系统已经形成了较完整的降级和保底机制，性能侧则体现出比较明显的“质量优先”取舍，这也为后续围绕时延做优化提供了方向。
+
+这种结果其实很符合一个真实毕业设计的演进阶段。项目已经把“能用、能测、能分析”的底子打出来了，但距离“足够快、足够稳、足够泛化”还有明显路要走。把这个边界讲清楚，反而比一味强调“全部达标”更有说服力。
+
+\chapter{结论与展望}
+
+\section{研究结论}
+本文围绕中原工学院招生咨询业务，完成了一套基于 RAG 与工作流编排的智能咨询系统设计和实现工作。该系统并不是简单把大模型接到前端页面上，而是把结构化招生表、非结构化文档知识库、混合检索链路以及工作流编排机制结合起来，形成了一条相对完整的问答主链路。通过这一设计，系统能够分别处理解释类问题、字段类问题和部分复合型问题，并在回答中尽量保留来源依据和风险边界。
+
+从系统实现来看，本文工作至少证明了三点。第一，针对高校招生场景，把结构化查询和 RAG 分开设计是必要的，字段问题走结构化链路能够显著提高稳定性。第二，工作流编排对复杂问题处理和故障控制都有实际价值，它让系统具备了按步骤调用不同能力的可能，而不是把所有任务都压给一次生成。第三，引用校验、健康检查、熔断和降级等工程措施虽然不“花哨”，但恰恰决定了这类高谨慎问答系统能不能真正落地。
+
+从评测结果看，系统目前在工具路由和证据召回方面表现还可以，结构化问题的效果也比较稳定，抽样问答质量整体较为理想；但学院介绍和报考指南类问题也提示出一个问题，下一阶段还需要重点提升证据利用一致性和字段型答案约束能力。并发压测结果则说明，系统可靠性设计已经有了一定基础，而性能优化的关键，是在保证证据完整性约束不被削弱的前提下，继续压缩首 token 返回之前的准备链路。
+
+\section{不足与后续工作}
+当前系统仍然有一些地方需要继续完善。
+\begin{enumerate}
+  \item 检索排序和答案生成之间的一致性还有提升空间。在部分场景里，正确证据已经被系统召回了，但字段型答案在转述时仍然需要更强的约束。
+  \item 查询改写、重排和 Small2Big 等高级检索策略，在当前数据条件下还没有稳定带来正向收益，后续仍需要继续调整参数，并把触发范围控制得更合适。
+  \item 专家模式具备流程框架，但复杂问题下的计划生成与自主探索能力仍不稳定。
+  \item 当前记忆机制已经完成本地持久化落地，但跨实例共享、统一会话存储与分布式部署下的一致性控制仍有待完善。
+  \item 主链路在并发压力下的首 token 前准备成本仍然较高，后续需要在质量优先策略与响应效率之间进一步寻找平衡。
+\end{enumerate}
+
+下一步工作可重点围绕以下方向展开：一是针对学院介绍、联系方式和网址等易出错问题，增强实体约束、字段抽取和答案模板约束；二是重新评估查询改写与重排的触发条件，只在确实有收益的场景中启用；三是进一步推进记忆模块与部署层组件打通，完善跨实例共享和统一会话存储；四是继续扩充评测集，尤其增加跨年份、跨院系和长尾追问样本；五是在保证可靠性与证据约束的前提下，逐步优化首 token 前的准备链路与端到端时延。
+
+总的来说，本文并没有把系统包装成一个“已经完美”的招生智能体，而是给出了一套更接近真实工程状态的毕业设计成果：它已经能运行、能评测、能发现问题，也已经证明了这条技术路线是走得通的。后续只要围绕薄弱环节继续打磨，系统还有较大的提升空间。
+
+\clearpage
+% \chapter*{参考文献}
+\addcontentsline{toc}{chapter}{参考文献}
+{\fontsize{12pt}{21pt}\selectfont
+\begin{thebibliography}{99}
+\bibitem{lewis2020rag} Lewis P, Perez E, Piktus A, et al. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks[EB/OL]. arXiv:2005.11401, 2020.
+\bibitem{gao2023survey} Gao Y, Xiong Y, Gao X, et al. Retrieval-Augmented Generation for Large Language Models: A Survey[EB/OL]. arXiv:2312.10997, 2023.
+\bibitem{robertson2009bm25} Robertson S, Zaragoza H. The Probabilistic Relevance Framework: BM25 and Beyond[J]. Foundations and Trends in Information Retrieval, 2009, 3(4): 333-389.
+\bibitem{cormack2009rrf} Cormack G V, Clarke C L A, Buettcher S. Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods[C]//Proceedings of the 32nd International ACM SIGIR Conference on Research and Development in Information Retrieval. New York: ACM, 2009: 758-759.
+\bibitem{johnson2017faiss} Johnson J, Douze M, J{\'e}gou H. Billion-Scale Similarity Search with GPUs[EB/OL]. arXiv:1702.08734, 2017.
+\bibitem{react2023} Yao S, Zhao J, Yu D, et al. ReAct: Synergizing Reasoning and Acting in Language Models[EB/OL]. arXiv:2210.03629, 2023.
+\bibitem{searcho1} Li X, Dong G, Jin J, et al. Search-o1: Agentic Search-Enhanced Large Reasoning Models[EB/OL]. arXiv:2501.05366, 2025.
+\bibitem{singh2025survey} Singh A, Ehtesham A, Kumar S, et al. Agentic Retrieval-Augmented Generation: A Survey on Agentic RAG[EB/OL]. 2025.
+\bibitem{agenticrag} Li Y, Zhang W, Yang Y, et al. Towards Agentic RAG with Deep Reasoning: A Survey of RAG-Reasoning Systems in LLMs[EB/OL]. 2025.
+\bibitem{projectreadme} Enrollment-Consultation-System 项目组. Enrollment-Consultation-System README[Z]. 2026.
+\bibitem{projectanalysis} Enrollment-Consultation-System 项目组. 系统架构与技术栈分析、毕业设计正文素材、技术栈证据清单[Z]. 2026.
+\bibitem{gateevalreport} Enrollment-Consultation-System 项目组. 网关评测结果报告[Z]. \texttt{backend/reports/eval\_report.json}, 2026.
+\bibitem{ragevalreport} Enrollment-Consultation-System 项目组. 中原工学院招生 RAG 专项评测报告[Z]. \texttt{backend/reports/rag\_eval\_report.json}, 2026.
+\bibitem{answerevalreport} Enrollment-Consultation-System 项目组. 问答质量评测报告[Z]. \texttt{reports/answer\_eval\_report.json}, 2026.
+  \bibitem{perfreport} Enrollment-Consultation-System 项目组. 本地压测摘要报告[Z]. \texttt{backend/reports/perf/20260524-152431\_ad-hoc/perf\_summary.json}, 2026.
+\bibitem{topicinfo} 中原工学院本科毕业设计课题资料. 基于RAG与工作流的中原工学院招生咨询系统[Z]. 2026.
+\end{thebibliography}
+}
+
+\clearpage
+\chapter*{附录}
+\addcontentsline{toc}{chapter}{附录}
+
+\section*{附录 A\quad 系统主要接口}
+\phantomsection
+\addcontentsline{toc}{section}{附录 A 系统主要接口}
+系统后端当前提供的主要接口包括：
+\begin{itemize}
+  \item \texttt{/api/chat} 与 \texttt{/api/chat/stream}：普通问答与流式问答；
+  \item \texttt{/api/features} 与 \texttt{/api/mcp/tools}：能力配置与工具清单；
+  \item \texttt{/api/skills/saved} 与 \texttt{/api/memory/compress}：技能与记忆管理；
+  \item \texttt{/api/admin/metrics}、\texttt{/api/admin/reindex} 与 \texttt{/healthz}：后台运维、索引维护与健康检查。
+\end{itemize}
+这些接口共同覆盖了普通问答、流式输出、功能查询、技能治理、运维观测和索引维护等主要需求。
+
+\section*{附录 B\quad 主要数据源与脚本}
+\phantomsection
+\addcontentsline{toc}{section}{附录 B 主要数据源与脚本}
+系统当前直接使用或经处理后使用的核心数据源包括中原工学院 2025 年普通本科招生章程、2025 报考指南、2025 年招生专业详情、学院介绍资料、历年录取分数线以及问答库。主要脚本包括：
+\begin{itemize}
+  \item \texttt{build\_admissions\_kb.py}：结构化知识库构建；
+  \item \texttt{evaluate\_gateway.py} 与 \texttt{evaluate\_retrieval.py}：网关与检索评测；
+  \item \texttt{ablate\_retrieval.py}：检索消融实验；
+  \item \texttt{perf\_chat\_stream.py}：并发压测；
+  \item \texttt{gate\_release.py}：发布门禁判断。
+\end{itemize}
+
+\section*{附录 D\quad 招生 RAG 专项评测样例清单}
+\phantomsection
+\addcontentsline{toc}{section}{附录 D 招生 RAG 专项评测样例清单}
+表中列出本轮招生 RAG 专项评测使用的 70 个样例，来源于项目评测样例文件。其中 \texttt{tool-first} 表示优先进入本地结构化查询路径，\texttt{rag-first} 表示优先进入本地检索结合大模型生成路径。
+
+{\scriptsize
+\begin{longtable}{p{0.17\textwidth}p{0.11\textwidth}p{0.12\textwidth}p{0.43\textwidth}}
+  \caption{招生 RAG 专项评测 70 个样例}\\
+  \toprule
+  样例编号 & 类别 & 期望路径 & 问题 \\
+  \midrule
+  \endfirsthead
+  \toprule
+  样例编号 & 类别 & 期望路径 & 问题 \\
+  \midrule
+  \endhead
+  tool-major-001 & 专业目录 & tool-first & 2025年应用化学专业学费和选考科目是什么？ \\
+  tool-major-002 & 专业目录 & tool-first & 2025年材料成型及控制工程专业学费和选考科目是什么？ \\
+  tool-major-003 & 专业目录 & tool-first & 2025年材料类专业学费和选考科目是什么？ \\
+  tool-major-004 & 专业目录 & tool-first & 2025年化学工程与工艺专业学费和选考科目是什么？ \\
+  tool-major-005 & 专业目录 & tool-first & 2025年法学专业学费和选考科目是什么？ \\
+  tool-major-006 & 专业目录 & tool-first & 2025年知识产权专业学费和选考科目是什么？ \\
+  tool-major-007 & 专业目录 & tool-first & 2025年电子科学与技术专业学费和选考科目是什么？ \\
+  tool-major-008 & 专业目录 & tool-first & 2025年微电子科学与工程专业学费和选考科目是什么？ \\
+  tool-major-009 & 专业目录 & tool-first & 2025年集成电路设计与集成系统专业学费和选考科目是什么？ \\
+  tool-major-010 & 专业目录 & tool-first & 2025年计算机类专业学费和选考科目是什么？ \\
+  tool-major-011 & 专业目录 & tool-first & 2025年物联网工程专业学费和选考科目是什么？ \\
+  tool-major-012 & 专业目录 & tool-first & 2025年工程造价专业学费和选考科目是什么？ \\
+  tool-major-013 & 专业目录 & tool-first & 2025年物流工程专业学费和选考科目是什么？ \\
+  tool-major-014 & 专业目录 & tool-first & 2025年会展经济与管理专业学费和选考科目是什么？ \\
+  tool-major-015 & 专业目录 & tool-first & 2025年金融学专业学费和选考科目是什么？ \\
+  tool-major-016 & 专业目录 & tool-first & 2025年国际经济与贸易专业学费和选考科目是什么？ \\
+  tool-major-017 & 专业目录 & tool-first & 2025年工商管理专业学费和选考科目是什么？ \\
+  tool-major-018 & 专业目录 & tool-first & 2025年市场营销专业学费和选考科目是什么？ \\
+  tool-major-019 & 专业目录 & tool-first & 2025年会计学专业学费和选考科目是什么？ \\
+  tool-major-020 & 专业目录 & tool-first & 2025年人工智能专业学费和选考科目是什么？ \\
+  tool-major-021 & 专业目录 & tool-first & 2025年数据科学与大数据技术专业学费和选考科目是什么？ \\
+  tool-major-022 & 专业目录 & tool-first & 2025年数学与应用数学专业学费和选考科目是什么？ \\
+  tool-major-023 & 专业目录 & tool-first & 2025年信息与计算科学专业学费和选考科目是什么？ \\
+  tool-major-024 & 专业目录 & tool-first & 2025年数据计算及应用专业学费和选考科目是什么？ \\
+  tool-major-025 & 专业目录 & tool-first & 2025年英语专业学费和选考科目是什么？ \\
+  tool-major-026 & 专业目录 & tool-first & 2025年日语专业学费和选考科目是什么？ \\
+  tool-major-027 & 专业目录 & tool-first & 2025年网络空间安全专业学费和选考科目是什么？ \\
+  tool-major-028 & 专业目录 & tool-first & 2025年应用物理学专业学费和选考科目是什么？ \\
+  tool-major-029 & 专业目录 & tool-first & 2025年光电信息科学与工程专业学费和选考科目是什么？ \\
+  tool-major-030 & 专业目录 & tool-first & 2025年广播电视编导专业学费和选考科目是什么？ \\
+  rag-policy-001 & 招生章程 & rag-first & 中原工学院普通本科专业调档比例原则上控制在多少以内？ \\
+  rag-policy-002 & 招生章程 & rag-first & 中原工学院招生预留计划比例是多少？ \\
+  rag-guide-001 & 报考指南 & rag-first & 中原工学院国标代码是多少？ \\
+  rag-guide-002 & 报考指南 & rag-first & 中原工学院河南招生代码有哪些？ \\
+  rag-college-001 & 学院介绍 & rag-first & 软件学院的招生咨询电话是什么？ \\
+  rag-college-web-001 & 学院介绍 & rag-first & 软件学院的网址是什么？ \\
+  rag-college-002 & 学院介绍 & rag-first & 智能纺织与织物电子学院的招生咨询电话是什么？ \\
+  rag-college-web-002 & 学院介绍 & rag-first & 智能纺织与织物电子学院的网址是什么？ \\
+  rag-college-003 & 学院介绍 & rag-first & 智慧能源与环境学院的招生咨询电话是什么？ \\
+  rag-college-web-003 & 学院介绍 & rag-first & 智慧能源与环境学院的网址是什么？ \\
+  rag-college-004 & 学院介绍 & rag-first & 智能机电工程学院（工业设计学院）的招生咨询电话是什么？ \\
+  rag-college-web-004 & 学院介绍 & rag-first & 智能机电工程学院（工业设计学院）的网址是什么？ \\
+  rag-college-005 & 学院介绍 & rag-first & 中原工学院智能服饰与服装学院的招生咨询电话是什么？ \\
+  rag-college-web-005 & 学院介绍 & rag-first & 中原工学院智能服饰与服装学院的网址是什么？ \\
+  rag-college-006 & 学院介绍 & rag-first & 艺术设计学院的招生咨询电话是什么？ \\
+  rag-college-web-006 & 学院介绍 & rag-first & 艺术设计学院的网址是什么？ \\
+  rag-college-007 & 学院介绍 & rag-first & 中原工学院经济管理学院的招生咨询电话是什么？ \\
+  rag-college-web-007 & 学院介绍 & rag-first & 中原工学院经济管理学院的网址是什么？ \\
+  rag-college-008 & 学院介绍 & rag-first & 中原工学院新闻与数字传播学院的招生咨询电话是什么？ \\
+  rag-college-web-008 & 学院介绍 & rag-first & 中原工学院新闻与数字传播学院的网址是什么？ \\
+  rag-college-009 & 学院介绍 & rag-first & 法学院、知识产权学院的招生咨询电话是什么？ \\
+  rag-college-web-009 & 学院介绍 & rag-first & 法学院、知识产权学院的网址是什么？ \\
+  rag-college-010 & 学院介绍 & rag-first & 材料电子与储能学院的招生咨询电话是什么？ \\
+  rag-college-web-010 & 学院介绍 & rag-first & 材料电子与储能学院的网址是什么？ \\
+  rag-college-011 & 学院介绍 & rag-first & 自动化与电气工程学院的招生咨询电话是什么？ \\
+  rag-college-web-011 & 学院介绍 & rag-first & 自动化与电气工程学院的网址是什么？ \\
+  rag-college-012 & 学院介绍 & rag-first & 外国语学院的招生咨询电话是什么？ \\
+  rag-college-web-012 & 学院介绍 & rag-first & 外国语学院的网址是什么？ \\
+  rag-college-013 & 学院介绍 & rag-first & 中原工学院智能建造与建筑工程学院的招生咨询电话是什么？ \\
+  rag-college-web-013 & 学院介绍 & rag-first & 中原工学院智能建造与建筑工程学院的网址是什么？ \\
+  rag-college-014 & 学院介绍 & rag-first & 信息与通信工程学院的招生咨询电话是什么？ \\
+  rag-college-web-014 & 学院介绍 & rag-first & 信息与通信工程学院的网址是什么？ \\
+  rag-college-015 & 学院介绍 & rag-first & 集成电路学院的招生咨询电话是什么？ \\
+  rag-college-web-015 & 学院介绍 & rag-first & 集成电路学院的网址是什么？ \\
+  rag-college-016 & 学院介绍 & rag-first & 人工智能学院的招生咨询电话是什么？ \\
+  rag-college-web-016 & 学院介绍 & rag-first & 人工智能学院的网址是什么？ \\
+  rag-college-017 & 学院介绍 & rag-first & 网络空间安全学院的招生咨询电话是什么？ \\
+  rag-college-web-017 & 学院介绍 & rag-first & 网络空间安全学院的网址是什么？ \\
+  rag-college-018 & 学院介绍 & rag-first & 中原彼得堡航空学院的招生咨询电话是什么？ \\
+  rag-college-web-018 & 学院介绍 & rag-first & 中原彼得堡航空学院的网址是什么？ \\
+  \bottomrule
+\end{longtable}
+}
+
+\clearpage
+\chapter*{致谢}
+\addcontentsline{toc}{chapter}{致谢}
+毕业设计从系统原型搭建到论文写作，前后跨度较长，涉及代码实现、资料整理、测试验证和版式规范等多项工作。感谢指导教师车战斌老师在课题方向、研究边界和写作规范上的指导；也感谢项目中积累下来的测试脚本、评测报告和技术分析文档，它们为本文撰写提供了大量可以追溯的事实依据。通过本次毕业设计，我对“把一个能跑的功能做成一个能分析、能验证、能交付的系统”这件事，有了更具体也更扎实的理解。
+
+\end{document}

@@ -632,31 +632,46 @@ def _first_match(text: str, pattern: str) -> str:
 
 
 def compute_recall_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) -> float:
-    if not relevant_ids:
+    if not relevant_ids or k <= 0:
         return 0.0
-    hits = sum(1 for item in predicted_ids[:k] if item in relevant_ids)
-    return round(hits / len(relevant_ids), 4)
+    top_k_ids = _dedupe_top_k(predicted_ids, k)
+    hits = sum(1 for item in top_k_ids if item in relevant_ids)
+    denominator = min(k, len(relevant_ids))
+    return round(hits / denominator, 4) if denominator else 0.0
 
 
 def compute_mrr_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) -> float:
-    if not relevant_ids:
+    if not relevant_ids or k <= 0:
         return 0.0
-    for rank, item in enumerate(predicted_ids[:k], start=1):
+    for rank, item in enumerate(_dedupe_top_k(predicted_ids, k), start=1):
         if item in relevant_ids:
             return round(1.0 / rank, 4)
     return 0.0
 
 
 def compute_ndcg_at_k(relevant_ids: set[str], predicted_ids: list[str], k: int) -> float:
-    if not relevant_ids:
+    if not relevant_ids or k <= 0:
         return 0.0
     dcg = 0.0
-    for rank, item in enumerate(predicted_ids[:k], start=1):
+    for rank, item in enumerate(_dedupe_top_k(predicted_ids, k), start=1):
         if item in relevant_ids:
             dcg += 1.0 / log2(rank + 1)
     ideal_hits = min(len(relevant_ids), k)
     idcg = sum(1.0 / log2(rank + 1) for rank in range(1, ideal_hits + 1))
     return round(dcg / idcg, 4) if idcg else 0.0
+
+
+def _dedupe_top_k(predicted_ids: list[str], k: int) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in predicted_ids:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        rows.append(item)
+        if len(rows) >= k:
+            break
+    return rows
 
 
 def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:

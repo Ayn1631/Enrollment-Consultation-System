@@ -35,6 +35,7 @@ def test_build_tuning_cases_prefers_small_chunks_and_deduplicates_queries():
 def test_compute_recall_and_curve_summary():
     recall = compute_recall_at_k({"c1", "c2"}, ["c2", "c3", "c1"])
     assert recall == 1.0
+    assert compute_recall_at_k({"c1", "c2", "c3"}, ["c1", "c2"]) == 1.0
 
     rows = [
         AnnTuningRow(m=16, ef_construction=64, ef_search=32, avg_recall_at_k=0.82, avg_latency_ms=1.5, p95_latency_ms=2.1),

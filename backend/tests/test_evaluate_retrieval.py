@@ -21,6 +21,9 @@ def test_retrieval_metrics_helpers():
     assert compute_mrr_at_k(relevant, predicted, 3) == 0.5
     assert round(compute_ndcg_at_k(relevant, predicted, 3), 4) == 0.6934
 
+    wide_relevant = {"c1", "c2", "c3", "c4", "c5", "c6"}
+    assert compute_recall_at_k(wide_relevant, ["c1", "c2", "c3", "c4", "c5"], 5) == 1.0
+
 
 def test_build_retrieval_cases_uses_small_chunks_and_parent_relevance():
     docs = [
